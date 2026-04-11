@@ -313,23 +313,31 @@ const VideoPlayer = {
     }, 500);
 
     // State sync heartbeat — catches fast pause/unpause desync
+    // Tracks how long state has been wrong. After 500ms of mismatch, force correction.
+    this._mismatchSince = null;
     if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
     this.stateCheckInterval = setInterval(() => {
       if (!this.player || !this.player.getPlayerState || !this.expectedPlayState) return;
-      if (this.suppression.isActive()) return;
       const ytState = this.player.getPlayerState();
       const localState = ytState === YT_PLAYING ? "playing" : ytState === YT_PAUSED ? "paused" : null;
       if (!localState) return;
       if (localState !== this.expectedPlayState) {
-        // Force local player to match expected state
-        this.suppression.suppress(this.expectedPlayState);
-        if (this.expectedPlayState === "playing") {
-          this._play();
-        } else {
-          this._pause();
+        if (!this._mismatchSince) {
+          this._mismatchSince = performance.now();
+        } else if (performance.now() - this._mismatchSince > 500) {
+          // Mismatch persisted — force correction regardless of suppression
+          this._mismatchSince = null;
+          this.suppression.suppress(this.expectedPlayState);
+          if (this.expectedPlayState === "playing") {
+            this._play();
+          } else {
+            this._pause();
+          }
         }
+      } else {
+        this._mismatchSince = null;
       }
-    }, 250);
+    }, 100);
 
     // SponsorBlock skip check
     if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
