@@ -469,13 +469,6 @@ defmodule ByobWeb.RoomLive do
                   </span>
                 </button>
               </div>
-              <button
-                :if={@current_media && @sidebar_tab == :queue}
-                phx-click="queue:skip"
-                class="btn btn-xs btn-ghost"
-              >
-                Skip
-              </button>
             </div>
 
             <%!-- Queue list --%>
@@ -502,23 +495,20 @@ defmodule ByobWeb.RoomLive do
                     <span class="text-xs text-base-content/30">?</span>
                   </div>
                   <div class="flex-1 min-w-0">
-                    <span :if={now_playing.title} class="block truncate text-sm font-medium">
+                    <span
+                      :if={now_playing.title}
+                      title={now_playing.title}
+                      class="block text-sm font-medium line-clamp-3"
+                    >
                       {now_playing.title}
                     </span>
-                    <span class="block truncate text-xs text-base-content/50">
+                    <span title={now_playing.url} class="block text-xs text-base-content/50 line-clamp-2">
                       {now_playing.url}
                     </span>
-                    <span :if={now_playing.added_by_name} class="block truncate text-xs text-base-content/40">
-                      added by {now_playing.added_by_name}
+                    <span :if={now_playing.added_by_name} class="block text-xs text-base-content/40 mt-0.5">
+                      {now_playing.added_by_name}{if format_time(now_playing.added_at), do: " at #{format_time(now_playing.added_at)}", else: ""}
                     </span>
                   </div>
-                  <button
-                    phx-click="queue:remove"
-                    phx-value-item_id={now_playing.id}
-                    class="btn btn-xs btn-ghost btn-circle opacity-50 hover:opacity-100"
-                  >
-                    x
-                  </button>
                 </div>
               </div>
 
@@ -553,10 +543,14 @@ defmodule ByobWeb.RoomLive do
                       phx-value-index={idx}
                       class="flex-1 text-left min-w-0"
                     >
-                      <span :if={item.title} class="block truncate text-sm">{item.title}</span>
-                      <span class="block truncate text-xs text-base-content/50">{item.url}</span>
-                      <span :if={item.added_by_name} class="block truncate text-xs text-base-content/40">
-                        added by {item.added_by_name}
+                      <span :if={item.title} title={item.title} class="block text-sm line-clamp-3">
+                        {item.title}
+                      </span>
+                      <span title={item.url} class="block text-xs text-base-content/50 line-clamp-2">
+                        {item.url}
+                      </span>
+                      <span :if={item.added_by_name} class="block text-xs text-base-content/40 mt-0.5">
+                        {item.added_by_name}{if format_time(item.added_at), do: " at #{format_time(item.added_at)}", else: ""}
                       </span>
                     </button>
                     <button
@@ -600,14 +594,15 @@ defmodule ByobWeb.RoomLive do
                   <span class="text-xs text-base-content/30">?</span>
                 </div>
                 <div class="flex-1 min-w-0">
-                  <span :if={entry.item.title} class="block truncate text-sm">
+                  <span :if={entry.item.title} title={entry.item.title} class="block text-sm line-clamp-3">
                     {entry.item.title}
                   </span>
-                  <span class="block truncate text-xs text-base-content/50">
+                  <span title={entry.item.url} class="block text-xs text-base-content/50 line-clamp-2">
                     {entry.item.url}
                   </span>
-                  <span :if={entry.item.added_by_name} class="block truncate text-xs text-base-content/40">
-                    added by {entry.item.added_by_name}
+                  <span class="block text-xs text-base-content/40 mt-0.5">
+                    {if entry.item.added_by_name, do: entry.item.added_by_name, else: ""}
+                    {if entry.played_at && format_time(entry.played_at), do: "played at #{format_time(entry.played_at)}", else: ""}
                   </span>
                 </div>
               </li>
@@ -723,6 +718,16 @@ defmodule ByobWeb.RoomLive do
 
     %{uri | query: URI.encode_query(params)} |> URI.to_string()
   end
+
+  defp format_time(nil), do: nil
+
+  defp format_time(%DateTime{} = dt) do
+    dt
+    |> DateTime.shift_zone!("Etc/UTC")
+    |> Calendar.strftime("%-I:%M%P")
+  end
+
+  defp format_time(_), do: nil
 
   defp sync_state_payload(state, user_id) do
     %{
