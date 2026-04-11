@@ -249,14 +249,14 @@
       const { segments, duration } = e.data;
       if (!segments || !duration) return;
 
-      // Wait for YouTube's seek bar to appear
+      // Wait for YouTube's seek bar to appear — target the inner bar line, not the outer container
       const tryInject = (attempt) => {
         if (attempt > 20) return;
-        // Try multiple selectors for the progress bar
         const progressBar =
-          document.querySelector(".ytp-progress-bar") ||
           document.querySelector(".ytp-progress-list") ||
-          document.querySelector("yt-progress-bar");
+          document.querySelector("yt-progress-bar-line .ytProgressBarLineProgressBarLine") ||
+          document.querySelector(".ytProgressBarLineProgressBarLine") ||
+          document.querySelector(".ytp-progress-bar");
         if (!progressBar) {
           setTimeout(() => tryInject(attempt + 1), 500);
           return;
@@ -303,6 +303,10 @@
       progressBar.style.position = "relative";
     }
 
+    // Ensure YouTube's playhead renders above our segments
+    const playhead = document.querySelector("yt-progress-bar-playhead, .ytp-scrubber-container");
+    if (playhead) playhead.style.zIndex = "50";
+
     for (const seg of segments) {
       const left = (seg.segment[0] / duration) * 100;
       const width = Math.max(
@@ -314,12 +318,13 @@
       el.title = labels[seg.category] || seg.category;
       el.style.cssText = `
         position: absolute;
+        bottom: 0;
         left: ${left}%;
         width: ${width}%;
-        height: 100%;
+        height: 3px;
         background: ${colors[seg.category] || "#00d400"};
-        opacity: 0.7;
-        z-index: 40;
+        opacity: 0.8;
+        z-index: 0;
         pointer-events: none;
         border-radius: 1px;
       `;
