@@ -48,10 +48,7 @@ const VideoPlayer = {
     this.handleEvent("sponsor:segments", (data) => this._onSponsorSegments(data));
     this.handleEvent("sb:settings", (data) => {
       this.sbSettings = data;
-      // Re-render bar with updated settings
-      if (this._lastSponsorData) {
-        this._onSponsorSegments(this._lastSponsorData);
-      }
+      this._applySponsorSettings();
     });
     this.handleEvent("video:change", (data) => this._onVideoChange(data));
   },
@@ -281,14 +278,28 @@ const VideoPlayer = {
 
   _onSponsorSegments(data) {
     this._lastSponsorData = data;
+    this._applySponsorSettings();
+  },
+
+  _applySponsorSettings() {
+    const data = this._lastSponsorData;
+    if (!data) return;
     const allSegments = data.segments || [];
-    // Filter segments based on room SB settings
-    this.sponsorSegments = allSegments.filter(
-      (s) => this.sbSettings[s.category] === "auto_skip"
-    );
-    const barSegments = allSegments.filter(
-      (s) => this.sbSettings[s.category] && this.sbSettings[s.category] !== "disabled"
-    );
+
+    const getSetting = (cat) => {
+      if (this.sbSettings && this.sbSettings[cat]) return this.sbSettings[cat];
+      // Defaults matching server defaults
+      const defaults = {
+        sponsor: "auto_skip", selfpromo: "disabled", interaction: "disabled",
+        intro: "show_bar", outro: "show_bar", preview: "show_bar",
+        music_offtopic: "disabled", filler: "show_bar",
+      };
+      return defaults[cat] || "disabled";
+    };
+
+    this.sponsorSegments = allSegments.filter((s) => getSetting(s.category) === "auto_skip");
+    const barSegments = allSegments.filter((s) => getSetting(s.category) !== "disabled");
+
     const duration =
       (this.player && this.player.getDuration && this.player.getDuration()) ||
       data.duration ||
