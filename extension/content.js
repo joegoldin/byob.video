@@ -13,33 +13,39 @@
 
   // Check if we should activate on this page
   async function init() {
-    // Check URL params first (simplest approach)
-    const params = new URLSearchParams(window.location.search);
-    const roomId = params.get("watchparty_room");
-    const serverUrl = params.get("watchparty_server");
+    // Listen for room page telling us to open an external site
+    window.addEventListener("message", (e) => {
+      if (e.data?.type === "byob:open-external") {
+        chrome.storage.local.set({
+          watchparty_config: {
+            room_id: e.data.room_id,
+            server_url: e.data.server_url,
+            target_url: e.data.url,
+            timestamp: Date.now(),
+          },
+        });
+      }
+    });
 
-    if (!roomId || !serverUrl) {
-      // Also check storage for rooms configured from the room UI
-      try {
-        const config = await chrome.storage.local.get("watchparty_config");
-        if (config.watchparty_config) {
-          const { room_id, server_url, target_url } = config.watchparty_config;
-          // Only activate if this page's URL matches the target
-          if (
-            target_url &&
-            window.location.href.startsWith(target_url.split("?")[0])
-          ) {
+    // Check storage for active room config
+    try {
+      const config = await chrome.storage.local.get("watchparty_config");
+      if (config.watchparty_config) {
+        const { room_id, server_url, target_url, timestamp } = config.watchparty_config;
+        // Only activate if config is recent (last 30 minutes) and URL matches
+        const age = Date.now() - (timestamp || 0);
+        if (age < 30 * 60 * 1000 && target_url) {
+          const targetBase = new URL(target_url).origin + new URL(target_url).pathname;
+          const currentBase = window.location.origin + window.location.pathname;
+          if (currentBase.startsWith(targetBase) || targetBase.startsWith(currentBase)) {
             activate(room_id, server_url);
             return;
           }
         }
-      } catch (e) {
-        // Storage not available or error — silently fail
       }
-      return;
+    } catch (e) {
+      // Storage not available or error
     }
-
-    activate(roomId, serverUrl);
   }
 
   function activate(roomId, serverUrl) {

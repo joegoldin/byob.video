@@ -363,7 +363,15 @@ defmodule ByobWeb.RoomLive do
             </p>
           </div>
           <button
-            onclick={"window.open('#{extension_open_url(@current_media.url, @room_id)}', 'byob_player', 'width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no')"}
+            onclick={"
+              window.postMessage({
+                type: 'byob:open-external',
+                url: '#{@current_media.url}',
+                room_id: '#{@room_id}',
+                server_url: '#{ByobWeb.Endpoint.url()}'
+              }, '*');
+              window.open('#{@current_media.url}', 'byob_player', 'width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no');
+            "}
             class="btn btn-primary btn-sm"
           >
             Open Player Window
