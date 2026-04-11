@@ -300,11 +300,25 @@ const VideoPlayer = {
     this.sponsorSegments = allSegments.filter((s) => getSetting(s.category) === "auto_skip");
     const barSegments = allSegments.filter((s) => getSetting(s.category) !== "disabled");
 
-    const duration =
-      (this.player && this.player.getDuration && this.player.getDuration()) ||
-      data.duration ||
-      0;
+    // Try multiple sources for duration
+    const playerDur = this.player?.getDuration?.() || 0;
+    const apiDur = data.duration || 0;
+    // Fallback: max segment end time
+    const segDur = allSegments.reduce((max, s) => Math.max(max, s.segment?.[1] || 0), 0);
+    const duration = playerDur > 0 ? playerDur : apiDur > 0 ? apiDur : segDur;
+
+    this._sponsorBarSegments = barSegments;
     this._renderSponsorBar(barSegments, duration);
+
+    // If duration was 0, retry once player is ready
+    if (duration <= 0 && this.player) {
+      const retryRender = () => {
+        const d = this.player?.getDuration?.() || 0;
+        if (d > 0) this._renderSponsorBar(this._sponsorBarSegments || [], d);
+      };
+      setTimeout(retryRender, 1000);
+      setTimeout(retryRender, 3000);
+    }
   },
 
   _renderSponsorBar(segments, duration) {
