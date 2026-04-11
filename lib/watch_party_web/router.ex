@@ -18,7 +18,10 @@ defmodule WatchPartyWeb.Router do
   scope "/", WatchPartyWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live_session :default, on_mount: [WatchPartyWeb.Hooks.AssignUser] do
+      live "/", HomeLive
+      live "/room/:id", RoomLive
+    end
   end
 
   # Other scopes may use custom stacks.
