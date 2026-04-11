@@ -16,7 +16,9 @@ defmodule WatchPartyWeb.RoomLive do
         current_index: nil,
         play_state: :paused,
         current_media: nil,
-        sidebar_tab: :queue
+        sidebar_tab: :queue,
+        url_preview: nil,
+        url_preview_loading: false
       )
 
     if connected?(socket) do
@@ -64,10 +66,40 @@ defmodule WatchPartyWeb.RoomLive do
 
   # Client events
 
+  def handle_event("preview_url", %{"url" => url}, socket) do
+    url = String.trim(url)
+
+    if url == "" do
+      {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
+    else
+      case WatchParty.MediaItem.parse_url(url) do
+        {:ok, %{source_type: :youtube}} ->
+          socket = assign(socket, url_preview_loading: true, url_preview: nil)
+          pid = self()
+
+          Task.start(fn ->
+            case WatchParty.OEmbed.fetch_youtube(url) do
+              {:ok, meta} -> send(pid, {:url_preview_result, meta})
+              _ -> send(pid, {:url_preview_result, nil})
+            end
+          end)
+
+          {:noreply, socket}
+
+        {:ok, %{source_type: :extension_required}} ->
+          preview = %{title: nil, thumbnail_url: nil, source_type: :extension_required, url: url}
+          {:noreply, assign(socket, url_preview: preview, url_preview_loading: false)}
+
+        _ ->
+          {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
+      end
+    end
+  end
+
   def handle_event("add_url", %{"url" => url, "mode" => mode}, socket) do
     mode_atom = if mode == "now", do: :now, else: :queue
     RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, mode_atom)
-    {:noreply, socket}
+    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
   end
 
   def handle_event("video:play", %{"position" => position}, socket) do
@@ -187,6 +219,21 @@ defmodule WatchPartyWeb.RoomLive do
     {:noreply, push_event(socket, "video:change", serialize_media_item(data))}
   end
 
+  def handle_info({:url_preview_result, nil}, socket) do
+    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
+  end
+
+  def handle_info({:url_preview_result, meta}, socket) do
+    preview = %{
+      title: meta.title,
+      thumbnail_url: meta.thumbnail_url,
+      author_name: meta[:author_name],
+      source_type: :youtube
+    }
+
+    {:noreply, assign(socket, url_preview: preview, url_preview_loading: false)}
+  end
+
   def handle_info({:users_updated, users}, socket) do
     {:noreply, assign(socket, users: users)}
   end
@@ -249,21 +296,65 @@ defmodule WatchPartyWeb.RoomLive do
           </a>
         </div>
 
-        <%!-- URL input --%>
-        <form phx-submit="add_url" class="flex gap-2 mb-4">
-          <input
-            type="text"
-            name="url"
-            placeholder="Paste a video URL..."
-            class="input input-bordered flex-1"
-            autocomplete="off"
-          />
-          <button type="submit" name="mode" value="now" class="btn btn-primary">
-            Play Now
-          </button>
-          <button type="submit" name="mode" value="queue" class="btn btn-outline">
-            Queue
-          </button>
+        <%!-- URL input + preview --%>
+        <form phx-submit="add_url" phx-change="preview_url" class="mb-4">
+          <div class="flex gap-2">
+            <input
+              type="text"
+              name="url"
+              placeholder="Paste a video URL..."
+              class="input input-bordered flex-1"
+              autocomplete="off"
+              phx-debounce="500"
+            />
+            <button type="submit" name="mode" value="now" class="btn btn-primary">
+              Play Now
+            </button>
+            <button type="submit" name="mode" value="queue" class="btn btn-outline">
+              Queue
+            </button>
+          </div>
+
+          <%!-- Loading placeholder --%>
+          <div :if={@url_preview_loading} class="mt-2 flex items-center gap-3 p-3 rounded-lg bg-base-200 animate-pulse">
+            <div class="w-20 h-12 bg-base-300 rounded flex-shrink-0" />
+            <div class="flex-1 space-y-2">
+              <div class="h-3 bg-base-300 rounded w-3/4" />
+              <div class="h-2 bg-base-300 rounded w-1/2" />
+            </div>
+          </div>
+
+          <%!-- YouTube preview --%>
+          <div
+            :if={@url_preview && @url_preview.source_type == :youtube}
+            class="mt-2 flex items-center gap-3 p-3 rounded-lg bg-base-200"
+          >
+            <img
+              :if={@url_preview.thumbnail_url}
+              src={@url_preview.thumbnail_url}
+              class="w-20 h-12 object-cover rounded flex-shrink-0"
+            />
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium truncate">{@url_preview.title}</p>
+              <p :if={@url_preview.author_name} class="text-xs text-base-content/50">
+                {@url_preview.author_name}
+              </p>
+            </div>
+          </div>
+
+          <%!-- Extension-required preview --%>
+          <div
+            :if={@url_preview && @url_preview.source_type == :extension_required}
+            class="mt-2 flex items-center gap-3 p-3 rounded-lg bg-base-200"
+          >
+            <div class="w-20 h-12 bg-base-300 rounded flex-shrink-0 flex items-center justify-center">
+              <span class="text-xs text-base-content/30">EXT</span>
+            </div>
+            <div class="flex-1 min-w-0">
+              <p class="text-sm font-medium">External site</p>
+              <p class="text-xs text-base-content/50">Requires browser extension to sync</p>
+            </div>
+          </div>
         </form>
       </div>
 
