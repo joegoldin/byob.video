@@ -309,6 +309,12 @@ const VideoPlayer = {
     }
 
     this.el.style.position = "relative";
+    // Force iframe below the bar in stacking order
+    const iframe = this.el.querySelector("iframe");
+    if (iframe) {
+      iframe.style.position = "relative";
+      iframe.style.zIndex = "1";
+    }
     this.el.appendChild(bar);
   },
 

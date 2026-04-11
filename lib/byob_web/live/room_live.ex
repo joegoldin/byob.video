@@ -17,6 +17,7 @@ defmodule ByobWeb.RoomLive do
         play_state: :paused,
         current_media: nil,
         sidebar_tab: :queue,
+        editing_username: false,
         url_preview: nil,
         url_preview_loading: false
       )
@@ -160,6 +161,14 @@ defmodule ByobWeb.RoomLive do
     {:noreply, assign(socket, sidebar_tab: String.to_existing_atom(tab))}
   end
 
+  def handle_event("username:edit", _params, socket) do
+    {:noreply, assign(socket, editing_username: true)}
+  end
+
+  def handle_event("username:cancel", _params, socket) do
+    {:noreply, assign(socket, editing_username: false)}
+  end
+
   def handle_event("username:change", %{"username" => new_username}, socket) do
     new_username = String.trim(new_username)
 
@@ -168,12 +177,12 @@ defmodule ByobWeb.RoomLive do
 
       socket =
         socket
-        |> assign(username: new_username)
+        |> assign(username: new_username, editing_username: false)
         |> push_event("store-username", %{username: new_username})
 
       {:noreply, socket}
     else
-      {:noreply, socket}
+      {:noreply, assign(socket, editing_username: false)}
     end
   end
 
@@ -269,21 +278,24 @@ defmodule ByobWeb.RoomLive do
 
   def render(assigns) do
     ~H"""
+    <%!-- Copy link button teleported to nav --%>
+    <div id="copy-url-teleport" phx-hook="TeleportToNav" class="hidden">
+      <button
+        id="copy-url"
+        phx-hook="CopyUrl"
+        data-url={url(~p"/room/#{@room_id}")}
+        class="btn btn-ghost btn-sm gap-1 text-base-content/60"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+        </svg>
+        Copy Link
+      </button>
+    </div>
+
     <div class="flex flex-col lg:flex-row gap-4">
       <%!-- Main content --%>
       <div class="flex-1 min-w-0">
-        <%!-- Room header --%>
-        <div class="mb-3 flex items-center gap-2">
-          <div class="badge badge-neutral font-mono">{@room_id}</div>
-          <button
-            id="copy-url"
-            phx-hook="CopyUrl"
-            data-url={url(~p"/room/#{@room_id}")}
-            class="btn btn-xs btn-ghost"
-          >
-            Copy Link
-          </button>
-        </div>
 
         <%!-- Player --%>
         <div
@@ -575,9 +587,24 @@ defmodule ByobWeb.RoomLive do
                 class="flex items-center gap-2 text-sm"
               >
                 <div class="w-2 h-2 rounded-full bg-success flex-shrink-0" />
+                <%!-- Other users: just show name --%>
                 <span :if={uid != @user_id} class="truncate">{user.username}</span>
+                <%!-- Self: show name + edit, or edit form --%>
+                <span
+                  :if={uid == @user_id && !@editing_username}
+                  class="truncate flex-1"
+                >
+                  {user.username}
+                </span>
+                <button
+                  :if={uid == @user_id && !@editing_username}
+                  phx-click="username:edit"
+                  class="btn btn-xs btn-ghost opacity-50 hover:opacity-100"
+                >
+                  edit
+                </button>
                 <form
-                  :if={uid == @user_id}
+                  :if={uid == @user_id && @editing_username}
                   phx-submit="username:change"
                   class="flex gap-1 flex-1 min-w-0"
                 >
@@ -586,6 +613,7 @@ defmodule ByobWeb.RoomLive do
                     name="username"
                     value={user.username}
                     class="input input-xs input-bordered flex-1 min-w-0"
+                    autofocus
                   />
                   <button type="submit" class="btn btn-xs btn-ghost">ok</button>
                 </form>

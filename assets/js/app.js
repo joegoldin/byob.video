@@ -27,6 +27,23 @@ import topbar from "../vendor/topbar"
 import VideoPlayer from "./hooks/video_player"
 import CopyUrl from "./hooks/copy_url"
 
+const TeleportToNav = {
+  mounted() {
+    const target = document.getElementById("nav-room-actions");
+    if (target) {
+      // Move children to nav
+      while (this.el.firstChild) {
+        target.appendChild(this.el.firstChild);
+      }
+      this.el.remove();
+    }
+  },
+  destroyed() {
+    const target = document.getElementById("nav-room-actions");
+    if (target) target.innerHTML = "";
+  },
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
@@ -34,7 +51,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     _csrf_token: csrfToken,
     stored_username: localStorage.getItem("watchparty_username"),
   }),
-  hooks: {...colocatedHooks, VideoPlayer, CopyUrl},
+  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, TeleportToNav},
 })
 
 // Listen for username changes to persist to localStorage
