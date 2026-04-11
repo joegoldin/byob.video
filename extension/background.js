@@ -127,6 +127,9 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "byob:video-hooked") {
     broadcastToContentScripts({ type: "byob:video-hooked" });
   }
+  if (msg.type === "byob:bar-update") {
+    broadcastToContentScripts(msg);
+  }
 });
 
 function broadcastToContentScripts(msg) {

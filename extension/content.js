@@ -160,7 +160,7 @@
     // Update sync bar to show we found a video
     updateSyncBarStatus("hooked");
 
-    // Send periodic state updates (position, duration, playing) for relay to room
+    // Send periodic state updates (position, duration, playing) for relay to room + sync bar
     timeReportInterval = setInterval(() => {
       if (hookedVideo) {
         const msg = {
@@ -170,10 +170,11 @@
           playing: !hookedVideo.paused,
         };
         if (port) port.postMessage(msg);
-        // Also relay up in case port isn't working in nested iframe
         try { window.top.postMessage({ type: "byob:relay", payload: msg }, "*"); } catch (_) {}
+        // Also send bar update via chrome.runtime so top frame can update its bar
+        try { chrome.runtime.sendMessage({ type: "byob:bar-update", ...msg }); } catch (_) {}
       }
-    }, 1000);
+    }, 500);
   }
 
   function unhookVideo() {
@@ -246,11 +247,26 @@
 
   // Handle commands from service worker
   function handleSWMessage(msg) {
-    // Show sync bar in top frame when notified a nested frame hooked a video
     if (msg.type === "byob:video-hooked" && window === window.top) {
       if (!window.location.hostname.includes("youtube.com")) {
         injectSyncBar();
         updateSyncBarStatus("hooked");
+      }
+      return;
+    }
+    if (msg.type === "byob:bar-update" && window === window.top) {
+      const fmt = (s) => Math.floor(s / 60) + ":" + Math.floor(s % 60).toString().padStart(2, "0");
+      const timeEl = document.getElementById("byob-time");
+      const statusEl = document.getElementById("byob-status");
+      const dotEl = document.getElementById("byob-dot");
+      if (timeEl && msg.duration > 0) timeEl.textContent = fmt(msg.position) + " / " + fmt(msg.duration);
+      else if (timeEl) timeEl.textContent = fmt(msg.position);
+      if (statusEl && dotEl) {
+        if (msg.playing) {
+          statusEl.textContent = "Syncing"; statusEl.style.color = "#00d400"; dotEl.style.background = "#00d400";
+        } else {
+          statusEl.textContent = "Paused"; statusEl.style.color = "#ff9900"; dotEl.style.background = "#ff9900";
+        }
       }
       return;
     }
@@ -300,23 +316,27 @@
         <span id="byob-status" style="color:#ff9900;font-size:12px">Waiting for video...</span>
         <div style="flex:1"></div>
         <span id="byob-time" style="font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px"></span>
+        <button id="byob-collapse" style="
+          background:none;color:white;border:none;cursor:pointer;
+          font-size:14px;opacity:0.5;padding:0 4px;line-height:1;
+        ">▼</button>
       </div>
-      <button id="byob-collapse" style="
-        position:absolute;top:-20px;right:12px;
-        background:rgba(0,0,0,0.85);color:white;border:1px solid rgba(255,255,255,0.15);
-        border-bottom:none;border-radius:6px 6px 0 0;
-        padding:2px 10px;font-size:11px;cursor:pointer;
-        backdrop-filter:blur(8px);
-      ">▼</button>
     `;
 
     // Collapse/expand toggle
     let collapsed = false;
     bar.querySelector("#byob-collapse").addEventListener("click", () => {
       collapsed = !collapsed;
-      bar.style.transform = collapsed ? "translateY(100%)" : "translateY(0)";
-      bar.querySelector("#byob-collapse").textContent = collapsed ? "▲ byob" : "▼";
-      bar.querySelector("#byob-collapse").style.top = collapsed ? "-24px" : "-20px";
+      const content = bar.querySelector("#byob-bar-content");
+      if (collapsed) {
+        content.style.padding = "3px 16px";
+        content.querySelectorAll(":scope > *:not(#byob-collapse):not(:first-child)").forEach(el => el.style.display = "none");
+        bar.querySelector("#byob-collapse").textContent = "▲";
+      } else {
+        content.style.padding = "6px 16px";
+        content.querySelectorAll(":scope > *").forEach(el => el.style.display = "");
+        bar.querySelector("#byob-collapse").textContent = "▼";
+      }
     });
 
     document.body.appendChild(bar);
