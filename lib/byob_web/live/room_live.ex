@@ -343,7 +343,7 @@ defmodule ByobWeb.RoomLive do
           phx-update="ignore"
           data-user-id={@user_id}
           data-current-index={@current_index}
-          class="relative w-full bg-base-300 rounded-lg overflow-hidden"
+          class="relative w-full bg-base-300 rounded-lg overflow-hidden mb-3"
           style="padding-bottom: 56.25%; height: 0;"
         >
           <div class="flex items-center justify-center h-full text-base-content/40">

@@ -77,11 +77,7 @@ const VideoPlayer = {
     if (this.seekDetectorInterval) clearInterval(this.seekDetectorInterval);
     if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
     if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
-    if (this._sponsorBarInterval) clearInterval(this._sponsorBarInterval);
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
-    this.el.parentElement
-      ?.querySelectorAll(".sponsor-bar")
-      .forEach((el) => el.remove());
     if (this.player && this.player.destroy) {
       this.player.destroy();
     }
@@ -319,8 +315,6 @@ const VideoPlayer = {
     // Clear old sponsor data — new segments will arrive via sponsor:segments event
     this._lastSponsorData = null;
     this.sponsorSegments = [];
-    // Remove old sponsor bar
-    this.el.parentElement?.querySelectorAll(".sponsor-bar").forEach((el) => el.remove());
     this._loadVideo(item.source_type, item.source_id, item.url);
     this._pendingState = {
       play_state: "playing",
@@ -383,113 +377,23 @@ const VideoPlayer = {
     const duration = playerDur > 0 ? playerDur : apiDur > 0 ? apiDur : segDur;
 
     this._sponsorBarSegments = barSegments;
-    this._renderSponsorBar(barSegments, duration);
-
-    // Send segments to YouTube embed iframe for in-player rendering (requires extension)
-    if (duration > 0 && barSegments.length > 0) {
-      const iframe = this.el.querySelector("iframe");
-      if (iframe) {
-        iframe.contentWindow.postMessage({
-          type: "byob:sponsor-segments",
-          segments: barSegments,
-          duration: duration,
-        }, "*");
-      }
-    }
-
-    // If duration was 0, retry once player is ready
-    if (duration <= 0 && this.player) {
-      const retryRender = () => {
-        const d = this.player?.getDuration?.() || 0;
-        if (d > 0) this._renderSponsorBar(this._sponsorBarSegments || [], d);
-      };
-      setTimeout(retryRender, 1000);
-      setTimeout(retryRender, 3000);
-    }
-  },
-
-  _renderSponsorBar(segments, duration) {
-    // Remove existing bar
-    this.el.parentElement
-      ?.querySelectorAll(".sponsor-bar")
-      .forEach((el) => el.remove());
-    if (!duration) return;
-
     this._sponsorBarDuration = duration;
 
-    const bar = document.createElement("div");
-    bar.className = "sponsor-bar";
-    bar.style.cssText =
-      "position:relative;height:3px;border-radius:2px;background:rgba(255,255,255,0.12);margin:8px 30px;overflow:visible;cursor:pointer;";
+    // Send segments to YouTube embed iframe for in-player rendering (requires extension)
+    this._sendSegmentsToEmbed();
 
-    // Segment blocks
-    const colors = {
-      sponsor: "#00d400",
-      selfpromo: "#ffff00",
-      interaction: "#cc00ff",
-      intro: "#00ffff",
-      outro: "#0202ed",
-      preview: "#008fd6",
-      music_offtopic: "#ff9900",
-      filler: "#7300FF",
-    };
-
-    if (segments && segments.length > 0) {
-      for (const seg of segments) {
-        const left = (seg.segment[0] / duration) * 100;
-        const width = Math.max(0.3, ((seg.segment[1] - seg.segment[0]) / duration) * 100);
-        const block = document.createElement("div");
-        block.style.cssText = `position:absolute;left:${left}%;width:${width}%;height:100%;background:${colors[seg.category] || "#00d400"};opacity:0.7;border-radius:2px;`;
-        const labels = {
-          sponsor: "Sponsor", selfpromo: "Self Promotion", interaction: "Interaction",
-          intro: "Intro", outro: "Outro", preview: "Preview",
-          music_offtopic: "Non-Music", filler: "Filler",
-        };
-        block.title = labels[seg.category] || seg.category;
-        bar.appendChild(block);
-      }
+    // Retry sending if duration wasn't ready
+    if (duration <= 0 && this.player) {
+      const retry = () => {
+        const d = this.player?.getDuration?.() || 0;
+        if (d > 0) {
+          this._sponsorBarDuration = d;
+          this._sendSegmentsToEmbed();
+        }
+      };
+      setTimeout(retry, 1000);
+      setTimeout(retry, 3000);
     }
-
-    // Playhead — thin red line, same height as bar
-    const playhead = document.createElement("div");
-    playhead.className = "sponsor-bar-playhead";
-    playhead.style.cssText =
-      "position:absolute;top:0;width:2px;height:100%;background:#e33;z-index:3;left:0%;transition:left 0.1s linear;";
-    bar.appendChild(playhead);
-
-    // Progress fill — red tinted
-    const fill = document.createElement("div");
-    fill.className = "sponsor-bar-fill";
-    fill.style.cssText =
-      "position:absolute;left:0;top:0;height:100%;background:rgba(230,50,50,0.25);border-radius:2px 0 0 2px;z-index:1;width:0%;transition:width 0.1s linear;";
-    bar.appendChild(fill);
-
-    // Click to seek
-    bar.style.pointerEvents = "auto";
-    bar.addEventListener("click", (e) => {
-      const rect = bar.getBoundingClientRect();
-      const pct = (e.clientX - rect.left) / rect.width;
-      const seekTime = pct * duration;
-      this._seekTo(seekTime);
-      this.pushEvent("video:seek", { position: seekTime });
-      const serverTime = this.clockSync.serverNow();
-      this.reconcile.setServerState(seekTime, serverTime, this.clockSync);
-      this.reconcile.pauseFor(1000);
-    });
-
-    this.el.insertAdjacentElement("afterend", bar);
-
-    // Start updating playhead
-    if (this._sponsorBarInterval) clearInterval(this._sponsorBarInterval);
-    this._sponsorBarInterval = setInterval(() => {
-      if (!this.player || !this.player.getCurrentTime) return;
-      const pos = this.player.getCurrentTime();
-      const pct = (pos / duration) * 100;
-      const ph = bar.querySelector(".sponsor-bar-playhead");
-      const fl = bar.querySelector(".sponsor-bar-fill");
-      if (ph) ph.style.left = pct + "%";
-      if (fl) fl.style.width = pct + "%";
-    }, 100);
   },
 
   // Detect seeks while paused (YouTube doesn't fire onStateChange for these)
