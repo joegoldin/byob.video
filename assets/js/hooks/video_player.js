@@ -28,6 +28,8 @@ const VideoPlayer = {
     this.sourceId = null;
     this.bufferedState = null;
     this.isReady = false;
+    this.lastKnownPosition = 0;
+    this.seekDetectorInterval = null;
 
     // Listen for server events
     this.handleEvent("sync:state", (state) => this._onSyncState(state));
@@ -52,6 +54,7 @@ const VideoPlayer = {
     this.reconcile.stop();
     this.suppression.destroy();
     this.clockSync.stop();
+    if (this.seekDetectorInterval) clearInterval(this.seekDetectorInterval);
     if (this.player && this.player.destroy) {
       this.player.destroy();
     }
@@ -149,6 +152,7 @@ const VideoPlayer = {
         onReady: () => {
           this.isReady = true;
           this._applyPendingState();
+          this._startSeekDetector();
         },
         onStateChange: (event) => this._onYTStateChange(event),
       },
@@ -171,9 +175,14 @@ const VideoPlayer = {
     if (state === YT_PLAYING) {
       const position = this.player.getCurrentTime();
       this.pushEvent("video:play", { position });
+      // Update own reconcile so it doesn't drift-correct back to old position
+      const serverTime = this.clockSync.serverNow();
+      this.reconcile.setServerState(position, serverTime, this.clockSync);
+      this.reconcile.start();
     } else if (state === YT_PAUSED) {
       const position = this.player.getCurrentTime();
       this.pushEvent("video:pause", { position });
+      this.reconcile.stop();
     } else if (state === YT_ENDED) {
       const currentIndex = this.el.dataset.currentIndex;
       if (currentIndex != null) {
@@ -232,6 +241,23 @@ const VideoPlayer = {
       current_time: 0,
       server_time: this.clockSync.serverNow(),
     };
+  },
+
+  // Detect seeks while paused (YouTube doesn't fire onStateChange for these)
+  _startSeekDetector() {
+    if (this.seekDetectorInterval) clearInterval(this.seekDetectorInterval);
+    this.seekDetectorInterval = setInterval(() => {
+      if (!this.player || !this.player.getCurrentTime) return;
+      const pos = this.player.getCurrentTime();
+      const state = this.player.getPlayerState?.();
+      // Only detect seeks while paused
+      if (state === YT_PAUSED && Math.abs(pos - this.lastKnownPosition) > 1) {
+        if (!this.suppression.isActive()) {
+          this.pushEvent("video:seek", { position: pos });
+        }
+      }
+      this.lastKnownPosition = pos;
+    }, 500);
   },
 
   // Player abstraction
