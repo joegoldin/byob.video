@@ -275,8 +275,8 @@
   }
 
   function injectSegments(progressBar, segments, duration) {
-    // Remove old injected segments
-    progressBar
+    // Remove ALL old injected segments from entire document
+    document
       .querySelectorAll(".byob-sponsor-segment")
       .forEach((el) => el.remove());
 
