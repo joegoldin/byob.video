@@ -47,6 +47,76 @@ defmodule WatchParty.RoomServerTest do
     end
   end
 
+  describe "play/3" do
+    test "updates state to playing", %{pid: pid, room_id: room_id} do
+      {:ok, _} = RoomServer.join(pid, "user1", "Test")
+      RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :now)
+
+      Phoenix.PubSub.subscribe(WatchParty.PubSub, "room:#{room_id}")
+      :ok = RoomServer.play(pid, "user1", 10.0)
+      state = RoomServer.get_state(pid)
+      assert state.play_state == :playing
+
+      assert_receive {:sync_play, %{time: 10.0, user_id: "user1"}}
+    end
+  end
+
+  describe "pause/3" do
+    test "updates state to paused", %{pid: pid, room_id: room_id} do
+      {:ok, _} = RoomServer.join(pid, "user1", "Test")
+      RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :now)
+      RoomServer.play(pid, "user1", 0.0)
+
+      Phoenix.PubSub.subscribe(WatchParty.PubSub, "room:#{room_id}")
+      :ok = RoomServer.pause(pid, "user1", 5.0)
+      state = RoomServer.get_state(pid)
+      assert state.play_state == :paused
+
+      assert_receive {:sync_pause, %{time: 5.0, user_id: "user1"}}
+    end
+  end
+
+  describe "seek/3" do
+    test "updates position", %{pid: pid, room_id: room_id} do
+      {:ok, _} = RoomServer.join(pid, "user1", "Test")
+      RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :now)
+
+      Phoenix.PubSub.subscribe(WatchParty.PubSub, "room:#{room_id}")
+      :ok = RoomServer.seek(pid, "user1", 30.0)
+
+      assert_receive {:sync_seek, %{time: 30.0, user_id: "user1"}}
+    end
+  end
+
+  describe "add_to_queue/4" do
+    test "adds item to queue with :queue mode", %{pid: pid} do
+      {:ok, _} = RoomServer.join(pid, "user1", "Test")
+      :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :queue)
+      state = RoomServer.get_state(pid)
+      assert length(state.queue) == 1
+      assert hd(state.queue).source_type == :youtube
+    end
+
+    test "play now starts playing when nothing is playing", %{pid: pid} do
+      {:ok, _} = RoomServer.join(pid, "user1", "Test")
+      :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :now)
+      state = RoomServer.get_state(pid)
+      assert state.current_index == 0
+      assert state.play_state == :playing
+    end
+
+    test "play now with existing queue inserts after current and jumps", %{pid: pid} do
+      {:ok, _} = RoomServer.join(pid, "user1", "Test")
+      :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=first", :now)
+      :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=queued", :queue)
+      :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=playnow", :now)
+
+      state = RoomServer.get_state(pid)
+      assert state.current_index == 1
+      assert Enum.at(state.queue, 1).source_id == "playnow"
+    end
+  end
+
   describe "empty room cleanup" do
     test "stops after empty timeout", %{pid: pid} do
       ref = Process.monitor(pid)

@@ -5,6 +5,7 @@ defmodule WatchParty.RoomServer do
     :room_id,
     :host_id,
     :cleanup_ref,
+    :sync_correction_ref,
     :empty_timeout,
     users: %{},
     queue: [],
@@ -33,6 +34,42 @@ defmodule WatchParty.RoomServer do
 
   def get_state(pid) do
     GenServer.call(pid, :get_state)
+  end
+
+  def play(pid, user_id, position) do
+    GenServer.call(pid, {:play, user_id, position})
+  end
+
+  def pause(pid, user_id, position) do
+    GenServer.call(pid, {:pause, user_id, position})
+  end
+
+  def seek(pid, user_id, position) do
+    GenServer.call(pid, {:seek, user_id, position})
+  end
+
+  def add_to_queue(pid, user_id, url, mode) do
+    GenServer.call(pid, {:add_to_queue, user_id, url, mode})
+  end
+
+  def video_ended(pid, index) do
+    GenServer.call(pid, {:video_ended, index})
+  end
+
+  def skip(pid) do
+    GenServer.call(pid, :skip)
+  end
+
+  def remove_from_queue(pid, item_id) do
+    GenServer.call(pid, {:remove_from_queue, item_id})
+  end
+
+  def play_index(pid, index) do
+    GenServer.call(pid, {:play_index, index})
+  end
+
+  def rename_user(pid, user_id, new_username) do
+    GenServer.call(pid, {:rename_user, user_id, new_username})
   end
 
   # Server callbacks
@@ -85,6 +122,106 @@ defmodule WatchParty.RoomServer do
     {:reply, snapshot(state), state}
   end
 
+  def handle_call({:play, user_id, position}, _from, state) do
+    now = System.monotonic_time(:millisecond)
+
+    state = %{state | play_state: :playing, current_time: position, last_sync_at: now}
+    state = schedule_sync_correction(state)
+
+    broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:pause, user_id, position}, _from, state) do
+    now = System.monotonic_time(:millisecond)
+
+    state = %{state | play_state: :paused, current_time: position, last_sync_at: now}
+    state = cancel_sync_correction(state)
+
+    broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:seek, user_id, position}, _from, state) do
+    now = System.monotonic_time(:millisecond)
+
+    state = %{state | current_time: position, last_sync_at: now}
+
+    broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:add_to_queue, user_id, url, mode}, _from, state) do
+    case WatchParty.MediaItem.parse_url(url) do
+      {:ok, item} ->
+        item = %{item | added_by: user_id, added_at: DateTime.utc_now()}
+        state = add_item_to_queue(state, item, mode)
+        broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
+        {:reply, :ok, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
+  end
+
+  def handle_call({:video_ended, index}, _from, %{current_index: index} = state) do
+    state = advance_queue(state)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:video_ended, _stale_index}, _from, state) do
+    {:reply, :ok, state}
+  end
+
+  def handle_call(:skip, _from, state) do
+    state = advance_queue(state)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:remove_from_queue, item_id}, _from, state) do
+    idx = Enum.find_index(state.queue, &(&1.id == item_id))
+
+    if idx do
+      queue = List.delete_at(state.queue, idx)
+
+      current_index =
+        cond do
+          state.current_index == nil -> nil
+          idx < state.current_index -> state.current_index - 1
+          idx == state.current_index -> nil
+          true -> state.current_index
+        end
+
+      state = %{state | queue: queue, current_index: current_index}
+      broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
+      {:reply, :ok, state}
+    else
+      {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:play_index, index}, _from, state) when index >= 0 and index < length(state.queue) do
+    now = System.monotonic_time(:millisecond)
+    item = Enum.at(state.queue, index)
+
+    state = %{state | current_index: index, current_time: 0.0, last_sync_at: now, play_state: :playing}
+    state = schedule_sync_correction(state)
+
+    broadcast(state, {:video_changed, %{media_item: item, index: index}})
+    broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:play_index, _index}, _from, state) do
+    {:reply, {:error, :invalid_index}, state}
+  end
+
+  def handle_call({:rename_user, user_id, new_username}, _from, state) do
+    state = put_in(state.users[user_id].username, new_username)
+    broadcast(state, {:users_updated, state.users})
+    {:reply, :ok, state}
+  end
+
   @impl true
   def handle_info(:check_empty, state) do
     if map_size(state.users) == 0 do
@@ -92,6 +229,18 @@ defmodule WatchParty.RoomServer do
     else
       {:noreply, state}
     end
+  end
+
+  def handle_info(:sync_correction, %{play_state: :playing} = state) do
+    now = System.monotonic_time(:millisecond)
+    position = current_position(state)
+    broadcast(state, {:sync_correction, %{expected_time: position, server_time: now}})
+    state = %{state | sync_correction_ref: Process.send_after(self(), :sync_correction, 5000)}
+    {:noreply, state}
+  end
+
+  def handle_info(:sync_correction, state) do
+    {:noreply, state}
   end
 
   # Private helpers
@@ -133,5 +282,60 @@ defmodule WatchParty.RoomServer do
 
   defp broadcast(state, message) do
     Phoenix.PubSub.broadcast(WatchParty.PubSub, "room:#{state.room_id}", message)
+  end
+
+  defp add_item_to_queue(state, item, :queue) do
+    %{state | queue: state.queue ++ [item]}
+  end
+
+  defp add_item_to_queue(state, item, :now) do
+    now = System.monotonic_time(:millisecond)
+
+    case state.current_index do
+      nil ->
+        state = %{state | queue: [item], current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing}
+        state = schedule_sync_correction(state)
+        broadcast(state, {:video_changed, %{media_item: item, index: 0}})
+        state
+
+      idx ->
+        insert_at = idx + 1
+        queue = List.insert_at(state.queue, insert_at, item)
+        state = %{state | queue: queue, current_index: insert_at, current_time: 0.0, last_sync_at: now, play_state: :playing}
+        state = schedule_sync_correction(state)
+        broadcast(state, {:video_changed, %{media_item: item, index: insert_at}})
+        state
+    end
+  end
+
+  defp advance_queue(state) do
+    now = System.monotonic_time(:millisecond)
+    next_index = (state.current_index || -1) + 1
+
+    if next_index < length(state.queue) do
+      item = Enum.at(state.queue, next_index)
+      state = %{state | current_index: next_index, current_time: 0.0, last_sync_at: now, play_state: :playing}
+      state = schedule_sync_correction(state)
+      broadcast(state, {:video_changed, %{media_item: item, index: next_index}})
+      broadcast(state, {:queue_updated, %{queue: state.queue, current_index: next_index}})
+      state
+    else
+      state = %{state | play_state: :ended, current_time: 0.0, last_sync_at: now}
+      state = cancel_sync_correction(state)
+      state
+    end
+  end
+
+  defp schedule_sync_correction(state) do
+    state = cancel_sync_correction(state)
+    ref = Process.send_after(self(), :sync_correction, 5000)
+    %{state | sync_correction_ref: ref}
+  end
+
+  defp cancel_sync_correction(%{sync_correction_ref: nil} = state), do: state
+
+  defp cancel_sync_correction(%{sync_correction_ref: ref} = state) do
+    Process.cancel_timer(ref)
+    %{state | sync_correction_ref: nil}
   end
 end
