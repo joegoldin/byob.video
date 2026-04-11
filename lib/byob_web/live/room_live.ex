@@ -16,6 +16,7 @@ defmodule ByobWeb.RoomLive do
         current_index: nil,
         play_state: :paused,
         current_media: nil,
+        ext_player: nil,
         sidebar_tab: :queue,
         editing_username: false,
         url_preview: nil,
@@ -243,6 +244,7 @@ defmodule ByobWeb.RoomLive do
   end
 
   def handle_info({:video_changed, data}, socket) do
+    socket = assign(socket, ext_player: nil)
     history =
       case RoomServer.get_state(socket.assigns.room_pid) do
         %{history: h} -> h
@@ -278,6 +280,10 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:sb_settings_updated, sb_settings}, socket) do
     # Push updated settings to JS for the auto-skip logic
     {:noreply, socket |> assign(sb_settings: sb_settings) |> push_event("sb:settings", sb_settings)}
+  end
+
+  def handle_info({:extension_player_state, state}, socket) do
+    {:noreply, socket |> assign(ext_player: state) |> push_event("ext:player-state", state)}
   end
 
   def handle_info({:users_updated, users}, socket) do

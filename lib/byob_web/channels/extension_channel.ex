@@ -41,6 +41,18 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
+  def handle_in("video:state", payload, socket) do
+    # Relay extension player state to room for placeholder display
+    Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{socket.assigns.room_id}",
+      {:extension_player_state, %{
+        hooked: payload["hooked"] || false,
+        position: payload["position"] || 0,
+        duration: payload["duration"] || 0,
+        playing: payload["playing"] || false
+      }})
+    {:noreply, socket}
+  end
+
   def handle_in("sync:ping", %{"t1" => t1}, socket) do
     t2 = System.monotonic_time(:millisecond)
     t3 = System.monotonic_time(:millisecond)

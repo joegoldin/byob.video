@@ -40,11 +40,7 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:hooked":
-      // Content script found a <video> element
-      if (channel) {
-        // Notify the room that extension player is connected
-        // (no specific channel event needed — the room knows via join)
-      }
+      if (channel) channel.push("video:state", { hooked: true, position: 0, duration: msg.duration || 0, playing: false });
       break;
 
     case "video:play":
@@ -59,8 +55,8 @@ function handleContentMessage(msg, port, tabId) {
       if (channel) channel.push("video:seek", { position: msg.position });
       break;
 
-    case "video:timeupdate":
-      // Periodic position report — could be used for drift detection
+    case "video:state":
+      if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing });
       break;
   }
 }

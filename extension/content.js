@@ -56,6 +56,11 @@
   }
 
   function activate(roomId, serverUrl) {
+    // Show sync bar immediately (non-YouTube only)
+    if (!window.location.hostname.includes("youtube.com")) {
+      injectSyncBar();
+    }
+
     // Connect port to service worker
     port = chrome.runtime.connect({ name: "watchparty" });
     port.postMessage({
@@ -132,20 +137,25 @@
       });
     }
 
-    // Inject sync control bar at bottom of page (for non-YouTube sites)
+    // Update sync bar status (bar was injected in activate())
     if (!window.location.hostname.includes("youtube.com")) {
-      injectSyncBar(video);
+      updateSyncBarStatus("hooked");
     }
 
-    // Start periodic time reporting when playing
+    // Update sync bar to show we found a video
+    updateSyncBarStatus("hooked");
+
+    // Send periodic state updates (position, duration, playing) for relay to room
     timeReportInterval = setInterval(() => {
-      if (hookedVideo && !hookedVideo.paused && port) {
+      if (hookedVideo && port) {
         port.postMessage({
-          type: "video:timeupdate",
+          type: "video:state",
           position: hookedVideo.currentTime,
+          duration: hookedVideo.duration || 0,
+          playing: !hookedVideo.paused,
         });
       }
-    }, 5000);
+    }, 1000);
   }
 
   function unhookVideo() {
@@ -240,55 +250,70 @@
     }
   }
 
-  function injectSyncBar(video) {
+  function injectSyncBar() {
     if (document.getElementById("byob-sync-bar")) return;
 
     const bar = document.createElement("div");
     bar.id = "byob-sync-bar";
     bar.style.cssText = `
       position: fixed; bottom: 0; left: 0; right: 0; z-index: 999999;
-      background: rgba(0,0,0,0.9); color: white; padding: 8px 16px;
+      background: rgba(0,0,0,0.92); color: white; padding: 8px 16px;
       display: flex; align-items: center; gap: 12px; font-family: system-ui, sans-serif;
-      font-size: 13px; backdrop-filter: blur(8px); border-top: 1px solid rgba(255,255,255,0.1);
+      font-size: 13px; backdrop-filter: blur(10px); border-top: 1px solid rgba(255,255,255,0.1);
     `;
 
-    const logo = document.createElement("span");
-    logo.textContent = "byob";
-    logo.style.cssText = "font-weight: bold; font-size: 14px; opacity: 0.7;";
+    bar.innerHTML = `
+      <span style="font-weight:bold;font-size:14px;opacity:0.7">byob</span>
+      <span id="byob-dot" style="width:6px;height:6px;border-radius:50%;background:#ff9900;flex-shrink:0"></span>
+      <span id="byob-status" style="color:#ff9900;font-size:12px">Waiting for video... Click play to start</span>
+      <div style="flex:1"></div>
+      <span id="byob-time" style="font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px"></span>
+    `;
 
-    const status = document.createElement("span");
-    status.id = "byob-sync-status";
-    status.textContent = "Synced";
-    status.style.cssText = "color: #00d400; font-size: 12px;";
-
-    const dot = document.createElement("span");
-    dot.style.cssText = "width: 6px; height: 6px; border-radius: 50%; background: #00d400; flex-shrink: 0;";
-
-    const spacer = document.createElement("div");
-    spacer.style.cssText = "flex: 1;";
-
-    const time = document.createElement("span");
-    time.id = "byob-sync-time";
-    time.style.cssText = "font-variant-numeric: tabular-nums; opacity: 0.6; font-size: 12px;";
-
-    bar.appendChild(logo);
-    bar.appendChild(dot);
-    bar.appendChild(status);
-    bar.appendChild(spacer);
-    bar.appendChild(time);
     document.body.appendChild(bar);
-
-    // Update time display
-    setInterval(() => {
-      if (!video) return;
-      const t = video.currentTime || 0;
-      const m = Math.floor(t / 60);
-      const s = Math.floor(t % 60).toString().padStart(2, "0");
-      time.textContent = `${m}:${s}`;
-      status.textContent = video.paused ? "Paused" : "Synced";
-      dot.style.background = video.paused ? "#ff9900" : "#00d400";
-    }, 250);
   }
+
+  function updateSyncBarStatus(state) {
+    const dot = document.getElementById("byob-dot");
+    const status = document.getElementById("byob-status");
+    if (!dot || !status) return;
+
+    if (state === "hooked") {
+      dot.style.background = "#00d400";
+      status.style.color = "#00d400";
+      status.textContent = "Video captured - Syncing";
+    } else if (state === "waiting") {
+      dot.style.background = "#ff9900";
+      status.style.color = "#ff9900";
+      status.textContent = "Waiting for video... Click play to start";
+    }
+  }
+
+  // Update time display on the sync bar
+  setInterval(() => {
+    if (!hookedVideo) return;
+    const timeEl = document.getElementById("byob-time");
+    const statusEl = document.getElementById("byob-status");
+    const dotEl = document.getElementById("byob-dot");
+    if (!timeEl) return;
+
+    const t = hookedVideo.currentTime || 0;
+    const d = hookedVideo.duration || 0;
+    const fmt = (s) => Math.floor(s / 60) + ":" + Math.floor(s % 60).toString().padStart(2, "0");
+    timeEl.textContent = d > 0 ? `${fmt(t)} / ${fmt(d)}` : fmt(t);
+
+    if (statusEl && dotEl) {
+      if (hookedVideo.paused) {
+        statusEl.textContent = "Paused";
+        statusEl.style.color = "#ff9900";
+        dotEl.style.background = "#ff9900";
+      } else {
+        statusEl.textContent = "Syncing";
+        statusEl.style.color = "#00d400";
+        dotEl.style.background = "#00d400";
+      }
+    }
+  }, 250);
 
   function cleanup() {
     unhookVideo();
