@@ -38,6 +38,14 @@ const VideoPlayer = {
     this.sbSettings = {};
     this._lastSponsorData = null;
 
+    // Listen for YouTube embed iframe signaling it's ready for segments
+    this._embedReadyHandler = (e) => {
+      if (e.data?.type === "byob:embed-ready") {
+        this._sendSegmentsToEmbed();
+      }
+    };
+    window.addEventListener("message", this._embedReadyHandler);
+
     // Listen for server events
     this.handleEvent("sync:state", (state) => this._onSyncState(state));
     this.handleEvent("sync:play", (data) => this._onSyncPlay(data));
@@ -70,6 +78,7 @@ const VideoPlayer = {
     if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
     if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
     if (this._sponsorBarInterval) clearInterval(this._sponsorBarInterval);
+    if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
     this.el.parentElement
       ?.querySelectorAll(".sponsor-bar")
       .forEach((el) => el.remove());
@@ -311,6 +320,18 @@ const VideoPlayer = {
     };
   },
 
+  _sendSegmentsToEmbed() {
+    if (!this._sponsorBarSegments || !this._sponsorBarDuration) return;
+    const iframe = this.el.querySelector("iframe");
+    if (iframe) {
+      iframe.contentWindow.postMessage({
+        type: "byob:sponsor-segments",
+        segments: this._sponsorBarSegments,
+        duration: this._sponsorBarDuration,
+      }, "*");
+    }
+  },
+
   _retrySponsorBar(attempt = 0) {
     if (!this._lastSponsorData || attempt > 10) return;
     const dur = this.player?.getDuration?.() || 0;
@@ -354,6 +375,18 @@ const VideoPlayer = {
 
     this._sponsorBarSegments = barSegments;
     this._renderSponsorBar(barSegments, duration);
+
+    // Send segments to YouTube embed iframe for in-player rendering (requires extension)
+    if (duration > 0 && barSegments.length > 0) {
+      const iframe = this.el.querySelector("iframe");
+      if (iframe) {
+        iframe.contentWindow.postMessage({
+          type: "byob:sponsor-segments",
+          segments: barSegments,
+          duration: duration,
+        }, "*");
+      }
+    }
 
     // If duration was 0, retry once player is ready
     if (duration <= 0 && this.player) {

@@ -334,7 +334,7 @@ defmodule ByobWeb.RoomLive do
 
     <div class="flex flex-col lg:flex-row gap-3 h-[calc(100vh-3.5rem)]">
       <%!-- Main content --%>
-      <div class="flex-1 min-w-0 flex flex-col">
+      <div class="flex-1 min-w-0 flex flex-col min-h-0">
 
         <%!-- Player --%>
         <div
@@ -343,7 +343,8 @@ defmodule ByobWeb.RoomLive do
           phx-update="ignore"
           data-user-id={@user_id}
           data-current-index={@current_index}
-          class="flex-1 min-h-0 bg-base-300 rounded-lg overflow-hidden"
+          class="w-full bg-base-300 rounded-lg overflow-hidden"
+          style="aspect-ratio: 16/9; max-height: calc(100vh - 10rem);"
         >
           <div class="flex items-center justify-center h-full text-base-content/40">
             Paste a URL below to start watching

@@ -226,6 +226,108 @@
     unhookVideo();
   }
 
+  // === YouTube Embed Seek Bar Injection ===
+  // If we're inside a YouTube embed iframe, listen for sponsor segments
+  // from the parent page and inject colored bars into YouTube's seek bar.
+  function initYouTubeEmbed() {
+    if (!window.location.hostname.includes("youtube.com")) return;
+    if (!window.location.pathname.startsWith("/embed/")) return;
+
+    const colors = {
+      sponsor: "#00d400",
+      selfpromo: "#ffff00",
+      interaction: "#cc00ff",
+      intro: "#00ffff",
+      outro: "#0202ed",
+      preview: "#008fd6",
+      music_offtopic: "#ff9900",
+      filler: "#7300FF",
+    };
+
+    window.addEventListener("message", (e) => {
+      if (!e.data || e.data.type !== "byob:sponsor-segments") return;
+      const { segments, duration } = e.data;
+      if (!segments || !duration) return;
+
+      // Wait for YouTube's seek bar to appear
+      const tryInject = (attempt) => {
+        if (attempt > 20) return;
+        // Try multiple selectors for the progress bar
+        const progressBar =
+          document.querySelector(".ytp-progress-bar") ||
+          document.querySelector(".ytp-progress-list") ||
+          document.querySelector("yt-progress-bar");
+        if (!progressBar) {
+          setTimeout(() => tryInject(attempt + 1), 500);
+          return;
+        }
+        injectSegments(progressBar, segments, duration);
+      };
+      tryInject(0);
+    });
+
+    // Tell parent we're ready
+    window.parent.postMessage({ type: "byob:embed-ready" }, "*");
+  }
+
+  function injectSegments(progressBar, segments, duration) {
+    // Remove old injected segments
+    progressBar
+      .querySelectorAll(".byob-sponsor-segment")
+      .forEach((el) => el.remove());
+
+    const colors = {
+      sponsor: "#00d400",
+      selfpromo: "#ffff00",
+      interaction: "#cc00ff",
+      intro: "#00ffff",
+      outro: "#0202ed",
+      preview: "#008fd6",
+      music_offtopic: "#ff9900",
+      filler: "#7300FF",
+    };
+
+    const labels = {
+      sponsor: "Sponsor",
+      selfpromo: "Self Promotion",
+      interaction: "Interaction",
+      intro: "Intro",
+      outro: "Outro",
+      preview: "Preview",
+      music_offtopic: "Non-Music",
+      filler: "Filler",
+    };
+
+    // Make sure the progress bar is positioned for absolute children
+    if (getComputedStyle(progressBar).position === "static") {
+      progressBar.style.position = "relative";
+    }
+
+    for (const seg of segments) {
+      const left = (seg.segment[0] / duration) * 100;
+      const width = Math.max(
+        0.3,
+        ((seg.segment[1] - seg.segment[0]) / duration) * 100
+      );
+      const el = document.createElement("div");
+      el.className = "byob-sponsor-segment";
+      el.title = labels[seg.category] || seg.category;
+      el.style.cssText = `
+        position: absolute;
+        left: ${left}%;
+        width: ${width}%;
+        height: 100%;
+        background: ${colors[seg.category] || "#00d400"};
+        opacity: 0.7;
+        z-index: 40;
+        pointer-events: none;
+        border-radius: 1px;
+      `;
+      progressBar.appendChild(el);
+    }
+  }
+
   // Run
   init();
+  initYouTubeEmbed();
 })();
