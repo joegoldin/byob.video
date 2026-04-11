@@ -370,7 +370,7 @@ defmodule ByobWeb.RoomLive do
                 room_id: '#{@room_id}',
                 server_url: '#{ByobWeb.Endpoint.url()}'
               }, '*');
-              window.open('#{@current_media.url}', 'byob_player', 'width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no');
+              window._byobPlayerWindow = window.open('#{@current_media.url}', 'byob_player', 'width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no');
             "}
             class="btn btn-primary btn-sm"
           >

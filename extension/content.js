@@ -13,8 +13,12 @@
 
   // Check if we should activate on this page
   async function init() {
-    // Listen for room page telling us to open an external site
+    // Listen for room page messages
     window.addEventListener("message", (e) => {
+      if (e.data?.type === "byob:clear-external") {
+        chrome.storage.local.remove("watchparty_config");
+        return;
+      }
       if (e.data?.type === "byob:open-external") {
         chrome.storage.local.set({
           watchparty_config: {
@@ -27,25 +31,28 @@
       }
     });
 
-    // Check storage for active room config
-    try {
-      const config = await chrome.storage.local.get("watchparty_config");
-      if (config.watchparty_config) {
-        const { room_id, server_url, target_url, timestamp } = config.watchparty_config;
-        // Only activate if config is recent (last 30 minutes) and URL matches
-        const age = Date.now() - (timestamp || 0);
-        if (age < 30 * 60 * 1000 && target_url) {
-          const targetBase = new URL(target_url).origin + new URL(target_url).pathname;
-          const currentBase = window.location.origin + window.location.pathname;
-          if (currentBase.startsWith(targetBase) || targetBase.startsWith(currentBase)) {
-            activate(room_id, server_url);
-            return;
+    // Check storage for active room config — retry a few times since
+    // storage write from room page may not have completed yet
+    const tryActivate = async (attempt) => {
+      if (attempt > 5) return;
+      try {
+        const config = await chrome.storage.local.get("watchparty_config");
+        if (config.watchparty_config) {
+          const { room_id, server_url, target_url, timestamp } = config.watchparty_config;
+          const age = Date.now() - (timestamp || 0);
+          if (age < 30 * 60 * 1000 && target_url) {
+            const targetBase = new URL(target_url).origin + new URL(target_url).pathname;
+            const currentBase = window.location.origin + window.location.pathname;
+            if (currentBase.startsWith(targetBase) || targetBase.startsWith(currentBase)) {
+              activate(room_id, server_url);
+              return;
+            }
           }
         }
-      }
-    } catch (e) {
-      // Storage not available or error
-    }
+      } catch (e) {}
+      setTimeout(() => tryActivate(attempt + 1), 500);
+    };
+    tryActivate(0);
   }
 
   function activate(roomId, serverUrl) {

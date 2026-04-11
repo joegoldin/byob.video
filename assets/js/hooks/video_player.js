@@ -323,6 +323,13 @@ const VideoPlayer = {
     const item = data.media_item;
     this.el.dataset.currentIndex = data.index;
     this.reconcile.stop();
+    // Close any open external player window
+    if (window._byobPlayerWindow && !window._byobPlayerWindow.closed) {
+      try { window._byobPlayerWindow.close(); } catch (_) {}
+      window._byobPlayerWindow = null;
+    }
+    // Clear extension storage config
+    window.postMessage({ type: "byob:clear-external" }, "*");
     // Clear old sponsor data — new segments will arrive via sponsor:segments event
     this._lastSponsorData = null;
     this.sponsorSegments = [];
