@@ -79,6 +79,14 @@
     });
 
     port.onMessage.addListener(handleSWMessage);
+
+    // Relay messages from nested iframes to the SW port
+    window.addEventListener("message", (e) => {
+      if (e.data?.type === "byob:relay" && e.data.payload && port) {
+        port.postMessage(e.data.payload);
+      }
+    });
+
     port.onDisconnect.addListener(() => {
       port = null;
       cleanup();
@@ -138,13 +146,13 @@
     video.addEventListener("pause", onVideoPause);
     video.addEventListener("seeked", onVideoSeeked);
 
-    // Report that we found a video
+    // Report that we found a video — try port first, fall back to top-frame relay
+    const reportHooked = { type: "video:hooked", duration: video.duration || 0 };
     if (port) {
-      port.postMessage({
-        type: "video:hooked",
-        duration: video.duration || 0,
-      });
+      port.postMessage(reportHooked);
     }
+    // Also relay up to top frame in case port isn't working in nested iframe
+    try { window.top.postMessage({ type: "byob:relay", payload: reportHooked }, "*"); } catch (_) {}
 
     // Update sync bar status (bar was injected in activate())
     if (!window.location.hostname.includes("youtube.com")) {
@@ -156,13 +164,16 @@
 
     // Send periodic state updates (position, duration, playing) for relay to room
     timeReportInterval = setInterval(() => {
-      if (hookedVideo && port) {
-        port.postMessage({
+      if (hookedVideo) {
+        const msg = {
           type: "video:state",
           position: hookedVideo.currentTime,
           duration: hookedVideo.duration || 0,
           playing: !hookedVideo.paused,
-        });
+        };
+        if (port) port.postMessage(msg);
+        // Also relay up in case port isn't working in nested iframe
+        try { window.top.postMessage({ type: "byob:relay", payload: msg }, "*"); } catch (_) {}
       }
     }, 1000);
   }

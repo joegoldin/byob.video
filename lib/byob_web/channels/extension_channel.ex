@@ -42,6 +42,8 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   def handle_in("video:state", payload, socket) do
+    require Logger
+    Logger.info("[ExtChannel] video:state received: #{inspect(payload)}")
     # Relay extension player state to room for placeholder display
     Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{socket.assigns.room_id}",
       {:extension_player_state, %{
