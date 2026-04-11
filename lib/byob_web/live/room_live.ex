@@ -343,8 +343,7 @@ defmodule ByobWeb.RoomLive do
           phx-update="ignore"
           data-user-id={@user_id}
           data-current-index={@current_index}
-          class="w-full bg-base-300 rounded-lg overflow-hidden"
-          style="aspect-ratio: 16/9; max-height: calc(100vh - 10rem);"
+          class="flex-1 min-h-0 w-full bg-base-300 rounded-lg overflow-hidden"
         >
           <div class="flex items-center justify-center h-full text-base-content/40">
             Paste a URL below to start watching
