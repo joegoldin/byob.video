@@ -480,7 +480,7 @@ defmodule WatchPartyWeb.RoomLive do
         </div>
 
         <%!-- Users card — pinned at bottom --%>
-        <div class="card bg-base-200 mt-4 flex-shrink-0">
+        <div class="card bg-base-200 mt-4 mb-4 flex-shrink-0">
           <div class="card-body p-4">
             <h3 class="card-title text-sm">
               Users
