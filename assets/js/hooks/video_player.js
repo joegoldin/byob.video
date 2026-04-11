@@ -290,7 +290,7 @@ const VideoPlayer = {
       if (this.sbSettings && this.sbSettings[cat]) return this.sbSettings[cat];
       // Defaults matching server defaults
       const defaults = {
-        sponsor: "auto_skip", selfpromo: "disabled", interaction: "disabled",
+        sponsor: "auto_skip", selfpromo: "show_bar", interaction: "show_bar",
         intro: "show_bar", outro: "show_bar", preview: "show_bar",
         music_offtopic: "disabled", filler: "show_bar",
       };
@@ -333,7 +333,7 @@ const VideoPlayer = {
     const bar = document.createElement("div");
     bar.className = "sponsor-bar";
     bar.style.cssText =
-      "position:relative;height:6px;border-radius:3px;background:rgba(255,255,255,0.1);margin-top:4px;overflow:hidden;cursor:pointer;";
+      "position:relative;height:8px;border-radius:0 0 4px 4px;background:rgba(255,255,255,0.08);margin-top:-1px;overflow:visible;cursor:pointer;";
 
     // Segment blocks
     const colors = {
@@ -362,14 +362,14 @@ const VideoPlayer = {
     const playhead = document.createElement("div");
     playhead.className = "sponsor-bar-playhead";
     playhead.style.cssText =
-      "position:absolute;top:-2px;width:10px;height:10px;border-radius:50%;background:white;box-shadow:0 0 3px rgba(0,0,0,0.5);transform:translateX(-50%);z-index:2;left:0%;transition:left 0.1s linear;";
+      "position:absolute;top:-3px;width:14px;height:14px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(0,0,0,0.4);transform:translateX(-50%);z-index:3;left:0%;transition:left 0.1s linear;";
     bar.appendChild(playhead);
 
     // Progress fill
     const fill = document.createElement("div");
     fill.className = "sponsor-bar-fill";
     fill.style.cssText =
-      "position:absolute;left:0;top:0;height:100%;background:rgba(255,255,255,0.25);z-index:1;width:0%;transition:width 0.1s linear;";
+      "position:absolute;left:0;top:0;height:100%;background:rgba(255,255,255,0.2);border-radius:0 0 0 4px;z-index:1;width:0%;transition:width 0.1s linear;";
     bar.appendChild(fill);
 
     // Click to seek
@@ -448,17 +448,82 @@ const VideoPlayer = {
     }, 100);
 
     // SponsorBlock skip check
+    this._lastSkippedUUID = null;
     if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
     this.sponsorCheckInterval = setInterval(() => {
       if (!this.player || !this.player.getCurrentTime || this.sponsorSegments.length === 0) return;
       const pos = this.player.getCurrentTime();
       for (const seg of this.sponsorSegments) {
         if (pos >= seg.segment[0] && pos < seg.segment[1] - 0.5) {
-          this._seekTo(seg.segment[1]);
+          if (this._lastSkippedUUID !== seg.uuid) {
+            this._lastSkippedUUID = seg.uuid;
+            this._seekTo(seg.segment[1]);
+            this._showSkipToast(seg.category);
+          }
           break;
         }
       }
     }, 250);
+  },
+
+  _showSkipToast(category) {
+    const labels = {
+      sponsor: "Sponsor",
+      selfpromo: "Self Promotion",
+      interaction: "Interaction",
+      intro: "Intro",
+      outro: "Outro",
+      preview: "Preview",
+      music_offtopic: "Non-Music",
+      filler: "Filler",
+    };
+    const colors = {
+      sponsor: "#00d400",
+      selfpromo: "#ffff00",
+      interaction: "#cc00ff",
+      intro: "#00ffff",
+      outro: "#0202ed",
+      preview: "#008fd6",
+      music_offtopic: "#ff9900",
+      filler: "#7300FF",
+    };
+    const label = labels[category] || category;
+    const color = colors[category] || "#00d400";
+
+    // Remove existing toast
+    document.querySelector(".sb-skip-toast")?.remove();
+
+    const toast = document.createElement("div");
+    toast.className = "sb-skip-toast";
+    toast.style.cssText = `
+      position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+      padding:8px 16px;border-radius:8px;
+      background:rgba(0,0,0,0.85);color:white;
+      font-size:13px;z-index:9999;
+      display:flex;align-items:center;gap:8px;
+      animation:sb-toast-in 0.2s ease-out;
+    `;
+    toast.innerHTML = `
+      <span style="width:10px;height:10px;border-radius:2px;background:${color};flex-shrink:0;"></span>
+      Skipped ${label}
+    `;
+
+    // Add animation keyframes if not present
+    if (!document.getElementById("sb-toast-style")) {
+      const style = document.createElement("style");
+      style.id = "sb-toast-style";
+      style.textContent = `
+        @keyframes sb-toast-in { from { opacity:0; transform:translateX(-50%) translateY(10px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
+        @keyframes sb-toast-out { from { opacity:1; } to { opacity:0; } }
+      `;
+      document.head.appendChild(style);
+    }
+
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.animation = "sb-toast-out 0.3s ease-in forwards";
+      setTimeout(() => toast.remove(), 300);
+    }, 2000);
   },
 
   // Player abstraction

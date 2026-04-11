@@ -3,8 +3,8 @@ defmodule Byob.RoomServer do
 
   @default_sb_settings %{
     "sponsor" => "auto_skip",
-    "selfpromo" => "disabled",
-    "interaction" => "disabled",
+    "selfpromo" => "show_bar",
+    "interaction" => "show_bar",
     "intro" => "show_bar",
     "outro" => "show_bar",
     "preview" => "show_bar",
