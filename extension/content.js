@@ -40,12 +40,21 @@
         if (config.watchparty_config) {
           const { room_id, server_url, target_url, timestamp } = config.watchparty_config;
           const age = Date.now() - (timestamp || 0);
-          if (age < 30 * 60 * 1000 && target_url) {
-            const targetBase = new URL(target_url).origin + new URL(target_url).pathname;
-            const currentBase = window.location.origin + window.location.pathname;
-            if (currentBase.startsWith(targetBase) || targetBase.startsWith(currentBase)) {
+          if (age < 30 * 60 * 1000) {
+            // In nested iframes (video player embeds), always activate
+            const isTopFrame = window === window.top;
+            if (!isTopFrame) {
               activate(room_id, server_url);
               return;
+            }
+            // In top frame, match URL
+            if (target_url) {
+              const targetBase = new URL(target_url).origin + new URL(target_url).pathname;
+              const currentBase = window.location.origin + window.location.pathname;
+              if (currentBase.startsWith(targetBase) || targetBase.startsWith(currentBase)) {
+                activate(room_id, server_url);
+                return;
+              }
             }
           }
         }
