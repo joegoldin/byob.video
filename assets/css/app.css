@@ -102,4 +102,7 @@
 /* Make LiveView wrapper divs transparent for layout */
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
+/* Hide extension-required warning when extension is installed */
+html[data-byob-extension] .byob-no-ext { display: none !important; }
+
 /* This file is for your main application CSS */

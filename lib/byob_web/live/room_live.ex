@@ -450,12 +450,27 @@ defmodule ByobWeb.RoomLive do
             :if={@url_preview && @url_preview.source_type == :extension_required}
             class="mt-2 flex items-center gap-3 p-3 rounded-lg bg-base-200"
           >
-            <div class="w-20 h-12 bg-base-300 rounded flex-shrink-0 flex items-center justify-center">
+            <img
+              :if={@url_preview.thumbnail_url}
+              src={@url_preview.thumbnail_url}
+              class="w-20 h-12 object-cover rounded flex-shrink-0"
+            />
+            <div
+              :if={!@url_preview.thumbnail_url}
+              class="w-20 h-12 bg-base-300 rounded flex-shrink-0 flex items-center justify-center"
+            >
               <span class="text-xs text-base-content/30">EXT</span>
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium">External site</p>
-              <p class="text-xs text-base-content/50">Requires extension to sync</p>
+              <p :if={@url_preview.title} class="text-sm font-medium truncate">{@url_preview.title}</p>
+              <p :if={!@url_preview.title} class="text-sm font-medium">External site</p>
+              <%!-- Extension not installed warning (hidden by extension via data attribute) --%>
+              <p class="text-xs text-warning byob-no-ext">
+                <a href="https://github.com/joegoldin/byob.video" target="_blank" class="underline">
+                  Extension required
+                </a>
+                to sync this site
+              </p>
             </div>
             <div class="flex gap-1 flex-shrink-0">
               <button type="submit" name="mode" value="now" class="btn btn-primary btn-sm">

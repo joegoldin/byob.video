@@ -11,6 +11,9 @@
   let safetyTimeout = null;
   let timeReportInterval = null;
 
+  // Signal extension is installed (page JS can detect this)
+  document.documentElement.setAttribute("data-byob-extension", "true");
+
   // Check if we should activate on this page
   async function init() {
     // Listen for room page messages

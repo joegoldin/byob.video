@@ -159,7 +159,7 @@ const VideoPlayer = {
     }
   },
 
-  async _loadVideo(sourceType, sourceId, url) {
+  async _loadVideo(sourceType, sourceId, url, mediaItem) {
     this.sourceType = sourceType;
     this.sourceId = sourceId;
 
@@ -171,12 +171,18 @@ const VideoPlayer = {
         try { this.player.destroy(); } catch (_) {}
         this.player = null;
       }
-      this.el.innerHTML = `
-        <div class="absolute inset-0 flex flex-col items-center justify-center gap-4 text-base-content/60" id="ext-placeholder">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+      const title = mediaItem?.title || url;
+      const thumb = mediaItem?.thumbnail_url;
+      const thumbHtml = thumb
+        ? `<img src="${thumb}" class="w-32 h-20 object-cover rounded opacity-80" />`
+        : `<svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
             <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-          </svg>
-          <p class="text-sm" id="ext-status">Waiting for external player...</p>
+          </svg>`;
+      this.el.innerHTML = `
+        <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-base-content/60" id="ext-placeholder">
+          ${thumbHtml}
+          <p class="text-sm font-medium text-base-content/70 max-w-md text-center px-4 line-clamp-2" title="${title}">${title}</p>
+          <p class="text-xs" id="ext-status">Waiting for external player...</p>
           <div id="ext-progress-container" class="w-3/4 max-w-md" style="display:none">
             <div class="relative h-1 rounded bg-base-content/10 overflow-hidden">
               <div id="ext-progress-fill" class="absolute left-0 top-0 h-full bg-primary rounded transition-all" style="width:0%"></div>
@@ -344,7 +350,7 @@ const VideoPlayer = {
     this.sponsorSegments = [];
     this._sponsorBarSegments = null;
     this._sponsorBarDuration = 0;
-    this._loadVideo(item.source_type, item.source_id, item.url);
+    this._loadVideo(item.source_type, item.source_id, item.url, item);
     this._pendingState = {
       play_state: "playing",
       current_time: 0,
