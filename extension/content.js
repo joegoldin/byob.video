@@ -290,18 +290,37 @@
 
     bar.style.cssText = `
       position: fixed; bottom: 0; left: 0; right: 0; z-index: 999999;
-      background: rgba(0,0,0,0.92); color: white; padding: 6px 16px;
-      display: flex; align-items: center; gap: 12px; font-family: system-ui, sans-serif;
-      font-size: 13px; backdrop-filter: blur(10px); border-top: 1px solid rgba(255,255,255,0.1);
+      background: rgba(0,0,0,0.92); color: white;
+      font-family: system-ui, sans-serif; font-size: 13px;
+      backdrop-filter: blur(10px); border-top: 1px solid rgba(255,255,255,0.15);
+      transition: transform 0.2s ease;
     `;
 
     bar.innerHTML = `
-      <span style="font-weight:bold;font-size:14px;opacity:0.7">byob</span>
-      <span id="byob-dot" style="width:6px;height:6px;border-radius:50%;background:#ff9900;flex-shrink:0"></span>
-      <span id="byob-status" style="color:#ff9900;font-size:12px">Waiting for video... Click play to start</span>
-      <div style="flex:1"></div>
-      <span id="byob-time" style="font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px"></span>
+      <div id="byob-bar-content" style="display:flex;align-items:center;gap:12px;padding:6px 16px;">
+        <span style="font-weight:bold;font-size:14px;opacity:0.7">byob</span>
+        <span id="byob-dot" style="width:6px;height:6px;border-radius:50%;background:#ff9900;flex-shrink:0"></span>
+        <span id="byob-status" style="color:#ff9900;font-size:12px">Waiting for video...</span>
+        <div style="flex:1"></div>
+        <span id="byob-time" style="font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px"></span>
+      </div>
+      <button id="byob-collapse" style="
+        position:absolute;top:-20px;right:12px;
+        background:rgba(0,0,0,0.85);color:white;border:1px solid rgba(255,255,255,0.15);
+        border-bottom:none;border-radius:6px 6px 0 0;
+        padding:2px 10px;font-size:11px;cursor:pointer;
+        backdrop-filter:blur(8px);
+      ">▼</button>
     `;
+
+    // Collapse/expand toggle
+    let collapsed = false;
+    bar.querySelector("#byob-collapse").addEventListener("click", () => {
+      collapsed = !collapsed;
+      bar.style.transform = collapsed ? "translateY(100%)" : "translateY(0)";
+      bar.querySelector("#byob-collapse").textContent = collapsed ? "▲ byob" : "▼";
+      bar.querySelector("#byob-collapse").style.top = collapsed ? "-24px" : "-20px";
+    });
 
     document.body.appendChild(bar);
   }
