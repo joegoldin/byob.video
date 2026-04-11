@@ -149,6 +149,12 @@ defmodule Byob.RoomServer do
       })
       |> maybe_set_host(user_id)
 
+    # Fetch sponsor segments if we have a current YouTube video but no segments
+    if state.sponsor_segments == [] && state.current_index do
+      current_item = Enum.at(state.queue, state.current_index)
+      if current_item, do: fetch_sponsor_segments(current_item)
+    end
+
     broadcast(state, {:users_updated, state.users})
     {:reply, {:ok, snapshot(state)}, state}
   end
