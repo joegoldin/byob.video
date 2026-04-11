@@ -42,3 +42,5 @@ npm-debug.log
 # nix flake result
 result/
 result
+result-chrome
+result-firefox
