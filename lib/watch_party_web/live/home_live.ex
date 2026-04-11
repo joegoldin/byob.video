@@ -12,10 +12,10 @@ defmodule WatchPartyWeb.HomeLive do
 
   def render(assigns) do
     ~H"""
-    <div class="flex items-center justify-center min-h-[60vh]">
-      <div class="text-center">
-        <h1 class="text-4xl font-bold mb-8">WatchParty</h1>
-        <p class="text-lg mb-8 text-gray-600">Watch videos together in sync</p>
+    <div class="flex items-center justify-center min-h-[70vh]">
+      <div class="card bg-base-200 shadow-xl p-10 text-center">
+        <h1 class="text-5xl font-bold mb-2">WatchParty</h1>
+        <p class="text-base-content/60 mb-8">Watch videos together in sync</p>
         <button phx-click="create_room" class="btn btn-primary btn-lg">
           Create Room
         </button>

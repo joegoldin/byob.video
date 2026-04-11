@@ -177,10 +177,12 @@ defmodule WatchPartyWeb.RoomLive do
 
   def render(assigns) do
     ~H"""
-    <div class="flex gap-4">
-      <div class="flex-1">
-        <div class="mb-4 flex items-center gap-2">
-          <span class="font-mono text-sm text-gray-500">Room: {@room_id}</span>
+    <div class="flex flex-col lg:flex-row gap-4">
+      <%!-- Main content --%>
+      <div class="flex-1 min-w-0">
+        <%!-- Room header --%>
+        <div class="mb-3 flex items-center gap-2">
+          <div class="badge badge-neutral font-mono">{@room_id}</div>
           <button
             id="copy-url"
             phx-hook="CopyUrl"
@@ -191,26 +193,31 @@ defmodule WatchPartyWeb.RoomLive do
           </button>
         </div>
 
+        <%!-- Player --%>
         <div
           id="player"
           phx-hook="VideoPlayer"
           phx-update="ignore"
           data-user-id={@user_id}
           data-current-index={@current_index}
-          class="aspect-video bg-black rounded mb-4"
+          class="aspect-video bg-base-300 rounded-lg overflow-hidden mb-3"
         >
-          <div class="flex items-center justify-center h-full text-gray-500">
-            No video playing
+          <div class="flex items-center justify-center h-full text-base-content/40">
+            Paste a URL below to start watching
           </div>
         </div>
 
+        <%!-- Extension mode banner --%>
         <div
           :if={@current_media && @current_media.source_type == :extension_required}
-          class="mb-4 p-4 rounded bg-base-200"
+          class="alert mb-3"
         >
-          <p class="text-sm mb-2">
-            This video requires the WatchParty browser extension to sync.
-          </p>
+          <div>
+            <p class="text-sm font-medium">Extension required for this site</p>
+            <p class="text-xs text-base-content/60">
+              Click play on the video for the extension to hook it.
+            </p>
+          </div>
           <a
             href={extension_open_url(@current_media.url, @room_id)}
             target="_blank"
@@ -218,79 +225,115 @@ defmodule WatchPartyWeb.RoomLive do
           >
             Open in New Tab
           </a>
-          <p class="text-xs text-gray-500 mt-2">
-            Click play on the video for the extension to hook it.
-          </p>
         </div>
 
+        <%!-- URL input --%>
         <form phx-submit="add_url" class="flex gap-2 mb-4">
           <input
             type="text"
             name="url"
             placeholder="Paste a video URL..."
             class="input input-bordered flex-1"
+            autocomplete="off"
           />
-          <button type="submit" name="mode" value="now" class="btn btn-primary">Play Now</button>
-          <button type="submit" name="mode" value="queue" class="btn btn-secondary">
-            Add to Queue
+          <button type="submit" name="mode" value="now" class="btn btn-primary">
+            Play Now
+          </button>
+          <button type="submit" name="mode" value="queue" class="btn btn-outline">
+            Queue
           </button>
         </form>
-
-        <div :if={@current_media} class="mb-4">
-          <button phx-click="queue:skip" class="btn btn-sm btn-outline">Skip</button>
-        </div>
-
-        <div :if={@queue != []} class="mb-4">
-          <h3 class="font-bold mb-2">Queue</h3>
-          <ul class="space-y-2">
-            <li
-              :for={{item, idx} <- Enum.with_index(@queue)}
-              class={"flex items-center gap-2 p-2 rounded text-sm #{if idx == @current_index, do: "bg-primary/10 font-bold", else: ""}"}
-            >
-              <img
-                :if={item.thumbnail_url}
-                src={item.thumbnail_url}
-                class="w-16 h-10 object-cover rounded flex-shrink-0"
-              />
-              <div :if={!item.thumbnail_url} class="w-16 h-10 bg-base-300 rounded flex-shrink-0" />
-              <button
-                phx-click="queue:play_index"
-                phx-value-index={idx}
-                class="flex-1 text-left truncate"
-              >
-                <span :if={item.title} class="block truncate">{item.title}</span>
-                <span class="block truncate text-xs text-gray-500">{item.url}</span>
-              </button>
-              <button
-                phx-click="queue:remove"
-                phx-value-item_id={item.id}
-                class="btn btn-xs btn-ghost"
-              >
-                x
-              </button>
-            </li>
-          </ul>
-        </div>
       </div>
 
-      <div class="w-64">
-        <h3 class="font-bold mb-2">
-          Users ({map_size(@users)})
-        </h3>
-        <ul class="space-y-1">
-          <li :for={{uid, user} <- @users} data-user-id={uid} class="text-sm flex items-center gap-1">
-            <span :if={uid != @user_id}>{user.username}</span>
-            <form :if={uid == @user_id} phx-submit="username:change" class="flex gap-1">
-              <input
-                type="text"
-                name="username"
-                value={user.username}
-                class="input input-xs input-bordered w-28"
-              />
-              <button type="submit" class="btn btn-xs btn-ghost">ok</button>
-            </form>
-          </li>
-        </ul>
+      <%!-- Sidebar --%>
+      <div class="lg:w-72 flex flex-col gap-4">
+        <%!-- Users card --%>
+        <div class="card bg-base-200">
+          <div class="card-body p-4">
+            <h3 class="card-title text-sm">
+              Users
+              <span class="badge badge-sm">{map_size(@users)}</span>
+            </h3>
+            <ul class="space-y-2 mt-1">
+              <li
+                :for={{uid, user} <- @users}
+                data-user-id={uid}
+                class="flex items-center gap-2 text-sm"
+              >
+                <div class="w-2 h-2 rounded-full bg-success flex-shrink-0" />
+                <span :if={uid != @user_id} class="truncate">{user.username}</span>
+                <form
+                  :if={uid == @user_id}
+                  phx-submit="username:change"
+                  class="flex gap-1 flex-1 min-w-0"
+                >
+                  <input
+                    type="text"
+                    name="username"
+                    value={user.username}
+                    class="input input-xs input-bordered flex-1 min-w-0"
+                  />
+                  <button type="submit" class="btn btn-xs btn-ghost">ok</button>
+                </form>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <%!-- Queue card --%>
+        <div class="card bg-base-200">
+          <div class="card-body p-4">
+            <div class="flex items-center justify-between">
+              <h3 class="card-title text-sm">
+                Queue
+                <span :if={@queue != []} class="badge badge-sm">{length(@queue)}</span>
+              </h3>
+              <button
+                :if={@current_media}
+                phx-click="queue:skip"
+                class="btn btn-xs btn-ghost"
+              >
+                Skip
+              </button>
+            </div>
+            <ul :if={@queue != []} class="space-y-2 mt-1">
+              <li
+                :for={{item, idx} <- Enum.with_index(@queue)}
+                class={"flex items-center gap-2 p-2 rounded-lg text-sm transition-colors #{if idx == @current_index, do: "bg-primary/10 ring-1 ring-primary/20", else: "hover:bg-base-300"}"}
+              >
+                <img
+                  :if={item.thumbnail_url}
+                  src={item.thumbnail_url}
+                  class="w-14 h-9 object-cover rounded flex-shrink-0"
+                />
+                <div
+                  :if={!item.thumbnail_url}
+                  class="w-14 h-9 bg-base-300 rounded flex-shrink-0 flex items-center justify-center"
+                >
+                  <span class="text-xs text-base-content/30">?</span>
+                </div>
+                <button
+                  phx-click="queue:play_index"
+                  phx-value-index={idx}
+                  class="flex-1 text-left min-w-0"
+                >
+                  <span :if={item.title} class="block truncate text-sm">{item.title}</span>
+                  <span class="block truncate text-xs text-base-content/50">{item.url}</span>
+                </button>
+                <button
+                  phx-click="queue:remove"
+                  phx-value-item_id={item.id}
+                  class="btn btn-xs btn-ghost btn-circle opacity-50 hover:opacity-100"
+                >
+                  x
+                </button>
+              </li>
+            </ul>
+            <p :if={@queue == []} class="text-sm text-base-content/40 mt-1">
+              No videos in queue
+            </p>
+          </div>
+        </div>
       </div>
     </div>
     """
