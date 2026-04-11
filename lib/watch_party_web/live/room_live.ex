@@ -21,7 +21,13 @@ defmodule WatchPartyWeb.RoomLive do
       # Use a per-connection ID so each tab is a separate user.
       # In prod, you'd use the session user_id for single-session-per-user.
       user_id = socket.assigns.user_id <> ":" <> socket.id
-      username = socket.assigns.username
+      # Prefer localStorage username over session-generated one
+      username =
+        case get_connect_params(socket)["stored_username"] do
+          nil -> socket.assigns.username
+          "" -> socket.assigns.username
+          stored -> stored
+        end
       socket = assign(socket, user_id: user_id)
       Phoenix.PubSub.subscribe(WatchParty.PubSub, "room:#{room_id}")
       {:ok, state} = RoomServer.join(pid, user_id, username)
@@ -101,7 +107,13 @@ defmodule WatchPartyWeb.RoomLive do
 
     if new_username != "" and String.length(new_username) <= 30 do
       RoomServer.rename_user(socket.assigns.room_pid, socket.assigns.user_id, new_username)
-      {:noreply, assign(socket, username: new_username)}
+
+      socket =
+        socket
+        |> assign(username: new_username)
+        |> push_event("store-username", %{username: new_username})
+
+      {:noreply, socket}
     else
       {:noreply, socket}
     end

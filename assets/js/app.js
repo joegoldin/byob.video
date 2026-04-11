@@ -30,8 +30,16 @@ import CopyUrl from "./hooks/copy_url"
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
-  params: {_csrf_token: csrfToken},
+  params: () => ({
+    _csrf_token: csrfToken,
+    stored_username: localStorage.getItem("watchparty_username"),
+  }),
   hooks: {...colocatedHooks, VideoPlayer, CopyUrl},
+})
+
+// Listen for username changes to persist to localStorage
+window.addEventListener("phx:store-username", (e) => {
+  localStorage.setItem("watchparty_username", e.detail.username)
 })
 
 // Show progress bar on live navigation and form submits
