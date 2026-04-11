@@ -237,18 +237,23 @@ defmodule Byob.RoomServer do
         state = add_item_to_queue(state, item, mode)
         broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
 
-        # Fetch metadata async for YouTube videos
-        if item.source_type == :youtube do
-          item_id = item.id
-          pid = self()
+        # Fetch metadata async
+        item_id = item.id
+        pid = self()
 
-          Task.start(fn ->
-            case Byob.OEmbed.fetch_youtube(url) do
-              {:ok, meta} -> send(pid, {:oembed_result, item_id, meta})
-              _ -> :ok
+        Task.start(fn ->
+          result =
+            if item.source_type == :youtube do
+              Byob.OEmbed.fetch_youtube(url)
+            else
+              Byob.OEmbed.fetch_opengraph(url)
             end
-          end)
-        end
+
+          case result do
+            {:ok, meta} -> send(pid, {:oembed_result, item_id, meta})
+            _ -> :ok
+          end
+        end)
 
         {:reply, :ok, state}
 

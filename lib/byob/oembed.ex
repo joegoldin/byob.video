@@ -22,4 +22,51 @@ defmodule Byob.OEmbed do
         {:error, reason}
     end
   end
+
+  @doc """
+  Fetches OpenGraph metadata (og:title, og:image) from any URL.
+  Falls back to <title> tag if no OG tags found.
+  """
+  def fetch_opengraph(url) do
+    case Req.get(url, redirect: true, max_redirects: 3, receive_timeout: 5000) do
+      {:ok, %{status: 200, body: body}} when is_binary(body) ->
+        title =
+          extract_meta(body, "og:title") ||
+          extract_meta(body, "twitter:title") ||
+          extract_tag(body, "title")
+
+        thumbnail =
+          extract_meta(body, "og:image") ||
+          extract_meta(body, "twitter:image")
+
+        if title || thumbnail do
+          {:ok, %{title: title, thumbnail_url: thumbnail, author_name: nil}}
+        else
+          {:error, :no_metadata}
+        end
+
+      _ ->
+        {:error, :fetch_failed}
+    end
+  end
+
+  defp extract_meta(html, property) do
+    # Match <meta property="og:title" content="..."> or <meta name="twitter:title" content="...">
+    case Regex.run(~r/<meta[^>]*(?:property|name)="#{Regex.escape(property)}"[^>]*content="([^"]*)"/, html) do
+      [_, value] -> value
+      _ ->
+        # Try reversed attribute order
+        case Regex.run(~r/<meta[^>]*content="([^"]*)"[^>]*(?:property|name)="#{Regex.escape(property)}"/, html) do
+          [_, value] -> value
+          _ -> nil
+        end
+    end
+  end
+
+  defp extract_tag(html, tag) do
+    case Regex.run(~r/<#{tag}[^>]*>([^<]+)<\/#{tag}>/i, html) do
+      [_, value] -> String.trim(value)
+      _ -> nil
+    end
+  end
 end

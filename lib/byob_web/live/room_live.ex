@@ -107,8 +107,19 @@ defmodule ByobWeb.RoomLive do
           {:noreply, socket}
 
         {:ok, %{source_type: :extension_required}} ->
-          preview = %{title: nil, thumbnail_url: nil, source_type: :extension_required, url: url}
-          {:noreply, assign(socket, url_preview: preview, url_preview_loading: false)}
+          socket = assign(socket, url_preview_loading: true, url_preview: nil)
+          me = self()
+
+          Task.start(fn ->
+            case Byob.OEmbed.fetch_opengraph(url) do
+              {:ok, meta} ->
+                send(me, {:url_preview_result, Map.put(meta, :source_type, :extension_required)})
+              _ ->
+                send(me, {:url_preview_result, %{title: nil, thumbnail_url: nil, source_type: :extension_required}})
+            end
+          end)
+
+          {:noreply, socket}
 
         _ ->
           {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
@@ -266,12 +277,16 @@ defmodule ByobWeb.RoomLive do
     {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
   end
 
+  def handle_info({:url_preview_result, nil}, socket) do
+    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
+  end
+
   def handle_info({:url_preview_result, meta}, socket) do
     preview = %{
-      title: meta.title,
-      thumbnail_url: meta.thumbnail_url,
+      title: meta[:title],
+      thumbnail_url: meta[:thumbnail_url],
       author_name: meta[:author_name],
-      source_type: :youtube
+      source_type: meta[:source_type] || :youtube
     }
 
     {:noreply, assign(socket, url_preview: preview, url_preview_loading: false)}
