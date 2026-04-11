@@ -6,7 +6,7 @@ import Config
 # The watchers configuration can be used to run external
 # watchers to your application. For example, we can use it
 # to bundle .js and .css sources.
-config :watch_party, WatchPartyWeb.Endpoint,
+config :byob, ByobWeb.Endpoint,
   # Binding to loopback ipv4 address prevents access from other machines.
   # Change to `ip: {0, 0, 0, 0}` to allow access from other machines.
   http: [ip: {127, 0, 0, 1}],
@@ -15,8 +15,8 @@ config :watch_party, WatchPartyWeb.Endpoint,
   debug_errors: true,
   secret_key_base: "XaHfkoxwiVp+TfIL7Gam2MPpd0reQtTD3HdTBHl7Nq/D8Qnv/EaZIp3/hfw0gSYw",
   watchers: [
-    esbuild: {Esbuild, :install_and_run, [:watch_party, ~w(--sourcemap=inline --watch)]},
-    tailwind: {Tailwind, :install_and_run, [:watch_party, ~w(--watch)]}
+    esbuild: {Esbuild, :install_and_run, [:byob, ~w(--sourcemap=inline --watch)]},
+    tailwind: {Tailwind, :install_and_run, [:byob, ~w(--watch)]}
   ]
 
 # ## SSL Support
@@ -43,7 +43,7 @@ config :watch_party, WatchPartyWeb.Endpoint,
 # different ports.
 
 # Reload browser tabs when matching files change.
-config :watch_party, WatchPartyWeb.Endpoint,
+config :byob, ByobWeb.Endpoint,
   live_reload: [
     web_console_logger: true,
     patterns: [
@@ -52,13 +52,13 @@ config :watch_party, WatchPartyWeb.Endpoint,
       # Gettext translations
       ~r"priv/gettext/.*\.po$",
       # Router, Controllers, LiveViews and LiveComponents
-      ~r"lib/watch_party_web/router\.ex$",
-      ~r"lib/watch_party_web/(controllers|live|components)/.*\.(ex|heex)$"
+      ~r"lib/byob_web/router\.ex$",
+      ~r"lib/byob_web/(controllers|live|components)/.*\.(ex|heex)$"
     ]
   ]
 
 # Enable dev routes for dashboard and mailbox
-config :watch_party, dev_routes: true
+config :byob, dev_routes: true
 
 # Do not include metadata nor timestamps in development logs
 config :logger, :default_formatter, format: "[$level] $message\n"

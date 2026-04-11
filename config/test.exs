@@ -2,7 +2,7 @@ import Config
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
-config :watch_party, WatchPartyWeb.Endpoint,
+config :byob, ByobWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
   secret_key_base: "mky7LOj+vEDz9TVnRrZx1QKBvR8Arb+cHTgTq+w8zTnC5m4dF47dz4BgW/7h2z+C",
   server: false

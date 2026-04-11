@@ -1,9 +1,9 @@
-defmodule WatchParty.MixProject do
+defmodule Byob.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :watch_party,
+      app: :byob,
       version: "0.1.0",
       elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -20,7 +20,7 @@ defmodule WatchParty.MixProject do
   # Type `mix help compile.app` for more information.
   def application do
     [
-      mod: {WatchParty.Application, []},
+      mod: {Byob.Application, []},
       extra_applications: [:logger, :runtime_tools]
     ]
   end
@@ -75,10 +75,10 @@ defmodule WatchParty.MixProject do
     [
       setup: ["deps.get", "assets.setup", "assets.build"],
       "assets.setup": ["tailwind.install --if-missing", "esbuild.install --if-missing"],
-      "assets.build": ["compile", "tailwind watch_party", "esbuild watch_party"],
+      "assets.build": ["compile", "tailwind byob", "esbuild byob"],
       "assets.deploy": [
-        "tailwind watch_party --minify",
-        "esbuild watch_party --minify",
+        "tailwind byob --minify",
+        "esbuild byob --minify",
         "phx.digest"
       ],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"]
