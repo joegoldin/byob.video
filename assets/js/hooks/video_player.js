@@ -172,10 +172,8 @@ const VideoPlayer = {
           this.isReady = true;
           this._applyPendingState();
           this._startSeekDetector();
-          // Re-render sponsor bar now that player has duration
-          if (this._lastSponsorData) {
-            this._applySponsorSettings();
-          }
+          // Re-render sponsor bar — retry until getDuration() returns > 0
+          this._retrySponsorBar();
         },
         onStateChange: (event) => this._onYTStateChange(event),
       },
@@ -278,6 +276,16 @@ const VideoPlayer = {
       current_time: 0,
       server_time: this.clockSync.serverNow(),
     };
+  },
+
+  _retrySponsorBar(attempt = 0) {
+    if (!this._lastSponsorData || attempt > 10) return;
+    const dur = this.player?.getDuration?.() || 0;
+    if (dur > 0) {
+      this._applySponsorSettings();
+    } else {
+      setTimeout(() => this._retrySponsorBar(attempt + 1), 500);
+    }
   },
 
   _onSponsorSegments(data) {
