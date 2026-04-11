@@ -220,7 +220,9 @@ const VideoPlayer = {
     this.expectedPlayState = "paused";
     if (data.user_id === this.userId) return;
     this.suppression.suppress("paused");
-    this._seekTo(data.time);
+    // Don't seekTo here — it causes YouTube to fire double PAUSED events,
+    // one of which leaks past suppression and echoes back as a stale pause.
+    // Position will be corrected on next play via reconcile.
     this._pause();
     this.reconcile.stop();
   },
