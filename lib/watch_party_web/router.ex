@@ -8,6 +8,7 @@ defmodule WatchPartyWeb.Router do
     plug :put_root_layout, html: {WatchPartyWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug WatchPartyWeb.Plugs.SessionIdentity
   end
 
   pipeline :api do
