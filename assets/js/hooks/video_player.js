@@ -298,6 +298,11 @@ const VideoPlayer = {
     const item = data.media_item;
     this.el.dataset.currentIndex = data.index;
     this.reconcile.stop();
+    // Clear old sponsor data — new segments will arrive via sponsor:segments event
+    this._lastSponsorData = null;
+    this.sponsorSegments = [];
+    // Remove old sponsor bar
+    this.el.parentElement?.querySelectorAll(".sponsor-bar").forEach((el) => el.remove());
     this._loadVideo(item.source_type, item.source_id, item.url);
     this._pendingState = {
       play_state: "playing",
@@ -373,7 +378,7 @@ const VideoPlayer = {
     const bar = document.createElement("div");
     bar.className = "sponsor-bar";
     bar.style.cssText =
-      "position:relative;height:3px;border-radius:2px;background:rgba(255,255,255,0.12);margin:2px auto 8px auto;width:92.9%;overflow:visible;cursor:pointer;";
+      "position:relative;height:3px;border-radius:2px;background:rgba(255,255,255,0.12);margin:2px 3.5% 8px 3.5%;overflow:visible;cursor:pointer;";
 
     // Segment blocks
     const colors = {

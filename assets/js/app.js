@@ -44,6 +44,17 @@ const TeleportToNav = {
   },
 }
 
+const LocalTime = {
+  mounted() { this._format() },
+  updated() { this._format() },
+  _format() {
+    const dt = this.el.getAttribute("datetime");
+    if (!dt) return;
+    const d = new Date(dt);
+    this.el.textContent = " at " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).toLowerCase();
+  },
+}
+
 // Stable per-tab ID: survives reconnects but unique per tab
 if (!sessionStorage.getItem("byob_tab_id")) {
   sessionStorage.setItem("byob_tab_id", crypto.randomUUID())
@@ -57,7 +68,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     stored_username: localStorage.getItem("watchparty_username"),
     tab_id: sessionStorage.getItem("byob_tab_id"),
   }),
-  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, TeleportToNav},
+  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, TeleportToNav, LocalTime},
 })
 
 // Listen for username changes to persist to localStorage

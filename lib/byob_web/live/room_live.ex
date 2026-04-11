@@ -332,9 +332,9 @@ defmodule ByobWeb.RoomLive do
       </form>
     </dialog>
 
-    <div class="flex flex-col lg:flex-row gap-4">
+    <div class="flex flex-col lg:flex-row gap-3 h-[calc(100vh-5rem)]">
       <%!-- Main content --%>
-      <div class="flex-1 min-w-0">
+      <div class="flex-1 min-w-0 flex flex-col">
 
         <%!-- Player --%>
         <div
@@ -343,7 +343,7 @@ defmodule ByobWeb.RoomLive do
           phx-update="ignore"
           data-user-id={@user_id}
           data-current-index={@current_index}
-          class="aspect-video bg-base-300 rounded-lg overflow-hidden mb-3"
+          class="flex-1 min-h-0 bg-base-300 rounded-lg overflow-hidden"
         >
           <div class="flex items-center justify-center h-full text-base-content/40">
             Paste a URL below to start watching
@@ -443,8 +443,8 @@ defmodule ByobWeb.RoomLive do
       <%!-- Sidebar: queue/history at top, users pinned at bottom --%>
       <div class="lg:w-72 flex flex-col lg:h-[calc(100vh-5rem)]">
         <%!-- Queue/History card — fills available space --%>
-        <div class="card bg-base-200 flex-1 min-h-0">
-          <div class="card-body p-4 flex flex-col">
+        <div class="card bg-base-200 flex-1 min-h-0 overflow-hidden">
+          <div class="card-body p-4 flex flex-col overflow-hidden">
             <%!-- Tabs --%>
             <div class="flex items-center gap-1 mb-2">
               <div role="tablist" class="tabs tabs-box tabs-sm flex-1">
@@ -506,7 +506,8 @@ defmodule ByobWeb.RoomLive do
                       {now_playing.url}
                     </span>
                     <span :if={now_playing.added_by_name} class="block text-xs text-base-content/40 mt-0.5">
-                      {now_playing.added_by_name}{if format_time(now_playing.added_at), do: " at #{format_time(now_playing.added_at)}", else: ""}
+                      {now_playing.added_by_name}
+                      <time :if={format_time(now_playing.added_at)} datetime={format_time(now_playing.added_at)} phx-hook="LocalTime" id={"time-np-#{now_playing.id}"}></time>
                     </span>
                   </div>
                 </div>
@@ -550,7 +551,8 @@ defmodule ByobWeb.RoomLive do
                         {item.url}
                       </span>
                       <span :if={item.added_by_name} class="block text-xs text-base-content/40 mt-0.5">
-                        {item.added_by_name}{if format_time(item.added_at), do: " at #{format_time(item.added_at)}", else: ""}
+                        {item.added_by_name}
+                        <time :if={format_time(item.added_at)} datetime={format_time(item.added_at)} phx-hook="LocalTime" id={"time-q-#{item.id}"}></time>
                       </span>
                     </button>
                     <button
@@ -602,7 +604,7 @@ defmodule ByobWeb.RoomLive do
                   </span>
                   <span class="block text-xs text-base-content/40 mt-0.5">
                     {if entry.item.added_by_name, do: entry.item.added_by_name, else: ""}
-                    {if entry.played_at && format_time(entry.played_at), do: "played at #{format_time(entry.played_at)}", else: ""}
+                    <time :if={format_time(entry.played_at)} datetime={format_time(entry.played_at)} phx-hook="LocalTime" id={"time-h-#{entry.item.id}-#{System.unique_integer([:positive])}"}></time>
                   </span>
                 </div>
               </li>
@@ -720,13 +722,7 @@ defmodule ByobWeb.RoomLive do
   end
 
   defp format_time(nil), do: nil
-
-  defp format_time(%DateTime{} = dt) do
-    dt
-    |> DateTime.shift_zone!("Etc/UTC")
-    |> Calendar.strftime("%-I:%M%P")
-  end
-
+  defp format_time(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp format_time(_), do: nil
 
   defp sync_state_payload(state, user_id) do
