@@ -285,8 +285,8 @@ const VideoPlayer = {
   },
 
   _renderSponsorBar(segments, duration) {
-    // Remove existing bar
-    const existing = this.el.querySelector(".sponsor-bar");
+    // Remove existing bar (may be sibling, not child)
+    const existing = this.el.parentElement?.querySelector(".sponsor-bar");
     if (existing) existing.remove();
     if (!segments || segments.length === 0 || !duration) return;
 
@@ -324,14 +324,19 @@ const VideoPlayer = {
       bar.appendChild(block);
     }
 
-    this.el.style.position = "relative";
-    // Force iframe below the bar in stacking order
-    const iframe = this.el.querySelector("iframe");
-    if (iframe) {
-      iframe.style.position = "relative";
-      iframe.style.zIndex = "1";
-    }
-    this.el.appendChild(bar);
+    // Render bar as a sibling after the player container, overlapping its bottom edge.
+    // This avoids iframe z-index stacking issues entirely.
+    const existing2 = this.el.parentElement?.querySelector(".sponsor-bar");
+    if (existing2) existing2.remove();
+    bar.style.cssText = [
+      "position:relative",
+      "margin-top:-4px",
+      "height:4px",
+      "z-index:100",
+      "pointer-events:none",
+      "background:rgba(255,255,255,0.08)",
+    ].join(";");
+    this.el.insertAdjacentElement("afterend", bar);
   },
 
   // Detect seeks while paused (YouTube doesn't fire onStateChange for these)
