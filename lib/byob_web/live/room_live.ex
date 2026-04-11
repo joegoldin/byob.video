@@ -110,6 +110,11 @@ defmodule ByobWeb.RoomLive do
     end
   end
 
+  def handle_event("history:play", %{"url" => url}, socket) do
+    RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :now)
+    {:noreply, socket}
+  end
+
   def handle_event("add_url", %{"url" => url, "mode" => mode}, socket) do
     mode_atom = if mode == "now", do: :now, else: :queue
     RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, mode_atom)
@@ -522,7 +527,9 @@ defmodule ByobWeb.RoomLive do
             >
               <li
                 :for={entry <- @history}
-                class="flex items-center gap-2 p-2 rounded-lg text-sm hover:bg-base-300 transition-colors"
+                phx-click="history:play"
+                phx-value-url={entry.item.url}
+                class="flex items-center gap-2 p-2 rounded-lg text-sm hover:bg-base-300 transition-colors cursor-pointer"
               >
                 <img
                   :if={entry.item.thumbnail_url}
