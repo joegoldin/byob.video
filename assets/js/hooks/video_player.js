@@ -378,7 +378,7 @@ const VideoPlayer = {
     const bar = document.createElement("div");
     bar.className = "sponsor-bar";
     bar.style.cssText =
-      "position:relative;height:3px;border-radius:2px;background:rgba(255,255,255,0.12);margin:2px 3.5% 8px 3.5%;overflow:visible;cursor:pointer;";
+      "position:relative;height:3px;border-radius:2px;background:rgba(255,255,255,0.12);margin:8px 30px;overflow:visible;cursor:pointer;";
 
     // Segment blocks
     const colors = {

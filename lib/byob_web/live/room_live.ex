@@ -332,7 +332,7 @@ defmodule ByobWeb.RoomLive do
       </form>
     </dialog>
 
-    <div class="flex flex-col lg:flex-row gap-3 h-[calc(100vh-5rem)]">
+    <div class="flex flex-col lg:flex-row gap-3 h-[calc(100vh-3.5rem)]">
       <%!-- Main content --%>
       <div class="flex-1 min-w-0 flex flex-col">
 
@@ -441,7 +441,7 @@ defmodule ByobWeb.RoomLive do
       </div>
 
       <%!-- Sidebar: queue/history at top, users pinned at bottom --%>
-      <div class="lg:w-72 flex flex-col lg:h-[calc(100vh-5rem)]">
+      <div class="lg:w-72 flex flex-col lg:h-[calc(100vh-3.5rem)]">
         <%!-- Queue/History card — fills available space --%>
         <div class="card bg-base-200 flex-1 min-h-0 overflow-hidden">
           <div class="card-body p-4 flex flex-col overflow-hidden">
