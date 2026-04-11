@@ -79,7 +79,7 @@ function connectToRoom(roomId, serverUrl) {
   currentServerUrl = serverUrl;
 
   // Connect Phoenix Socket
-  const wsUrl = serverUrl.replace(/^http/, "ws") + "/extension/websocket";
+  const wsUrl = serverUrl.replace(/^http/, "ws") + "/extension";
   socket = new Socket(wsUrl, {
     heartbeatIntervalMs: 20000, // Shorter heartbeat to keep SW alive
   });

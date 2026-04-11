@@ -83,6 +83,13 @@
       if (e.data?.type === "byob:relay" && e.data.payload && port) {
         port.postMessage(e.data.payload);
       }
+      // Show sync bar in top frame when nested frame hooks video
+      if (e.data?.type === "byob:video-hooked" && window === window.top) {
+        if (!window.location.hostname.includes("youtube.com")) {
+          injectSyncBar();
+          updateSyncBarStatus("hooked");
+        }
+      }
     });
 
     port.onDisconnect.addListener(() => {
@@ -152,10 +159,14 @@
     // Also relay up to top frame in case port isn't working in nested iframe
     try { window.top.postMessage({ type: "byob:relay", payload: reportHooked }, "*"); } catch (_) {}
 
-    // Show and update sync bar only in the frame that has the video
+    // Show sync bar in the top frame (not nested iframes where it gets hidden)
     if (!window.location.hostname.includes("youtube.com")) {
-      injectSyncBar();
-      updateSyncBarStatus("hooked");
+      try { window.top.postMessage({ type: "byob:video-hooked" }, "*"); } catch (_) {}
+      // If we ARE the top frame, show directly
+      if (window === window.top) {
+        injectSyncBar();
+        updateSyncBarStatus("hooked");
+      }
     }
 
     // Update sync bar to show we found a video
@@ -277,17 +288,12 @@
     const bar = document.createElement("div");
     bar.id = "byob-sync-bar";
 
-    // In nested iframes (video player), use fixed positioning but at top instead
-    const isTopFrame = window === window.top;
-    bar.style.cssText = isTopFrame
-      ? `position: fixed; bottom: 0; left: 0; right: 0; z-index: 999999;
-         background: rgba(0,0,0,0.92); color: white; padding: 6px 16px;
-         display: flex; align-items: center; gap: 12px; font-family: system-ui, sans-serif;
-         font-size: 13px; backdrop-filter: blur(10px); border-top: 1px solid rgba(255,255,255,0.1);`
-      : `position: fixed; top: 0; left: 0; right: 0; z-index: 999999;
-         background: rgba(0,0,0,0.85); color: white; padding: 4px 12px;
-         display: flex; align-items: center; gap: 10px; font-family: system-ui, sans-serif;
-         font-size: 12px; backdrop-filter: blur(8px); border-bottom: 1px solid rgba(255,255,255,0.1);`;
+    bar.style.cssText = `
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 999999;
+      background: rgba(0,0,0,0.92); color: white; padding: 6px 16px;
+      display: flex; align-items: center; gap: 12px; font-family: system-ui, sans-serif;
+      font-size: 13px; backdrop-filter: blur(10px); border-top: 1px solid rgba(255,255,255,0.1);
+    `;
 
     bar.innerHTML = `
       <span style="font-weight:bold;font-size:14px;opacity:0.7">byob</span>
