@@ -277,30 +277,17 @@
     window.parent.postMessage({ type: "byob:embed-ready" }, "*");
   }
 
-  let _currentSegmentGen = 0;
-  let _lastInjectionTarget = null;
+  let _injectedElements = [];
 
   function clearAllSegments() {
-    // Inject/update a style tag that hides all segments except current generation
-    updateSegmentVisibility();
-  }
-
-  function updateSegmentVisibility() {
-    let style = document.getElementById("byob-segment-style");
-    if (!style) {
-      style = document.createElement("style");
-      style.id = "byob-segment-style";
-      document.head.appendChild(style);
-    }
-    // Hide all segments that don't match current generation
-    style.textContent = `.byob-sponsor-segment:not([data-gen="${_currentSegmentGen}"]) { display: none !important; }`;
+    _injectedElements.forEach((el) => {
+      try { el.style.display = "none"; } catch (_) {}
+      try { el.remove(); } catch (_) {}
+    });
+    _injectedElements = [];
   }
 
   function injectSegments(progressBar, segments, duration) {
-    _currentSegmentGen++;
-    const gen = _currentSegmentGen;
-    _lastInjectionTarget = progressBar;
-
     clearAllSegments();
 
     const colors = {
@@ -342,7 +329,6 @@
       );
       const el = document.createElement("div");
       el.className = "byob-sponsor-segment";
-      el.dataset.gen = gen;
       el.title = labels[seg.category] || seg.category;
       el.style.cssText = `
         position: absolute;
@@ -357,10 +343,8 @@
         border-radius: 1px;
       `;
       progressBar.appendChild(el);
+      _injectedElements.push(el);
     }
-
-    // Update CSS to show only current generation
-    updateSegmentVisibility();
   }
 
   // Run

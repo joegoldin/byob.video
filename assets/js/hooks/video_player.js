@@ -389,7 +389,13 @@ const VideoPlayer = {
     this._sponsorBarDuration = duration;
 
     // Send segments to YouTube embed iframe for in-player rendering (requires extension)
-    this._sendSegmentsToEmbed();
+    if (barSegments.length > 0) {
+      this._sendSegmentsToEmbed();
+    } else {
+      // No segments for this video — clear any stale ones from previous video
+      const iframe = this.el.querySelector("iframe");
+      if (iframe) iframe.contentWindow.postMessage({ type: "byob:clear-segments" }, "*");
+    }
 
     // Retry sending if duration wasn't ready
     if (duration <= 0 && this.player) {
