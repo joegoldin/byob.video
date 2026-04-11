@@ -472,7 +472,7 @@ defmodule ByobWeb.RoomLive do
               <% up_next =
                 @queue
                 |> Enum.with_index()
-                |> Enum.filter(fn {_item, idx} -> idx != @current_index end)
+                |> Enum.filter(fn {_item, idx} -> idx > (@current_index || -1) end)
               %>
               <div :if={up_next != []}>
                 <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-1">
