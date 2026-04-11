@@ -21,5 +21,8 @@
       "id": "byob@byob.video"
     }
   },
+  "data_collection_permissions": {
+    "collected": false
+  },
   "icons": {}
 }
