@@ -37,6 +37,7 @@ const VideoPlayer = {
     this.sponsorCheckInterval = null;
     this.sbSettings = {};
     this._lastSponsorData = null;
+    this._isVideoChange = false;
 
     // Listen for YouTube embed iframe signaling it's ready for segments
     this._embedReadyHandler = (e) => {
@@ -178,14 +179,11 @@ const VideoPlayer = {
 
     this.isReady = false;
 
-    // Create container div inside the hook element
-    let container = this.el.querySelector("#yt-player");
-    if (!container) {
-      container = document.createElement("div");
-      container.id = "yt-player";
-      this.el.innerHTML = "";
-      this.el.appendChild(container);
-    }
+    // Always create a fresh container — destroys old iframe and any injected segments
+    this.el.innerHTML = "";
+    const container = document.createElement("div");
+    container.id = "yt-player";
+    this.el.appendChild(container);
 
     // Autoplay if we have a pending state that says playing
     const shouldAutoplay = this._pendingState?.play_state === "playing" ? 1 : 0;
@@ -319,6 +317,9 @@ const VideoPlayer = {
     // Clear old sponsor data — new segments will arrive via sponsor:segments event
     this._lastSponsorData = null;
     this.sponsorSegments = [];
+    this._sponsorBarSegments = null;
+    this._sponsorBarDuration = 0;
+    this._isVideoChange = true;
     // Tell iframe to clear old segments
     const iframe = this.el.querySelector("iframe");
     if (iframe) {
@@ -345,12 +346,24 @@ const VideoPlayer = {
   },
 
   _retrySponsorBar(attempt = 0) {
-    if (!this._lastSponsorData || attempt > 10) return;
+    if (attempt > 4) {
+      if (this._isVideoChange) {
+        this._isVideoChange = false;
+        const iframe = this.el.querySelector("iframe");
+        if (iframe) iframe.contentWindow.postMessage({ type: "byob:clear-segments" }, "*");
+      }
+      return;
+    }
+    if (!this._lastSponsorData) {
+      setTimeout(() => this._retrySponsorBar(attempt + 1), 250);
+      return;
+    }
+    this._isVideoChange = false;
     const dur = this.player?.getDuration?.() || 0;
     if (dur > 0) {
       this._applySponsorSettings();
     } else {
-      setTimeout(() => this._retrySponsorBar(attempt + 1), 500);
+      setTimeout(() => this._retrySponsorBar(attempt + 1), 250);
     }
   },
 
@@ -390,9 +403,10 @@ const VideoPlayer = {
 
     // Send segments to YouTube embed iframe for in-player rendering (requires extension)
     if (barSegments.length > 0) {
+      this._isVideoChange = false;
       this._sendSegmentsToEmbed();
-    } else {
-      // No segments for this video — clear any stale ones from previous video
+    } else if (this._isVideoChange) {
+      this._isVideoChange = false;
       const iframe = this.el.querySelector("iframe");
       if (iframe) iframe.contentWindow.postMessage({ type: "byob:clear-segments" }, "*");
     }

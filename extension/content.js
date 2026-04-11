@@ -244,9 +244,20 @@
       filler: "#7300FF",
     };
 
+    // Track current video — auto-clear when YouTube changes videos
+    // YouTube embeds change the URL path or the video element src when switching
+    let _lastVideoSrc = "";
+    setInterval(() => {
+      const video = document.querySelector("video");
+      const currentSrc = video?.src || window.location.href;
+      if (_lastVideoSrc && currentSrc !== _lastVideoSrc) {
+        clearAllSegments();
+      }
+      _lastVideoSrc = currentSrc;
+    }, 500);
+
     window.addEventListener("message", (e) => {
       if (e.data?.type === "byob:clear-segments") {
-        _currentSegmentGen++;
         clearAllSegments();
         return;
       }
