@@ -72,6 +72,10 @@ const VideoPlayer = {
     if (this.seekDetectorInterval) clearInterval(this.seekDetectorInterval);
     if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
     if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
+    if (this._sponsorBarInterval) clearInterval(this._sponsorBarInterval);
+    this.el.parentElement
+      ?.querySelectorAll(".sponsor-bar")
+      .forEach((el) => el.remove());
     if (this.player && this.player.destroy) {
       this.player.destroy();
     }
@@ -197,6 +201,7 @@ const VideoPlayer = {
       // Update own reconcile so it doesn't drift-correct back to old position
       const serverTime = this.clockSync.serverNow();
       this.reconcile.setServerState(position, serverTime, this.clockSync);
+      this.reconcile.pauseFor(1000); // let server catch up before correcting
       this.reconcile.start();
     } else if (state === YT_PAUSED) {
       this.expectedPlayState = "paused";
@@ -285,25 +290,20 @@ const VideoPlayer = {
   },
 
   _renderSponsorBar(segments, duration) {
-    // Remove existing bar (may be sibling, not child)
-    const existing = this.el.parentElement?.querySelector(".sponsor-bar");
-    if (existing) existing.remove();
-    if (!segments || segments.length === 0 || !duration) return;
+    // Remove existing bar
+    this.el.parentElement
+      ?.querySelectorAll(".sponsor-bar")
+      .forEach((el) => el.remove());
+    if (!duration) return;
 
-    // Overlay bar positioned at the bottom of the player, above YouTube's controls
+    this._sponsorBarDuration = duration;
+
     const bar = document.createElement("div");
     bar.className = "sponsor-bar";
-    bar.style.cssText = [
-      "position:absolute",
-      "bottom:0",
-      "left:0",
-      "right:0",
-      "height:4px",
-      "z-index:30",
-      "pointer-events:none",
-      "background:rgba(255,255,255,0.1)",
-    ].join(";");
+    bar.style.cssText =
+      "position:relative;height:6px;border-radius:3px;background:rgba(255,255,255,0.1);margin-top:4px;overflow:hidden;cursor:pointer;";
 
+    // Segment blocks
     const colors = {
       sponsor: "#00d400",
       selfpromo: "#ffff00",
@@ -315,28 +315,57 @@ const VideoPlayer = {
       filler: "#7300FF",
     };
 
-    for (const seg of segments) {
-      const left = (seg.segment[0] / duration) * 100;
-      const width = Math.max(0.3, ((seg.segment[1] - seg.segment[0]) / duration) * 100);
-      const block = document.createElement("div");
-      block.style.cssText = `position:absolute;left:${left}%;width:${width}%;height:100%;background:${colors[seg.category] || "#00d400"};opacity:0.85;border-radius:1px;`;
-      block.title = seg.category;
-      bar.appendChild(block);
+    if (segments && segments.length > 0) {
+      for (const seg of segments) {
+        const left = (seg.segment[0] / duration) * 100;
+        const width = Math.max(0.3, ((seg.segment[1] - seg.segment[0]) / duration) * 100);
+        const block = document.createElement("div");
+        block.style.cssText = `position:absolute;left:${left}%;width:${width}%;height:100%;background:${colors[seg.category] || "#00d400"};opacity:0.7;`;
+        block.title = seg.category;
+        bar.appendChild(block);
+      }
     }
 
-    // Render bar as a sibling after the player container, overlapping its bottom edge.
-    // This avoids iframe z-index stacking issues entirely.
-    const existing2 = this.el.parentElement?.querySelector(".sponsor-bar");
-    if (existing2) existing2.remove();
-    bar.style.cssText = [
-      "position:relative",
-      "margin-top:-4px",
-      "height:4px",
-      "z-index:100",
-      "pointer-events:none",
-      "background:rgba(255,255,255,0.08)",
-    ].join(";");
+    // Playhead indicator
+    const playhead = document.createElement("div");
+    playhead.className = "sponsor-bar-playhead";
+    playhead.style.cssText =
+      "position:absolute;top:-2px;width:10px;height:10px;border-radius:50%;background:white;box-shadow:0 0 3px rgba(0,0,0,0.5);transform:translateX(-50%);z-index:2;left:0%;transition:left 0.1s linear;";
+    bar.appendChild(playhead);
+
+    // Progress fill
+    const fill = document.createElement("div");
+    fill.className = "sponsor-bar-fill";
+    fill.style.cssText =
+      "position:absolute;left:0;top:0;height:100%;background:rgba(255,255,255,0.25);z-index:1;width:0%;transition:width 0.1s linear;";
+    bar.appendChild(fill);
+
+    // Click to seek
+    bar.style.pointerEvents = "auto";
+    bar.addEventListener("click", (e) => {
+      const rect = bar.getBoundingClientRect();
+      const pct = (e.clientX - rect.left) / rect.width;
+      const seekTime = pct * duration;
+      this._seekTo(seekTime);
+      this.pushEvent("video:seek", { position: seekTime });
+      const serverTime = this.clockSync.serverNow();
+      this.reconcile.setServerState(seekTime, serverTime, this.clockSync);
+      this.reconcile.pauseFor(1000);
+    });
+
     this.el.insertAdjacentElement("afterend", bar);
+
+    // Start updating playhead
+    if (this._sponsorBarInterval) clearInterval(this._sponsorBarInterval);
+    this._sponsorBarInterval = setInterval(() => {
+      if (!this.player || !this.player.getCurrentTime) return;
+      const pos = this.player.getCurrentTime();
+      const pct = (pos / duration) * 100;
+      const ph = bar.querySelector(".sponsor-bar-playhead");
+      const fl = bar.querySelector(".sponsor-bar-fill");
+      if (ph) ph.style.left = pct + "%";
+      if (fl) fl.style.width = pct + "%";
+    }, 100);
   },
 
   // Detect seeks while paused (YouTube doesn't fire onStateChange for these)
@@ -350,6 +379,10 @@ const VideoPlayer = {
       if (state === YT_PAUSED && Math.abs(pos - this.lastKnownPosition) > 1) {
         if (!this.suppression.isActive()) {
           this.pushEvent("video:seek", { position: pos });
+          // Update reconcile immediately so it doesn't fight the seek
+          const serverTime = this.clockSync.serverNow();
+          this.reconcile.setServerState(pos, serverTime, this.clockSync);
+          this.reconcile.pauseFor(1000);
         }
       }
       this.lastKnownPosition = pos;
