@@ -362,13 +362,12 @@ defmodule ByobWeb.RoomLive do
               Click play on the video for the extension to hook it.
             </p>
           </div>
-          <a
-            href={extension_open_url(@current_media.url, @room_id)}
-            target="_blank"
+          <button
+            onclick={"window.open('#{extension_open_url(@current_media.url, @room_id)}', 'byob_player', 'width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no')"}
             class="btn btn-primary btn-sm"
           >
-            Open in New Tab
-          </a>
+            Open Player Window
+          </button>
         </div>
 
         <%!-- URL input + preview --%>

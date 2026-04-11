@@ -164,8 +164,22 @@ const VideoPlayer = {
 
     if (sourceType === "youtube") {
       await this._loadYouTube(sourceId);
+    } else {
+      // Extension-required: destroy YouTube player, show placeholder
+      if (this.player && this.player.destroy) {
+        try { this.player.destroy(); } catch (_) {}
+        this.player = null;
+      }
+      this.el.innerHTML = `
+        <div class="absolute inset-0 flex flex-col items-center justify-center gap-4 text-base-content/60">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          </svg>
+          <p class="text-sm">Playing in external window</p>
+          <p class="text-xs text-base-content/40">Extension syncs playback automatically</p>
+        </div>
+      `;
     }
-    // Extension mode handled in Phase 3
   },
 
   async _loadYouTube(videoId) {

@@ -119,6 +119,11 @@
       });
     }
 
+    // Inject sync control bar at bottom of page (for non-YouTube sites)
+    if (!window.location.hostname.includes("youtube.com")) {
+      injectSyncBar(video);
+    }
+
     // Start periodic time reporting when playing
     timeReportInterval = setInterval(() => {
       if (hookedVideo && !hookedVideo.paused && port) {
@@ -222,8 +227,60 @@
     }
   }
 
+  function injectSyncBar(video) {
+    if (document.getElementById("byob-sync-bar")) return;
+
+    const bar = document.createElement("div");
+    bar.id = "byob-sync-bar";
+    bar.style.cssText = `
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 999999;
+      background: rgba(0,0,0,0.9); color: white; padding: 8px 16px;
+      display: flex; align-items: center; gap: 12px; font-family: system-ui, sans-serif;
+      font-size: 13px; backdrop-filter: blur(8px); border-top: 1px solid rgba(255,255,255,0.1);
+    `;
+
+    const logo = document.createElement("span");
+    logo.textContent = "byob";
+    logo.style.cssText = "font-weight: bold; font-size: 14px; opacity: 0.7;";
+
+    const status = document.createElement("span");
+    status.id = "byob-sync-status";
+    status.textContent = "Synced";
+    status.style.cssText = "color: #00d400; font-size: 12px;";
+
+    const dot = document.createElement("span");
+    dot.style.cssText = "width: 6px; height: 6px; border-radius: 50%; background: #00d400; flex-shrink: 0;";
+
+    const spacer = document.createElement("div");
+    spacer.style.cssText = "flex: 1;";
+
+    const time = document.createElement("span");
+    time.id = "byob-sync-time";
+    time.style.cssText = "font-variant-numeric: tabular-nums; opacity: 0.6; font-size: 12px;";
+
+    bar.appendChild(logo);
+    bar.appendChild(dot);
+    bar.appendChild(status);
+    bar.appendChild(spacer);
+    bar.appendChild(time);
+    document.body.appendChild(bar);
+
+    // Update time display
+    setInterval(() => {
+      if (!video) return;
+      const t = video.currentTime || 0;
+      const m = Math.floor(t / 60);
+      const s = Math.floor(t % 60).toString().padStart(2, "0");
+      time.textContent = `${m}:${s}`;
+      status.textContent = video.paused ? "Paused" : "Synced";
+      dot.style.background = video.paused ? "#ff9900" : "#00d400";
+    }, 250);
+  }
+
   function cleanup() {
     unhookVideo();
+    const bar = document.getElementById("byob-sync-bar");
+    if (bar) bar.remove();
   }
 
   // === YouTube Embed Seek Bar Injection ===
