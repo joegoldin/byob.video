@@ -26,8 +26,20 @@ defmodule WatchPartyWeb.RoomLiveTest do
       Process.sleep(50)
 
       html = render(view1)
-      # Should have 2 users in the list
-      assert length(Regex.scan(~r/data-user-id/, html)) == 2
+      # Player div has data-user-id too, so 3 total (1 player + 2 user list items)
+      assert length(Regex.scan(~r/data-user-id/, html)) == 3
+    end
+
+    test "submitting a YouTube URL adds it to the queue", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/room/testroom_queue")
+
+      view
+      |> render_submit("add_url", %{"url" => "https://youtube.com/watch?v=dQw4w9WgXcQ", "mode" => "queue"})
+
+      # Give PubSub a moment
+      Process.sleep(50)
+      html = render(view)
+      assert html =~ "dQw4w9WgXcQ"
     end
 
     test "navigating to any room ID creates the room", %{conn: conn} do
