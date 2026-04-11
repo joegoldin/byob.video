@@ -18,10 +18,24 @@
           pname = "byob-chrome-extension";
           version = "0.1.0";
           src = extensionSrc;
+          nativeBuildInputs = [ pkgs.zip pkgs.chromium ];
+          phases = [ "unpackPhase" "buildPhase" "installPhase" ];
+          buildPhase = ''
+            rm -f manifest.firefox.json
+            mkdir -p $TMPDIR/ext
+            cp -r . $TMPDIR/ext/src
+            zip -r $TMPDIR/byob-chrome.zip .
+            # Pack as .crx
+            HOME=$TMPDIR chromium --pack-extension=$TMPDIR/ext/src --no-sandbox 2>/dev/null || true
+          '';
           installPhase = ''
-            mkdir -p $out
-            cp -r $src/* $out/
-            # Use the MV3 manifest (already in place)
+            mkdir -p $out/unpacked
+            cp -r background.js content.js manifest.json lib $out/unpacked/
+            cp $TMPDIR/byob-chrome.zip $out/
+            if [ -f $TMPDIR/ext/src.crx ]; then
+              cp $TMPDIR/ext/src.crx $out/byob-chrome.crx
+              cp $TMPDIR/ext/src.pem $out/byob-chrome.pem
+            fi
           '';
         };
 

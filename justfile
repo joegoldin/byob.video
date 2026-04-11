@@ -3,11 +3,13 @@
 # Build all packages
 build: chrome firefox docker
 
-# Build Chrome extension (unpacked)
+# Build Chrome extension (.crx + unpacked)
 chrome:
     nix build .#chrome-extension -o result-chrome
-    @echo "Chrome extension: result-chrome/"
-    @echo "Load unpacked in chrome://extensions"
+    @echo "Chrome extension:"
+    @echo "  .crx:     result-chrome/byob-chrome.crx"
+    @echo "  .zip:     result-chrome/byob-chrome.zip"
+    @echo "  unpacked: result-chrome/unpacked/"
 
 # Build Firefox extension (.xpi)
 firefox:
