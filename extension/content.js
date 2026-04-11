@@ -247,25 +247,16 @@
     window.addEventListener("message", (e) => {
       if (e.data?.type === "byob:clear-segments") {
         _currentSegmentGen++;
-        const clearGen = _currentSegmentGen;
-        const clearOld = () => {
-          document.querySelectorAll(".byob-sponsor-segment").forEach((el) => {
-            if (!el.dataset.gen || parseInt(el.dataset.gen) < clearGen) el.remove();
-          });
-        };
-        clearOld();
-        setTimeout(clearOld, 500);
-        setTimeout(clearOld, 1500);
+        clearAllSegments();
         return;
       }
       if (!e.data || e.data.type !== "byob:sponsor-segments") return;
       const { segments, duration } = e.data;
       if (!segments || !duration) return;
 
-      // Clear any existing segments first
-      document.querySelectorAll(".byob-sponsor-segment").forEach((el) => el.remove());
+      clearAllSegments();
 
-      // Wait for YouTube's seek bar to appear — target the inner bar line, not the outer container
+      // Wait for YouTube's seek bar to appear
       const tryInject = (attempt) => {
         if (attempt > 20) return;
         const progressBar =
@@ -287,15 +278,44 @@
   }
 
   let _currentSegmentGen = 0;
+  let _lastInjectionTarget = null;
+
+  function clearAllSegments() {
+    // Direct removal from last target
+    if (_lastInjectionTarget) {
+      Array.from(_lastInjectionTarget.children).forEach((el) => {
+        if (el.classList?.contains("byob-sponsor-segment")) el.remove();
+      });
+    }
+    // Brute force: find and remove everywhere
+    document.querySelectorAll(".byob-sponsor-segment").forEach((el) => el.remove());
+    // Also check inside custom elements (YouTube uses them)
+    const customs = document.querySelectorAll("yt-progress-bar, yt-progress-bar-line, yt-chaptered-progress-bar-line");
+    customs.forEach((el) => {
+      // Direct children
+      Array.from(el.children).forEach((c) => {
+        if (c.classList?.contains("byob-sponsor-segment")) c.remove();
+      });
+      // Shadow root
+      if (el.shadowRoot) {
+        el.shadowRoot.querySelectorAll(".byob-sponsor-segment").forEach((s) => s.remove());
+      }
+    });
+    // Nuclear: check every element with our class anywhere in any tree
+    const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_ELEMENT);
+    while (walker.nextNode()) {
+      if (walker.currentNode.classList?.contains("byob-sponsor-segment")) {
+        walker.currentNode.remove();
+      }
+    }
+  }
 
   function injectSegments(progressBar, segments, duration) {
     _currentSegmentGen++;
     const gen = _currentSegmentGen;
+    _lastInjectionTarget = progressBar;
 
-    // Remove ALL old injected segments from entire document
-    document
-      .querySelectorAll(".byob-sponsor-segment")
-      .forEach((el) => el.remove());
+    clearAllSegments();
 
     const colors = {
       sponsor: "#00d400",
