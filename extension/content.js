@@ -246,12 +246,24 @@
 
     window.addEventListener("message", (e) => {
       if (e.data?.type === "byob:clear-segments") {
-        document.querySelectorAll(".byob-sponsor-segment").forEach((el) => el.remove());
+        _currentSegmentGen++;
+        const clearGen = _currentSegmentGen;
+        const clearOld = () => {
+          document.querySelectorAll(".byob-sponsor-segment").forEach((el) => {
+            if (!el.dataset.gen || parseInt(el.dataset.gen) < clearGen) el.remove();
+          });
+        };
+        clearOld();
+        setTimeout(clearOld, 500);
+        setTimeout(clearOld, 1500);
         return;
       }
       if (!e.data || e.data.type !== "byob:sponsor-segments") return;
       const { segments, duration } = e.data;
       if (!segments || !duration) return;
+
+      // Clear any existing segments first
+      document.querySelectorAll(".byob-sponsor-segment").forEach((el) => el.remove());
 
       // Wait for YouTube's seek bar to appear — target the inner bar line, not the outer container
       const tryInject = (attempt) => {
@@ -274,7 +286,12 @@
     window.parent.postMessage({ type: "byob:embed-ready" }, "*");
   }
 
+  let _currentSegmentGen = 0;
+
   function injectSegments(progressBar, segments, duration) {
+    _currentSegmentGen++;
+    const gen = _currentSegmentGen;
+
     // Remove ALL old injected segments from entire document
     document
       .querySelectorAll(".byob-sponsor-segment")
@@ -319,6 +336,7 @@
       );
       const el = document.createElement("div");
       el.className = "byob-sponsor-segment";
+      el.dataset.gen = gen;
       el.title = labels[seg.category] || seg.category;
       el.style.cssText = `
         position: absolute;
