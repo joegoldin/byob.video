@@ -141,8 +141,14 @@ const VideoPlayer = {
     } else if (state.play_state === "paused") {
       this.expectedPlayState = "paused";
       this.suppression.suppress("paused");
+      // Seek then briefly play+pause to force YouTube to render a frame
+      // (YouTube shows black at paused positions until a frame is decoded)
       this._seekTo(state.current_time);
-      this._pause();
+      this._play();
+      setTimeout(() => {
+        this.suppression.suppress("paused");
+        this._pause();
+      }, 200);
     }
   },
 

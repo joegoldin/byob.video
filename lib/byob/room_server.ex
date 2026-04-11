@@ -117,7 +117,6 @@ defmodule Byob.RoomServer do
             last_seek_at: %{},
             event_counts: %{},
             play_state: :paused,
-            current_time: 0.0,
             sponsor_segments: [],
             users: Enum.into(saved.users, %{}, fn {k, v} -> {k, %{v | connected: false}} end)
           }
