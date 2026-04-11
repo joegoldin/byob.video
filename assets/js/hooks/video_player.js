@@ -141,14 +141,15 @@ const VideoPlayer = {
     } else if (state.play_state === "paused") {
       this.expectedPlayState = "paused";
       this.suppression.suppress("paused");
-      // Seek then briefly play+pause to force YouTube to render a frame
-      // (YouTube shows black at paused positions until a frame is decoded)
-      this._seekTo(state.current_time);
-      this._play();
-      setTimeout(() => {
-        this.suppression.suppress("paused");
-        this._pause();
-      }, 200);
+      // Use cueVideoById to show thumbnail at the right position without playing
+      if (this.sourceType === "youtube" && this.player?.cueVideoById) {
+        this.player.cueVideoById({
+          videoId: this.sourceId,
+          startSeconds: state.current_time,
+        });
+      } else {
+        this._seekTo(state.current_time);
+      }
     }
   },
 
