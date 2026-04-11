@@ -5,12 +5,6 @@ defmodule WatchParty.RoomServerTest do
 
   setup do
     room_id = "test_#{:erlang.unique_integer([:positive])}"
-
-    start_supervised!(
-      {Registry, keys: :unique, name: WatchParty.RoomRegistry},
-      id: :test_registry
-    )
-
     pid = start_supervised!({RoomServer, room_id: room_id, empty_timeout: 50})
     %{pid: pid, room_id: room_id}
   end

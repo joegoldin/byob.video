@@ -11,9 +11,8 @@ defmodule WatchParty.Application do
       WatchPartyWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:watch_party, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: WatchParty.PubSub},
-      # Start a worker by calling: WatchParty.Worker.start_link(arg)
-      # {WatchParty.Worker, arg},
-      # Start to serve requests, typically the last entry
+      {Registry, keys: :unique, name: WatchParty.RoomRegistry},
+      {DynamicSupervisor, name: WatchParty.RoomSupervisor, strategy: :one_for_one},
       WatchPartyWeb.Endpoint
     ]
 
