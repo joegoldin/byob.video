@@ -14,7 +14,8 @@ defmodule WatchPartyWeb.HomeLive do
     ~H"""
     <div class="flex items-center justify-center min-h-[70vh]">
       <div class="card bg-base-200 shadow-xl p-10 text-center">
-        <h1 class="text-5xl font-bold mb-2">WatchParty</h1>
+        <h1 class="text-5xl font-bold mb-1">byob</h1>
+        <p class="text-sm text-base-content/40 mb-1">bring your own binge</p>
         <p class="text-base-content/60 mb-8">Watch videos together in sync</p>
         <button phx-click="create_room" class="btn btn-primary btn-lg">
           Create Room

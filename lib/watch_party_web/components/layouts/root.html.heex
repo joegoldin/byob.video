@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
-    <.live_title default="WatchParty">
+    <.live_title default="byob" suffix=" | bring your own binge">
       {assigns[:page_title]}
     </.live_title>
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
@@ -33,7 +33,7 @@
   <body class="min-h-screen bg-base-100 text-base-content">
     <nav class="navbar bg-base-200 border-b border-base-300 px-4">
       <div class="flex-1">
-        <a href="/" class="text-xl font-bold tracking-tight">WatchParty</a>
+        <a href="/" class="text-xl font-bold tracking-tight">byob</a>
       </div>
       <div class="flex-none">
         <label class="swap swap-rotate btn btn-ghost btn-sm btn-circle">
