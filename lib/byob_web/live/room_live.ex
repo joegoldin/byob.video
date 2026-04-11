@@ -278,8 +278,8 @@ defmodule ByobWeb.RoomLive do
 
   def render(assigns) do
     ~H"""
-    <%!-- Copy link button teleported to nav --%>
-    <div id="copy-url-teleport" phx-hook="TeleportToNav" class="hidden">
+    <%!-- Nav actions teleported to header --%>
+    <div id="nav-teleport" phx-hook="TeleportToNav" class="hidden">
       <button
         id="copy-url"
         phx-hook="CopyUrl"
@@ -289,9 +289,30 @@ defmodule ByobWeb.RoomLive do
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
         </svg>
-        Copy Link
+        Copy Room Link
       </button>
     </div>
+
+    <%!-- SponsorBlock settings modal --%>
+    <dialog id="sb-settings-modal" class="modal">
+      <div class="modal-box" id="sb-settings" phx-hook="SponsorBlockSettings">
+        <h3 class="font-bold text-lg mb-4">SponsorBlock Settings</h3>
+        <p class="text-xs text-base-content/50 mb-4">
+          Settings are saved per-browser. Segments are auto-skipped based on your preferences.
+        </p>
+        <div class="space-y-3" id="sb-category-list">
+          <%!-- Categories populated by JS hook from localStorage --%>
+        </div>
+        <div class="modal-action">
+          <form method="dialog">
+            <button class="btn btn-sm">Close</button>
+          </form>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+      </form>
+    </dialog>
 
     <div class="flex flex-col lg:flex-row gap-4">
       <%!-- Main content --%>
