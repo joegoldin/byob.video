@@ -28,6 +28,7 @@ const VideoPlayer = {
     this.sourceId = null;
     this.bufferedState = null;
     this.isReady = false;
+    this.userId = null;
     this.lastKnownPosition = 0;
     this.seekDetectorInterval = null;
 
@@ -62,6 +63,7 @@ const VideoPlayer = {
 
   // Two-step join: buffer state, clock sync, then apply
   async _onSyncState(state) {
+    if (state.user_id) this.userId = state.user_id;
     this.bufferedState = state;
     await this.clockSync.start();
     this.clockSync.maintainSync();
@@ -192,7 +194,7 @@ const VideoPlayer = {
   },
 
   _onSyncPlay(data) {
-    if (data.user_id === this.el.dataset.userId) return;
+    if (data.user_id === this.userId) return;
     this.suppression.suppress("playing");
     this._seekTo(data.time);
     this._play();
@@ -205,7 +207,7 @@ const VideoPlayer = {
   },
 
   _onSyncPause(data) {
-    if (data.user_id === this.el.dataset.userId) return;
+    if (data.user_id === this.userId) return;
     this.suppression.suppress("paused");
     this._seekTo(data.time);
     this._pause();
@@ -213,7 +215,7 @@ const VideoPlayer = {
   },
 
   _onSyncSeek(data) {
-    if (data.user_id === this.el.dataset.userId) return;
+    if (data.user_id === this.userId) return;
     this.suppression.suppress(null); // suppress next state change regardless
     this._seekTo(data.time);
     this.reconcile.setServerState(

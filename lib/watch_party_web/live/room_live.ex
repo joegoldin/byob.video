@@ -50,7 +50,7 @@ defmodule WatchPartyWeb.RoomLive do
         )
 
       # Push full state to client hook for two-step join
-      {:ok, push_event(socket, "sync:state", sync_state_payload(state))}
+      {:ok, push_event(socket, "sync:state", sync_state_payload(state, user_id))}
     else
       {:ok, socket}
     end
@@ -590,8 +590,9 @@ defmodule WatchPartyWeb.RoomLive do
     %{uri | query: URI.encode_query(params)} |> URI.to_string()
   end
 
-  defp sync_state_payload(state) do
+  defp sync_state_payload(state, user_id) do
     %{
+      user_id: user_id,
       queue: Enum.map(state.queue, &serialize_item/1),
       current_index: state.current_index,
       play_state: Atom.to_string(state.play_state),
