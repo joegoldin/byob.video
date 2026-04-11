@@ -21,8 +21,9 @@ COPY lib lib
 COPY assets assets
 COPY priv priv
 
-RUN mix assets.deploy
+# Compile first so phoenix-colocated hooks are generated in _build
 RUN mix compile
+RUN mix assets.deploy
 RUN mix release
 
 # Runtime stage
