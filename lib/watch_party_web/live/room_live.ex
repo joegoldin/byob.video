@@ -298,22 +298,14 @@ defmodule WatchPartyWeb.RoomLive do
 
         <%!-- URL input + preview --%>
         <form phx-submit="add_url" phx-change="preview_url" class="mb-4">
-          <div class="flex gap-2">
-            <input
-              type="text"
-              name="url"
-              placeholder="Paste a video URL..."
-              class="input input-bordered flex-1"
-              autocomplete="off"
-              phx-debounce="500"
-            />
-            <button type="submit" name="mode" value="now" class="btn btn-primary">
-              Play Now
-            </button>
-            <button type="submit" name="mode" value="queue" class="btn btn-outline">
-              Queue
-            </button>
-          </div>
+          <input
+            type="text"
+            name="url"
+            placeholder="Paste a video URL..."
+            class="input input-bordered w-full"
+            autocomplete="off"
+            phx-debounce="500"
+          />
 
           <%!-- Loading placeholder --%>
           <div :if={@url_preview_loading} class="mt-2 flex items-center gap-3 p-3 rounded-lg bg-base-200 animate-pulse">
@@ -324,7 +316,7 @@ defmodule WatchPartyWeb.RoomLive do
             </div>
           </div>
 
-          <%!-- YouTube preview --%>
+          <%!-- YouTube preview with action buttons --%>
           <div
             :if={@url_preview && @url_preview.source_type == :youtube}
             class="mt-2 flex items-center gap-3 p-3 rounded-lg bg-base-200"
@@ -340,9 +332,17 @@ defmodule WatchPartyWeb.RoomLive do
                 {@url_preview.author_name}
               </p>
             </div>
+            <div class="flex gap-1 flex-shrink-0">
+              <button type="submit" name="mode" value="now" class="btn btn-primary btn-sm">
+                Play Now
+              </button>
+              <button type="submit" name="mode" value="queue" class="btn btn-outline btn-sm">
+                Queue
+              </button>
+            </div>
           </div>
 
-          <%!-- Extension-required preview --%>
+          <%!-- Extension-required preview with action buttons --%>
           <div
             :if={@url_preview && @url_preview.source_type == :extension_required}
             class="mt-2 flex items-center gap-3 p-3 rounded-lg bg-base-200"
@@ -352,7 +352,15 @@ defmodule WatchPartyWeb.RoomLive do
             </div>
             <div class="flex-1 min-w-0">
               <p class="text-sm font-medium">External site</p>
-              <p class="text-xs text-base-content/50">Requires browser extension to sync</p>
+              <p class="text-xs text-base-content/50">Requires extension to sync</p>
+            </div>
+            <div class="flex gap-1 flex-shrink-0">
+              <button type="submit" name="mode" value="now" class="btn btn-primary btn-sm">
+                Play Now
+              </button>
+              <button type="submit" name="mode" value="queue" class="btn btn-outline btn-sm">
+                Queue
+              </button>
             </div>
           </div>
         </form>
