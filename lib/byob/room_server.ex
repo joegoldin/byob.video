@@ -102,15 +102,38 @@ defmodule Byob.RoomServer do
     room_id = Keyword.fetch!(opts, :room_id)
     empty_timeout = Keyword.get(opts, :empty_timeout, :timer.minutes(5))
 
-    state = %__MODULE__{
-      room_id: room_id,
-      empty_timeout: empty_timeout,
-      last_sync_at: System.monotonic_time(:millisecond),
-      sb_settings: @default_sb_settings
-    }
+    loaded = try do Byob.Persistence.load_room(room_id) rescue _ -> :not_found catch :exit, _ -> :not_found end
 
-    # Start cleanup timer since room starts empty
+    state =
+      case loaded do
+        {:ok, saved} ->
+          # Restore from saved state, reset transient fields
+          %{saved |
+            empty_timeout: empty_timeout,
+            last_sync_at: System.monotonic_time(:millisecond),
+            cleanup_ref: nil,
+            sync_correction_ref: nil,
+            rate_limit_ref: nil,
+            last_seek_at: %{},
+            event_counts: %{},
+            play_state: :paused,
+            current_time: 0.0,
+            sponsor_segments: [],
+            users: Enum.into(saved.users, %{}, fn {k, v} -> {k, %{v | connected: false}} end)
+          }
+
+        :not_found ->
+          %__MODULE__{
+            room_id: room_id,
+            empty_timeout: empty_timeout,
+            last_sync_at: System.monotonic_time(:millisecond),
+            sb_settings: @default_sb_settings
+          }
+      end
+
+    # Start timers
     state = schedule_rate_limit_reset(state)
+    state = schedule_persist(state)
     {:ok, schedule_cleanup(state)}
   end
 
@@ -334,6 +357,12 @@ defmodule Byob.RoomServer do
     {:noreply, state}
   end
 
+  def handle_info(:persist, state) do
+    persist(state)
+    state = schedule_persist(state)
+    {:noreply, state}
+  end
+
   def handle_info(:sync_correction, %{play_state: :playing} = state) do
     now = System.monotonic_time(:millisecond)
     position = current_position(state)
@@ -485,6 +514,21 @@ defmodule Byob.RoomServer do
   defp cancel_sync_correction(%{sync_correction_ref: ref} = state) do
     Process.cancel_timer(ref)
     %{state | sync_correction_ref: nil}
+  end
+
+  @impl true
+  def terminate(_reason, state) do
+    persist(state)
+    :ok
+  end
+
+  defp persist(state) do
+    try do Byob.Persistence.save_room(state.room_id, state) rescue _ -> :ok catch :exit, _ -> :ok end
+  end
+
+  defp schedule_persist(state) do
+    Process.send_after(self(), :persist, 30_000)
+    state
   end
 
   defp fetch_sponsor_segments(item) do

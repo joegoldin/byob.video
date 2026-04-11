@@ -1,6 +1,10 @@
 # The directory Mix will write compiled artifacts to.
 /_build/
 
+# SQLite database
+/priv/byob.db
+/priv/byob.db-*
+
 # If you run "mix test --cover", coverage assets end up here.
 /cover/
 

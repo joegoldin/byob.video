@@ -13,6 +13,7 @@ defmodule Byob.Application do
       {Phoenix.PubSub, name: Byob.PubSub},
       {Registry, keys: :unique, name: Byob.RoomRegistry},
       {DynamicSupervisor, name: Byob.RoomSupervisor, strategy: :one_for_one},
+      Byob.Persistence,
       ByobWeb.Endpoint
     ]
 
