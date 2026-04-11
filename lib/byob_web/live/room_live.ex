@@ -346,7 +346,7 @@ defmodule ByobWeb.RoomLive do
           class="relative w-full bg-base-300 rounded-lg overflow-hidden mb-3"
           style="padding-bottom: 56.25%; height: 0;"
         >
-          <div class="flex items-center justify-center h-full text-base-content/40">
+          <div class="absolute inset-0 flex items-center justify-center text-base-content/40">
             Paste a URL below to start watching
           </div>
         </div>
