@@ -112,6 +112,7 @@ const VideoPlayer = {
       const elapsed =
         (this.clockSync.serverNow() - state.server_time) / 1000;
       const position = state.current_time + elapsed;
+      this.expectedPlayState = "playing";
       this.suppression.suppress("playing");
       this._seekTo(position);
       this._play();
@@ -120,8 +121,25 @@ const VideoPlayer = {
         state.server_time,
         this.clockSync
       );
+      this.reconcile.pauseFor(2000);
       this.reconcile.start();
+
+      // Retry play if autoplay was blocked — check at 500ms, 1s, 2s
+      const retryPlay = (attempt) => {
+        if (attempt > 3) return;
+        setTimeout(() => {
+          const yt = this.player?.getPlayerState?.();
+          if (yt !== undefined && yt !== YT_PLAYING && yt !== YT_BUFFERING) {
+            this.suppression.suppress("playing");
+            this._play();
+          }
+        }, attempt * 500);
+      };
+      retryPlay(1);
+      retryPlay(2);
+      retryPlay(3);
     } else if (state.play_state === "paused") {
+      this.expectedPlayState = "paused";
       this.suppression.suppress("paused");
       this._seekTo(state.current_time);
       this._pause();
@@ -157,12 +175,15 @@ const VideoPlayer = {
       this.el.appendChild(container);
     }
 
+    // Autoplay if we have a pending state that says playing
+    const shouldAutoplay = this._pendingState?.play_state === "playing" ? 1 : 0;
+
     this.player = new YT.Player("yt-player", {
       videoId: videoId,
       width: "100%",
       height: "100%",
       playerVars: {
-        autoplay: 0,
+        autoplay: shouldAutoplay,
         controls: 1,
         modestbranding: 1,
         rel: 0,
