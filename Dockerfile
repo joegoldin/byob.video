@@ -1,5 +1,5 @@
 # Build stage
-FROM hexpm/elixir:1.19.5-erlang-26.2.5-ubuntu-noble-20260324 AS build
+FROM elixir:1.19 AS build
 
 RUN apt-get update -y && apt-get install -y build-essential git curl && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
