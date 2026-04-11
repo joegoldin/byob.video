@@ -404,7 +404,7 @@ defmodule ByobWeb.RoomLive do
                   phx-value-tab="queue"
                 >
                   Queue
-                  <span :if={@queue != []} class="badge badge-xs ml-1">{length(@queue)}</span>
+                  <span :if={@queue != []} class="badge badge-xs ml-1">{length(@queue) - (@current_index || 0)}</span>
                 </button>
                 <button
                   role="tab"
