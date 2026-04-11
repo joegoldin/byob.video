@@ -44,12 +44,18 @@ const TeleportToNav = {
   },
 }
 
+// Stable per-tab ID: survives reconnects but unique per tab
+if (!sessionStorage.getItem("byob_tab_id")) {
+  sessionStorage.setItem("byob_tab_id", crypto.randomUUID())
+}
+
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: () => ({
     _csrf_token: csrfToken,
     stored_username: localStorage.getItem("watchparty_username"),
+    tab_id: sessionStorage.getItem("byob_tab_id"),
   }),
   hooks: {...colocatedHooks, VideoPlayer, CopyUrl, TeleportToNav},
 })

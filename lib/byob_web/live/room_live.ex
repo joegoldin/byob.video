@@ -19,13 +19,14 @@ defmodule ByobWeb.RoomLive do
         sidebar_tab: :queue,
         editing_username: false,
         url_preview: nil,
-        url_preview_loading: false
+        url_preview_loading: false,
+        sb_settings: Byob.RoomServer.default_sb_settings()
       )
 
     if connected?(socket) do
-      # Use a per-connection ID so each tab is a separate user.
-      # In prod, you'd use the session user_id for single-session-per-user.
-      user_id = socket.assigns.user_id <> ":" <> socket.id
+      # Use stable per-tab ID from sessionStorage (survives reconnects, unique per tab)
+      tab_id = get_connect_params(socket)["tab_id"] || socket.id
+      user_id = socket.assigns.user_id <> ":" <> tab_id
       # Prefer localStorage username over session-generated one
       username =
         case get_connect_params(socket)["stored_username"] do
@@ -47,13 +48,16 @@ defmodule ByobWeb.RoomLive do
           history: state.history,
           current_index: state.current_index,
           play_state: state.play_state,
-          current_media: current_media
+          current_media: current_media,
+          sb_settings: state.sb_settings
         )
 
       # Push full state to client hook for two-step join
       socket = push_event(socket, "sync:state", sync_state_payload(state, user_id))
 
-      # Push sponsor segments if available
+      # Push SB settings and sponsor segments
+      socket = push_event(socket, "sb:settings", state.sb_settings)
+
       socket =
         if state.sponsor_segments != [] && current_media do
           push_event(socket, "sponsor:segments", %{
@@ -161,6 +165,11 @@ defmodule ByobWeb.RoomLive do
     {:noreply, assign(socket, sidebar_tab: String.to_existing_atom(tab))}
   end
 
+  def handle_event("sb:update", %{"category" => category, "action" => action}, socket) do
+    RoomServer.update_sb_settings(socket.assigns.room_pid, category, action)
+    {:noreply, socket}
+  end
+
   def handle_event("username:edit", _params, socket) do
     {:noreply, assign(socket, editing_username: true)}
   end
@@ -266,6 +275,11 @@ defmodule ByobWeb.RoomLive do
     {:noreply, assign(socket, url_preview: preview, url_preview_loading: false)}
   end
 
+  def handle_info({:sb_settings_updated, sb_settings}, socket) do
+    # Push updated settings to JS for the auto-skip logic
+    {:noreply, socket |> assign(sb_settings: sb_settings) |> push_event("sb:settings", sb_settings)}
+  end
+
   def handle_info({:users_updated, users}, socket) do
     {:noreply, assign(socket, users: users)}
   end
@@ -295,13 +309,17 @@ defmodule ByobWeb.RoomLive do
 
     <%!-- SponsorBlock settings modal --%>
     <dialog id="sb-settings-modal" class="modal">
-      <div class="modal-box" id="sb-settings" phx-hook="SponsorBlockSettings">
-        <h3 class="font-bold text-lg mb-4">SponsorBlock Settings</h3>
+      <div class="modal-box max-w-md">
+        <h3 class="font-bold text-lg mb-1">SponsorBlock Settings</h3>
         <p class="text-xs text-base-content/50 mb-4">
-          Settings are saved per-browser. Segments are auto-skipped based on your preferences.
+          Settings apply to this room for all users.
         </p>
-        <div class="space-y-3" id="sb-category-list">
-          <%!-- Categories populated by JS hook from localStorage --%>
+        <div class="space-y-2">
+          <.sb_row
+            :for={{cat, action} <- @sb_settings}
+            category={cat}
+            action={action}
+          />
         </div>
         <div class="modal-action">
           <form method="dialog">
@@ -490,6 +508,9 @@ defmodule ByobWeb.RoomLive do
                     <span class="block truncate text-xs text-base-content/50">
                       {now_playing.url}
                     </span>
+                    <span :if={now_playing.added_by_name} class="block truncate text-xs text-base-content/40">
+                      added by {now_playing.added_by_name}
+                    </span>
                   </div>
                   <button
                     phx-click="queue:remove"
@@ -534,6 +555,9 @@ defmodule ByobWeb.RoomLive do
                     >
                       <span :if={item.title} class="block truncate text-sm">{item.title}</span>
                       <span class="block truncate text-xs text-base-content/50">{item.url}</span>
+                      <span :if={item.added_by_name} class="block truncate text-xs text-base-content/40">
+                        added by {item.added_by_name}
+                      </span>
                     </button>
                     <button
                       phx-click="queue:remove"
@@ -582,6 +606,9 @@ defmodule ByobWeb.RoomLive do
                   <span class="block truncate text-xs text-base-content/50">
                     {entry.item.url}
                   </span>
+                  <span :if={entry.item.added_by_name} class="block truncate text-xs text-base-content/40">
+                    added by {entry.item.added_by_name}
+                  </span>
                 </div>
               </li>
             </ul>
@@ -607,7 +634,7 @@ defmodule ByobWeb.RoomLive do
                 data-user-id={uid}
                 class="flex items-center gap-2 text-sm"
               >
-                <div class="w-2 h-2 rounded-full bg-success flex-shrink-0" />
+                <div class={"w-2 h-2 rounded-full flex-shrink-0 #{if user.connected, do: "bg-success", else: "bg-base-content/20"}"}  />
                 <%!-- Other users: just show name --%>
                 <span :if={uid != @user_id} class="truncate">{user.username}</span>
                 <%!-- Self: show name + edit, or edit form --%>
@@ -643,6 +670,39 @@ defmodule ByobWeb.RoomLive do
           </div>
         </div>
       </div>
+    </div>
+    """
+  end
+
+  # Components
+
+  @sb_labels %{
+    "sponsor" => {"Sponsor", "#00d400"},
+    "selfpromo" => {"Self Promotion", "#ffff00"},
+    "interaction" => {"Interaction", "#cc00ff"},
+    "intro" => {"Intro", "#00ffff"},
+    "outro" => {"Outro", "#0202ed"},
+    "preview" => {"Preview/Recap", "#008fd6"},
+    "music_offtopic" => {"Non-Music", "#ff9900"},
+    "filler" => {"Filler/Tangent", "#7300FF"}
+  }
+
+  defp sb_row(assigns) do
+    {label, color} = Map.get(@sb_labels, assigns.category, {assigns.category, "#888"})
+    assigns = assign(assigns, label: label, color: color)
+
+    ~H"""
+    <div class="flex items-center gap-3">
+      <div class="w-3 h-3 rounded-sm flex-shrink-0" style={"background: #{@color}"} />
+      <span class="text-sm flex-1">{@label}</span>
+      <form phx-change="sb:update" class="m-0">
+        <input type="hidden" name="category" value={@category} />
+        <select name="action" class="select select-xs select-bordered w-32">
+          <option value="auto_skip" selected={@action == "auto_skip"}>Auto Skip</option>
+          <option value="show_bar" selected={@action == "show_bar"}>Show in Bar</option>
+          <option value="disabled" selected={@action == "disabled"}>Disabled</option>
+        </select>
+      </form>
     </div>
     """
   end

@@ -35,6 +35,8 @@ const VideoPlayer = {
     this.expectedPlayState = null; // "playing" or "paused"
     this.sponsorSegments = [];
     this.sponsorCheckInterval = null;
+    this.sbSettings = {};
+    this._lastSponsorData = null;
 
     // Listen for server events
     this.handleEvent("sync:state", (state) => this._onSyncState(state));
@@ -44,6 +46,13 @@ const VideoPlayer = {
     this.handleEvent("sync:pong", (data) => this.clockSync.handlePong(data));
     this.handleEvent("sync:correction", (data) => this._onSyncCorrection(data));
     this.handleEvent("sponsor:segments", (data) => this._onSponsorSegments(data));
+    this.handleEvent("sb:settings", (data) => {
+      this.sbSettings = data;
+      // Re-render bar with updated settings
+      if (this._lastSponsorData) {
+        this._onSponsorSegments(this._lastSponsorData);
+      }
+    });
     this.handleEvent("video:change", (data) => this._onVideoChange(data));
   },
 
@@ -259,13 +268,20 @@ const VideoPlayer = {
   },
 
   _onSponsorSegments(data) {
-    this.sponsorSegments = data.segments || [];
-    // Use player duration if available, fall back to API-provided duration
+    this._lastSponsorData = data;
+    const allSegments = data.segments || [];
+    // Filter segments based on room SB settings
+    this.sponsorSegments = allSegments.filter(
+      (s) => this.sbSettings[s.category] === "auto_skip"
+    );
+    const barSegments = allSegments.filter(
+      (s) => this.sbSettings[s.category] && this.sbSettings[s.category] !== "disabled"
+    );
     const duration =
       (this.player && this.player.getDuration && this.player.getDuration()) ||
       data.duration ||
       0;
-    this._renderSponsorBar(data.segments, duration);
+    this._renderSponsorBar(barSegments, duration);
   },
 
   _renderSponsorBar(segments, duration) {

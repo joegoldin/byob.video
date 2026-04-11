@@ -1,5 +1,5 @@
 defmodule Byob.MediaItem do
-  defstruct [:id, :url, :source_type, :source_id, :title, :duration, :thumbnail_url, :added_by, :added_at]
+  defstruct [:id, :url, :source_type, :source_id, :title, :duration, :thumbnail_url, :added_by, :added_by_name, :added_at]
 
   @youtube_hosts ~w(youtube.com www.youtube.com m.youtube.com youtu.be)
 

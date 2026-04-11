@@ -1,6 +1,17 @@
 defmodule Byob.RoomServer do
   use GenServer
 
+  @default_sb_settings %{
+    "sponsor" => "auto_skip",
+    "selfpromo" => "disabled",
+    "interaction" => "disabled",
+    "intro" => "show_bar",
+    "outro" => "show_bar",
+    "preview" => "show_bar",
+    "music_offtopic" => "disabled",
+    "filler" => "show_bar"
+  }
+
   defstruct [
     :room_id,
     :host_id,
@@ -16,10 +27,13 @@ defmodule Byob.RoomServer do
     playback_rate: 1.0,
     history: [],
     sponsor_segments: [],
+    sb_settings: %{},
     last_seek_at: %{},
     event_counts: %{},
     rate_limit_ref: nil
   ]
+
+  def default_sb_settings, do: @default_sb_settings
 
   # Client API
 
@@ -77,6 +91,10 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:rename_user, user_id, new_username})
   end
 
+  def update_sb_settings(pid, category, action) do
+    GenServer.call(pid, {:update_sb_settings, category, action})
+  end
+
   # Server callbacks
 
   @impl true
@@ -87,7 +105,8 @@ defmodule Byob.RoomServer do
     state = %__MODULE__{
       room_id: room_id,
       empty_timeout: empty_timeout,
-      last_sync_at: System.monotonic_time(:millisecond)
+      last_sync_at: System.monotonic_time(:millisecond),
+      sb_settings: @default_sb_settings
     }
 
     # Start cleanup timer since room starts empty
@@ -102,7 +121,8 @@ defmodule Byob.RoomServer do
       |> cancel_cleanup()
       |> put_in([Access.key(:users), user_id], %{
         username: username,
-        joined_at: System.monotonic_time(:millisecond)
+        joined_at: System.monotonic_time(:millisecond),
+        connected: true
       })
       |> maybe_set_host(user_id)
 
@@ -111,10 +131,17 @@ defmodule Byob.RoomServer do
   end
 
   def handle_call({:leave, user_id}, _from, state) do
-    state = %{state | users: Map.delete(state.users, user_id)}
+    # Mark as disconnected instead of removing
+    state =
+      case Map.get(state.users, user_id) do
+        nil -> state
+        user -> put_in(state.users[user_id], %{user | connected: false})
+      end
+
+    connected_count = Enum.count(state.users, fn {_, u} -> u.connected end)
 
     state =
-      if map_size(state.users) == 0 do
+      if connected_count == 0 do
         schedule_cleanup(state)
       else
         broadcast(state, {:users_updated, state.users})
@@ -172,7 +199,13 @@ defmodule Byob.RoomServer do
   def handle_call({:add_to_queue, user_id, url, mode}, _from, state) do
     case Byob.MediaItem.parse_url(url) do
       {:ok, item} ->
-        item = %{item | added_by: user_id, added_at: DateTime.utc_now()}
+        added_by_name =
+          case Map.get(state.users, user_id) do
+            %{username: name} -> name
+            _ -> nil
+          end
+
+        item = %{item | added_by: user_id, added_by_name: added_by_name, added_at: DateTime.utc_now()}
         state = add_item_to_queue(state, item, mode)
         broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
 
@@ -256,9 +289,18 @@ defmodule Byob.RoomServer do
     {:reply, :ok, state}
   end
 
+  def handle_call({:update_sb_settings, category, action}, _from, state)
+      when is_binary(category) and action in ["auto_skip", "show_bar", "disabled"] do
+    state = put_in(state.sb_settings[category], action)
+    broadcast(state, {:sb_settings_updated, state.sb_settings})
+    {:reply, :ok, state}
+  end
+
   @impl true
   def handle_info(:check_empty, state) do
-    if map_size(state.users) == 0 do
+    connected_count = Enum.count(state.users, fn {_, u} -> u.connected end)
+
+    if connected_count == 0 do
       {:stop, :normal, state}
     else
       {:noreply, state}
@@ -336,7 +378,8 @@ defmodule Byob.RoomServer do
       server_time: System.monotonic_time(:millisecond),
       playback_rate: state.playback_rate,
       history: state.history,
-      sponsor_segments: state.sponsor_segments
+      sponsor_segments: state.sponsor_segments,
+      sb_settings: state.sb_settings
     }
   end
 

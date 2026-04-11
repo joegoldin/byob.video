@@ -29,11 +29,11 @@ defmodule Byob.RoomServerTest do
   end
 
   describe "leave/2" do
-    test "removes user", %{pid: pid} do
+    test "marks user as disconnected", %{pid: pid} do
       {:ok, _} = RoomServer.join(pid, "user1", "SwiftHawk42")
       :ok = RoomServer.leave(pid, "user1")
       state = RoomServer.get_state(pid)
-      assert state.users == %{}
+      assert state.users["user1"].connected == false
     end
   end
 
