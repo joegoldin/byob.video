@@ -170,6 +170,25 @@ defmodule WatchPartyWeb.RoomLive do
           </div>
         </div>
 
+        <div
+          :if={@current_media && @current_media.source_type == :extension_required}
+          class="mb-4 p-4 rounded bg-base-200"
+        >
+          <p class="text-sm mb-2">
+            This video requires the WatchParty browser extension to sync.
+          </p>
+          <a
+            href={extension_open_url(@current_media.url, @room_id)}
+            target="_blank"
+            class="btn btn-primary btn-sm"
+          >
+            Open in New Tab
+          </a>
+          <p class="text-xs text-gray-500 mt-2">
+            Click play on the video for the extension to hook it.
+          </p>
+        </div>
+
         <form phx-submit="add_url" class="flex gap-2 mb-4">
           <input
             type="text"
@@ -228,6 +247,21 @@ defmodule WatchPartyWeb.RoomLive do
   end
 
   # Private helpers
+
+  defp extension_open_url(url, room_id) do
+    # Append watchparty params to the URL so the content script can detect it
+    uri = URI.parse(url)
+    params = URI.decode_query(uri.query || "")
+    server_url = WatchPartyWeb.Endpoint.url()
+
+    params =
+      Map.merge(params, %{
+        "watchparty_room" => room_id,
+        "watchparty_server" => server_url
+      })
+
+    %{uri | query: URI.encode_query(params)} |> URI.to_string()
+  end
 
   defp sync_state_payload(state) do
     %{
