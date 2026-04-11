@@ -1,5 +1,5 @@
 # Build stage
-FROM hexpm/elixir:1.18.4-erlang-26.2.5-ubuntu-noble-20260324 AS build
+FROM hexpm/elixir:1.19.5-erlang-26.2.5-ubuntu-noble-20260324 AS build
 
 RUN apt-get update -y && apt-get install -y build-essential git curl && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
@@ -26,7 +26,7 @@ RUN mix compile
 RUN mix release
 
 # Runtime stage
-FROM ubuntu:noble
+FROM debian:bookworm-slim
 
 RUN apt-get update -y && \
     apt-get install -y libstdc++6 openssl libncurses5 locales ca-certificates && \
