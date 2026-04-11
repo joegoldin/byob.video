@@ -15,6 +15,7 @@ defmodule Byob.RoomServer do
     last_sync_at: 0,
     playback_rate: 1.0,
     history: [],
+    sponsor_segments: [],
     last_seek_at: %{},
     event_counts: %{},
     rate_limit_ref: nil
@@ -235,9 +236,10 @@ defmodule Byob.RoomServer do
     now = System.monotonic_time(:millisecond)
     item = Enum.at(state.queue, index)
 
-    state = %{state | current_index: index, current_time: 0.0, last_sync_at: now, play_state: :playing}
+    state = %{state | current_index: index, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
     state = add_to_history(state, item)
     state = schedule_sync_correction(state)
+    fetch_sponsor_segments(item)
 
     broadcast(state, {:video_changed, %{media_item: item, index: index}})
     broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
@@ -264,16 +266,22 @@ defmodule Byob.RoomServer do
   end
 
   def handle_info({:oembed_result, item_id, meta}, state) do
-    queue =
-      Enum.map(state.queue, fn item ->
-        if item.id == item_id do
-          %{item | title: meta.title, thumbnail_url: meta.thumbnail_url}
-        else
-          item
-        end
+    update_item = fn item ->
+      if item.id == item_id do
+        %{item | title: meta.title, thumbnail_url: meta.thumbnail_url}
+      else
+        item
+      end
+    end
+
+    queue = Enum.map(state.queue, update_item)
+
+    history =
+      Enum.map(state.history, fn entry ->
+        %{entry | item: update_item.(entry.item)}
       end)
 
-    state = %{state | queue: queue}
+    state = %{state | queue: queue, history: history}
     broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
     {:noreply, state}
   end
@@ -296,6 +304,19 @@ defmodule Byob.RoomServer do
     {:noreply, state}
   end
 
+  def handle_info({:sponsor_segments_result, video_id, segments}, state) do
+    # Only apply if the current video matches
+    current_item = if state.current_index, do: Enum.at(state.queue, state.current_index)
+
+    if current_item && current_item.source_id == video_id do
+      state = %{state | sponsor_segments: segments}
+      duration = current_item.duration || 0
+      broadcast(state, {:sponsor_segments, %{segments: segments, duration: duration, video_id: video_id}})
+    end
+
+    {:noreply, state}
+  end
+
   # Private helpers
 
   defp current_position(%{play_state: :playing} = state) do
@@ -315,7 +336,8 @@ defmodule Byob.RoomServer do
       current_time: current_position(state),
       server_time: System.monotonic_time(:millisecond),
       playback_rate: state.playback_rate,
-      history: state.history
+      history: state.history,
+      sponsor_segments: state.sponsor_segments
     }
   end
 
@@ -356,18 +378,20 @@ defmodule Byob.RoomServer do
 
     case state.current_index do
       nil ->
-        state = %{state | queue: [item], current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing}
+        state = %{state | queue: [item], current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
         state = add_to_history(state, item)
         state = schedule_sync_correction(state)
+        fetch_sponsor_segments(item)
         broadcast(state, {:video_changed, %{media_item: item, index: 0}})
         state
 
       idx ->
         insert_at = idx + 1
         queue = List.insert_at(state.queue, insert_at, item)
-        state = %{state | queue: queue, current_index: insert_at, current_time: 0.0, last_sync_at: now, play_state: :playing}
+        state = %{state | queue: queue, current_index: insert_at, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
         state = add_to_history(state, item)
         state = schedule_sync_correction(state)
+        fetch_sponsor_segments(item)
         broadcast(state, {:video_changed, %{media_item: item, index: insert_at}})
         state
     end
@@ -379,9 +403,10 @@ defmodule Byob.RoomServer do
 
     if next_index < length(state.queue) do
       item = Enum.at(state.queue, next_index)
-      state = %{state | current_index: next_index, current_time: 0.0, last_sync_at: now, play_state: :playing}
+      state = %{state | current_index: next_index, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
       state = add_to_history(state, item)
       state = schedule_sync_correction(state)
+      fetch_sponsor_segments(item)
       broadcast(state, {:video_changed, %{media_item: item, index: next_index}})
       broadcast(state, {:queue_updated, %{queue: state.queue, current_index: next_index}})
       state
@@ -418,5 +443,19 @@ defmodule Byob.RoomServer do
   defp cancel_sync_correction(%{sync_correction_ref: ref} = state) do
     Process.cancel_timer(ref)
     %{state | sync_correction_ref: nil}
+  end
+
+  defp fetch_sponsor_segments(item) do
+    if item.source_type == :youtube && item.source_id do
+      video_id = item.source_id
+      pid = self()
+
+      Task.start(fn ->
+        case Byob.SponsorBlock.fetch_segments(video_id) do
+          {:ok, segments} -> send(pid, {:sponsor_segments_result, video_id, segments})
+          _ -> :ok
+        end
+      end)
+    end
   end
 end

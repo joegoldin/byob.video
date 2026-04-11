@@ -31,6 +31,10 @@ const VideoPlayer = {
     this.userId = null;
     this.lastKnownPosition = 0;
     this.seekDetectorInterval = null;
+    this.stateCheckInterval = null;
+    this.expectedPlayState = null; // "playing" or "paused"
+    this.sponsorSegments = [];
+    this.sponsorCheckInterval = null;
 
     // Listen for server events
     this.handleEvent("sync:state", (state) => this._onSyncState(state));
@@ -39,6 +43,7 @@ const VideoPlayer = {
     this.handleEvent("sync:seek", (data) => this._onSyncSeek(data));
     this.handleEvent("sync:pong", (data) => this.clockSync.handlePong(data));
     this.handleEvent("sync:correction", (data) => this._onSyncCorrection(data));
+    this.handleEvent("sponsor:segments", (data) => this._onSponsorSegments(data));
     this.handleEvent("video:change", (data) => this._onVideoChange(data));
   },
 
@@ -56,6 +61,8 @@ const VideoPlayer = {
     this.suppression.destroy();
     this.clockSync.stop();
     if (this.seekDetectorInterval) clearInterval(this.seekDetectorInterval);
+    if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
+    if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
     if (this.player && this.player.destroy) {
       this.player.destroy();
     }
@@ -175,6 +182,7 @@ const VideoPlayer = {
     }
 
     if (state === YT_PLAYING) {
+      this.expectedPlayState = "playing";
       const position = this.player.getCurrentTime();
       this.pushEvent("video:play", { position });
       // Update own reconcile so it doesn't drift-correct back to old position
@@ -182,6 +190,7 @@ const VideoPlayer = {
       this.reconcile.setServerState(position, serverTime, this.clockSync);
       this.reconcile.start();
     } else if (state === YT_PAUSED) {
+      this.expectedPlayState = "paused";
       const position = this.player.getCurrentTime();
       this.pushEvent("video:pause", { position });
       this.reconcile.stop();
@@ -194,6 +203,7 @@ const VideoPlayer = {
   },
 
   _onSyncPlay(data) {
+    this.expectedPlayState = "playing";
     if (data.user_id === this.userId) return;
     this.suppression.suppress("playing");
     this._seekTo(data.time);
@@ -207,6 +217,7 @@ const VideoPlayer = {
   },
 
   _onSyncPause(data) {
+    this.expectedPlayState = "paused";
     if (data.user_id === this.userId) return;
     this.suppression.suppress("paused");
     this._seekTo(data.time);
@@ -245,6 +256,46 @@ const VideoPlayer = {
     };
   },
 
+  _onSponsorSegments(data) {
+    this.sponsorSegments = data.segments || [];
+    this._renderSponsorBar(data.segments, data.duration);
+  },
+
+  _renderSponsorBar(segments, duration) {
+    // Remove existing bar
+    const existing = this.el.querySelector(".sponsor-bar");
+    if (existing) existing.remove();
+    if (!segments || segments.length === 0 || !duration) return;
+
+    const bar = document.createElement("div");
+    bar.className = "sponsor-bar";
+    bar.style.cssText =
+      "position:absolute;bottom:0;left:0;right:0;height:3px;z-index:10;pointer-events:none;";
+
+    const colors = {
+      sponsor: "#00d400",
+      selfpromo: "#ffff00",
+      interaction: "#cc00ff",
+      intro: "#00ffff",
+      outro: "#0202ed",
+      preview: "#008fd6",
+      music_offtopic: "#ff9900",
+      filler: "#7300FF",
+    };
+
+    for (const seg of segments) {
+      const left = (seg.segment[0] / duration) * 100;
+      const width = ((seg.segment[1] - seg.segment[0]) / duration) * 100;
+      const block = document.createElement("div");
+      block.style.cssText = `position:absolute;left:${left}%;width:${width}%;height:100%;background:${colors[seg.category] || "#00d400"};opacity:0.7;`;
+      block.title = seg.category;
+      bar.appendChild(block);
+    }
+
+    this.el.style.position = "relative";
+    this.el.appendChild(bar);
+  },
+
   // Detect seeks while paused (YouTube doesn't fire onStateChange for these)
   _startSeekDetector() {
     if (this.seekDetectorInterval) clearInterval(this.seekDetectorInterval);
@@ -260,6 +311,38 @@ const VideoPlayer = {
       }
       this.lastKnownPosition = pos;
     }, 500);
+
+    // State sync heartbeat — catches fast pause/unpause desync
+    if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
+    this.stateCheckInterval = setInterval(() => {
+      if (!this.player || !this.player.getPlayerState || !this.expectedPlayState) return;
+      if (this.suppression.isActive()) return;
+      const ytState = this.player.getPlayerState();
+      const localState = ytState === YT_PLAYING ? "playing" : ytState === YT_PAUSED ? "paused" : null;
+      if (!localState) return;
+      if (localState !== this.expectedPlayState) {
+        // Force local player to match expected state
+        this.suppression.suppress(this.expectedPlayState);
+        if (this.expectedPlayState === "playing") {
+          this._play();
+        } else {
+          this._pause();
+        }
+      }
+    }, 250);
+
+    // SponsorBlock skip check
+    if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
+    this.sponsorCheckInterval = setInterval(() => {
+      if (!this.player || !this.player.getCurrentTime || this.sponsorSegments.length === 0) return;
+      const pos = this.player.getCurrentTime();
+      for (const seg of this.sponsorSegments) {
+        if (pos >= seg.segment[0] && pos < seg.segment[1] - 0.5) {
+          this._seekTo(seg.segment[1]);
+          break;
+        }
+      }
+    }, 250);
   },
 
   // Player abstraction

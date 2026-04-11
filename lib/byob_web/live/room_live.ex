@@ -50,7 +50,21 @@ defmodule ByobWeb.RoomLive do
         )
 
       # Push full state to client hook for two-step join
-      {:ok, push_event(socket, "sync:state", sync_state_payload(state, user_id))}
+      socket = push_event(socket, "sync:state", sync_state_payload(state, user_id))
+
+      # Push sponsor segments if available
+      socket =
+        if state.sponsor_segments != [] && current_media do
+          push_event(socket, "sponsor:segments", %{
+            segments: state.sponsor_segments,
+            duration: current_media.duration || 0,
+            video_id: current_media.source_id
+          })
+        else
+          socket
+        end
+
+      {:ok, socket}
     else
       {:ok, socket}
     end
@@ -199,6 +213,10 @@ defmodule ByobWeb.RoomLive do
        current_media: current_media,
        history: history
      )}
+  end
+
+  def handle_info({:sponsor_segments, data}, socket) do
+    {:noreply, push_event(socket, "sponsor:segments", data)}
   end
 
   def handle_info({:video_changed, data}, socket) do
