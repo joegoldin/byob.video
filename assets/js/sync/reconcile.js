@@ -1,6 +1,5 @@
 // Drift correction loop with playbackRate adjustment and hard seek
-// Thresholds (ms): do-nothing < 100, rate-correct 100-3000, hard-seek > 3000
-// Hysteresis: while rate-correcting, hard-seek only at 4000; after hard-seek, rate-correct only below 2000
+// Thresholds: do-nothing < 100ms, rate-correct 100-500ms, hard-seek > 500ms
 
 export class Reconcile {
   constructor(playerAdapter) {
@@ -22,7 +21,7 @@ export class Reconcile {
 
   start() {
     if (this.interval) return;
-    this.interval = setInterval(() => this._tick(), 1000);
+    this.interval = setInterval(() => this._tick(), 100);
   }
 
   stop() {
@@ -48,11 +47,11 @@ export class Reconcile {
     const driftMs = (localPosition - expectedPosition) * 1000;
     const absDrift = Math.abs(driftMs);
 
-    // Hard seek threshold depends on whether we're rate-correcting
-    const hardSeekThreshold = this.isRateCorrecting ? 4000 : 3000;
-    // Rate correction re-entry threshold after hard seek
+    // Hysteresis: widen hard-seek threshold while rate-correcting,
+    // narrow rate-correct re-entry after a recent hard seek
+    const hardSeekThreshold = this.isRateCorrecting ? 1000 : 500;
     const rateCorrectionThreshold =
-      Date.now() - this.lastHardSeekAt < 5000 ? 2000 : 100;
+      Date.now() - this.lastHardSeekAt < 3000 ? 300 : 100;
 
     if (absDrift >= hardSeekThreshold) {
       // Hard seek
