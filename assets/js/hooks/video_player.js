@@ -315,6 +315,11 @@ const VideoPlayer = {
     // Clear old sponsor data — new segments will arrive via sponsor:segments event
     this._lastSponsorData = null;
     this.sponsorSegments = [];
+    // Tell iframe to clear old segments
+    const iframe = this.el.querySelector("iframe");
+    if (iframe) {
+      iframe.contentWindow.postMessage({ type: "byob:clear-segments" }, "*");
+    }
     this._loadVideo(item.source_type, item.source_id, item.url);
     this._pendingState = {
       play_state: "playing",

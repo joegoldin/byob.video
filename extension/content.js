@@ -245,6 +245,10 @@
     };
 
     window.addEventListener("message", (e) => {
+      if (e.data?.type === "byob:clear-segments") {
+        document.querySelectorAll(".byob-sponsor-segment").forEach((el) => el.remove());
+        return;
+      }
       if (!e.data || e.data.type !== "byob:sponsor-segments") return;
       const { segments, duration } = e.data;
       if (!segments || !duration) return;
