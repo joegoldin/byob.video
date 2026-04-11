@@ -281,33 +281,19 @@
   let _lastInjectionTarget = null;
 
   function clearAllSegments() {
-    // Direct removal from last target
-    if (_lastInjectionTarget) {
-      Array.from(_lastInjectionTarget.children).forEach((el) => {
-        if (el.classList?.contains("byob-sponsor-segment")) el.remove();
-      });
+    // Inject/update a style tag that hides all segments except current generation
+    updateSegmentVisibility();
+  }
+
+  function updateSegmentVisibility() {
+    let style = document.getElementById("byob-segment-style");
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "byob-segment-style";
+      document.head.appendChild(style);
     }
-    // Brute force: find and remove everywhere
-    document.querySelectorAll(".byob-sponsor-segment").forEach((el) => el.remove());
-    // Also check inside custom elements (YouTube uses them)
-    const customs = document.querySelectorAll("yt-progress-bar, yt-progress-bar-line, yt-chaptered-progress-bar-line");
-    customs.forEach((el) => {
-      // Direct children
-      Array.from(el.children).forEach((c) => {
-        if (c.classList?.contains("byob-sponsor-segment")) c.remove();
-      });
-      // Shadow root
-      if (el.shadowRoot) {
-        el.shadowRoot.querySelectorAll(".byob-sponsor-segment").forEach((s) => s.remove());
-      }
-    });
-    // Nuclear: check every element with our class anywhere in any tree
-    const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_ELEMENT);
-    while (walker.nextNode()) {
-      if (walker.currentNode.classList?.contains("byob-sponsor-segment")) {
-        walker.currentNode.remove();
-      }
-    }
+    // Hide all segments that don't match current generation
+    style.textContent = `.byob-sponsor-segment:not([data-gen="${_currentSegmentGen}"]) { display: none !important; }`;
   }
 
   function injectSegments(progressBar, segments, duration) {
@@ -372,6 +358,9 @@
       `;
       progressBar.appendChild(el);
     }
+
+    // Update CSS to show only current generation
+    updateSegmentVisibility();
   }
 
   // Run
