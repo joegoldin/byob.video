@@ -172,6 +172,10 @@ const VideoPlayer = {
           this.isReady = true;
           this._applyPendingState();
           this._startSeekDetector();
+          // Re-render sponsor bar now that player has duration
+          if (this._lastSponsorData) {
+            this._applySponsorSettings();
+          }
         },
         onStateChange: (event) => this._onYTStateChange(event),
       },
@@ -333,7 +337,7 @@ const VideoPlayer = {
     const bar = document.createElement("div");
     bar.className = "sponsor-bar";
     bar.style.cssText =
-      "position:relative;height:8px;border-radius:0 0 4px 4px;background:rgba(255,255,255,0.08);margin-top:-1px;overflow:visible;cursor:pointer;";
+      "position:relative;height:4px;border-radius:2px;background:rgba(255,255,255,0.1);margin:8px 0;overflow:visible;cursor:pointer;";
 
     // Segment blocks
     const colors = {
@@ -362,14 +366,14 @@ const VideoPlayer = {
     const playhead = document.createElement("div");
     playhead.className = "sponsor-bar-playhead";
     playhead.style.cssText =
-      "position:absolute;top:-3px;width:14px;height:14px;border-radius:50%;background:white;box-shadow:0 1px 4px rgba(0,0,0,0.4);transform:translateX(-50%);z-index:3;left:0%;transition:left 0.1s linear;";
+      "position:absolute;top:-4px;width:12px;height:12px;border-radius:50%;background:white;box-shadow:0 1px 3px rgba(0,0,0,0.3);transform:translateX(-50%);z-index:3;left:0%;transition:left 0.1s linear;";
     bar.appendChild(playhead);
 
     // Progress fill
     const fill = document.createElement("div");
     fill.className = "sponsor-bar-fill";
     fill.style.cssText =
-      "position:absolute;left:0;top:0;height:100%;background:rgba(255,255,255,0.2);border-radius:0 0 0 4px;z-index:1;width:0%;transition:width 0.1s linear;";
+      "position:absolute;left:0;top:0;height:100%;background:rgba(255,255,255,0.2);border-radius:2px 0 0 2px;z-index:1;width:0%;transition:width 0.1s linear;";
     bar.appendChild(fill);
 
     // Click to seek
