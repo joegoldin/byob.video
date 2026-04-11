@@ -345,7 +345,7 @@ const VideoPlayer = {
     const bar = document.createElement("div");
     bar.className = "sponsor-bar";
     bar.style.cssText =
-      "position:relative;height:4px;border-radius:2px;background:rgba(255,255,255,0.1);margin:8px 0;overflow:visible;cursor:pointer;";
+      "position:relative;height:3px;border-radius:2px;background:rgba(255,255,255,0.12);margin:2px 0 8px 0;overflow:visible;cursor:pointer;";
 
     // Segment blocks
     const colors = {
@@ -364,24 +364,29 @@ const VideoPlayer = {
         const left = (seg.segment[0] / duration) * 100;
         const width = Math.max(0.3, ((seg.segment[1] - seg.segment[0]) / duration) * 100);
         const block = document.createElement("div");
-        block.style.cssText = `position:absolute;left:${left}%;width:${width}%;height:100%;background:${colors[seg.category] || "#00d400"};opacity:0.7;`;
-        block.title = seg.category;
+        block.style.cssText = `position:absolute;left:${left}%;width:${width}%;height:100%;background:${colors[seg.category] || "#00d400"};opacity:0.7;border-radius:2px;`;
+        const labels = {
+          sponsor: "Sponsor", selfpromo: "Self Promotion", interaction: "Interaction",
+          intro: "Intro", outro: "Outro", preview: "Preview",
+          music_offtopic: "Non-Music", filler: "Filler",
+        };
+        block.title = labels[seg.category] || seg.category;
         bar.appendChild(block);
       }
     }
 
-    // Playhead indicator
+    // Playhead — thin red line, same height as bar
     const playhead = document.createElement("div");
     playhead.className = "sponsor-bar-playhead";
     playhead.style.cssText =
-      "position:absolute;top:-4px;width:12px;height:12px;border-radius:50%;background:white;box-shadow:0 1px 3px rgba(0,0,0,0.3);transform:translateX(-50%);z-index:3;left:0%;transition:left 0.1s linear;";
+      "position:absolute;top:0;width:2px;height:100%;background:#e33;z-index:3;left:0%;transition:left 0.1s linear;";
     bar.appendChild(playhead);
 
-    // Progress fill
+    // Progress fill — red tinted
     const fill = document.createElement("div");
     fill.className = "sponsor-bar-fill";
     fill.style.cssText =
-      "position:absolute;left:0;top:0;height:100%;background:rgba(255,255,255,0.2);border-radius:2px 0 0 2px;z-index:1;width:0%;transition:width 0.1s linear;";
+      "position:absolute;left:0;top:0;height:100%;background:rgba(230,50,50,0.25);border-radius:2px 0 0 2px;z-index:1;width:0%;transition:width 0.1s linear;";
     bar.appendChild(fill);
 
     // Click to seek
