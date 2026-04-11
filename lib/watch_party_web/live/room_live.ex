@@ -18,8 +18,11 @@ defmodule WatchPartyWeb.RoomLive do
       )
 
     if connected?(socket) do
-      user_id = socket.assigns.user_id
+      # Use a per-connection ID so each tab is a separate user.
+      # In prod, you'd use the session user_id for single-session-per-user.
+      user_id = socket.assigns.user_id <> ":" <> socket.id
       username = socket.assigns.username
+      socket = assign(socket, user_id: user_id)
       Phoenix.PubSub.subscribe(WatchParty.PubSub, "room:#{room_id}")
       {:ok, state} = RoomServer.join(pid, user_id, username)
 
