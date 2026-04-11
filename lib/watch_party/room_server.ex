@@ -14,6 +14,7 @@ defmodule WatchParty.RoomServer do
     current_time: 0.0,
     last_sync_at: 0,
     playback_rate: 1.0,
+    history: [],
     last_seek_at: %{},
     event_counts: %{},
     rate_limit_ref: nil
@@ -235,6 +236,7 @@ defmodule WatchParty.RoomServer do
     item = Enum.at(state.queue, index)
 
     state = %{state | current_index: index, current_time: 0.0, last_sync_at: now, play_state: :playing}
+    state = add_to_history(state, item)
     state = schedule_sync_correction(state)
 
     broadcast(state, {:video_changed, %{media_item: item, index: index}})
@@ -312,7 +314,8 @@ defmodule WatchParty.RoomServer do
       play_state: state.play_state,
       current_time: current_position(state),
       server_time: System.monotonic_time(:millisecond),
-      playback_rate: state.playback_rate
+      playback_rate: state.playback_rate,
+      history: state.history
     }
   end
 
@@ -335,6 +338,15 @@ defmodule WatchParty.RoomServer do
     Phoenix.PubSub.broadcast(WatchParty.PubSub, "room:#{state.room_id}", message)
   end
 
+  defp add_to_history(state, item) do
+    entry = %{item: item, played_at: DateTime.utc_now()}
+    # Deduplicate: don't add if the last history entry is the same item
+    case state.history do
+      [%{item: %{id: id}} | _] when id == item.id -> state
+      _ -> %{state | history: [entry | state.history]}
+    end
+  end
+
   defp add_item_to_queue(state, item, :queue) do
     %{state | queue: state.queue ++ [item]}
   end
@@ -345,6 +357,7 @@ defmodule WatchParty.RoomServer do
     case state.current_index do
       nil ->
         state = %{state | queue: [item], current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing}
+        state = add_to_history(state, item)
         state = schedule_sync_correction(state)
         broadcast(state, {:video_changed, %{media_item: item, index: 0}})
         state
@@ -353,6 +366,7 @@ defmodule WatchParty.RoomServer do
         insert_at = idx + 1
         queue = List.insert_at(state.queue, insert_at, item)
         state = %{state | queue: queue, current_index: insert_at, current_time: 0.0, last_sync_at: now, play_state: :playing}
+        state = add_to_history(state, item)
         state = schedule_sync_correction(state)
         broadcast(state, {:video_changed, %{media_item: item, index: insert_at}})
         state
@@ -366,6 +380,7 @@ defmodule WatchParty.RoomServer do
     if next_index < length(state.queue) do
       item = Enum.at(state.queue, next_index)
       state = %{state | current_index: next_index, current_time: 0.0, last_sync_at: now, play_state: :playing}
+      state = add_to_history(state, item)
       state = schedule_sync_correction(state)
       broadcast(state, {:video_changed, %{media_item: item, index: next_index}})
       broadcast(state, {:queue_updated, %{queue: state.queue, current_index: next_index}})

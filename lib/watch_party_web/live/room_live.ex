@@ -12,9 +12,11 @@ defmodule WatchPartyWeb.RoomLive do
         room_pid: pid,
         users: %{},
         queue: [],
+        history: [],
         current_index: nil,
         play_state: :paused,
-        current_media: nil
+        current_media: nil,
+        sidebar_tab: :queue
       )
 
     if connected?(socket) do
@@ -39,6 +41,7 @@ defmodule WatchPartyWeb.RoomLive do
         assign(socket,
           users: state.users,
           queue: state.queue,
+          history: state.history,
           current_index: state.current_index,
           play_state: state.play_state,
           current_media: current_media
@@ -102,6 +105,10 @@ defmodule WatchPartyWeb.RoomLive do
     {:noreply, socket}
   end
 
+  def handle_event("switch_tab", %{"tab" => tab}, socket) do
+    {:noreply, assign(socket, sidebar_tab: String.to_existing_atom(tab))}
+  end
+
   def handle_event("username:change", %{"username" => new_username}, socket) do
     new_username = String.trim(new_username)
 
@@ -146,20 +153,35 @@ defmodule WatchPartyWeb.RoomLive do
   def handle_info({:queue_updated, %{queue: queue, current_index: current_index}}, socket) do
     current_media = if current_index, do: Enum.at(queue, current_index), else: nil
 
+    # Refresh history from RoomServer
+    history =
+      case RoomServer.get_state(socket.assigns.room_pid) do
+        %{history: h} -> h
+        _ -> socket.assigns.history
+      end
+
     {:noreply,
      assign(socket,
        queue: queue,
        current_index: current_index,
-       current_media: current_media
+       current_media: current_media,
+       history: history
      )}
   end
 
   def handle_info({:video_changed, data}, socket) do
+    history =
+      case RoomServer.get_state(socket.assigns.room_pid) do
+        %{history: h} -> h
+        _ -> socket.assigns.history
+      end
+
     socket =
       assign(socket,
         current_media: data.media_item,
         current_index: data.index,
-        play_state: :playing
+        play_state: :playing,
+        history: history
       )
 
     {:noreply, push_event(socket, "video:change", serialize_media_item(data))}
@@ -245,58 +267,49 @@ defmodule WatchPartyWeb.RoomLive do
         </form>
       </div>
 
-      <%!-- Sidebar --%>
-      <div class="lg:w-72 flex flex-col gap-4">
-        <%!-- Users card --%>
-        <div class="card bg-base-200">
-          <div class="card-body p-4">
-            <h3 class="card-title text-sm">
-              Users
-              <span class="badge badge-sm">{map_size(@users)}</span>
-            </h3>
-            <ul class="space-y-2 mt-1">
-              <li
-                :for={{uid, user} <- @users}
-                data-user-id={uid}
-                class="flex items-center gap-2 text-sm"
-              >
-                <div class="w-2 h-2 rounded-full bg-success flex-shrink-0" />
-                <span :if={uid != @user_id} class="truncate">{user.username}</span>
-                <form
-                  :if={uid == @user_id}
-                  phx-submit="username:change"
-                  class="flex gap-1 flex-1 min-w-0"
+      <%!-- Sidebar: queue/history at top, users pinned at bottom --%>
+      <div class="lg:w-72 flex flex-col lg:h-[calc(100vh-5rem)]">
+        <%!-- Queue/History card — fills available space --%>
+        <div class="card bg-base-200 flex-1 min-h-0">
+          <div class="card-body p-4 flex flex-col">
+            <%!-- Tabs --%>
+            <div class="flex items-center gap-1 mb-2">
+              <div role="tablist" class="tabs tabs-box tabs-sm flex-1">
+                <button
+                  role="tab"
+                  class={"tab #{if @sidebar_tab == :queue, do: "tab-active"}"}
+                  phx-click="switch_tab"
+                  phx-value-tab="queue"
                 >
-                  <input
-                    type="text"
-                    name="username"
-                    value={user.username}
-                    class="input input-xs input-bordered flex-1 min-w-0"
-                  />
-                  <button type="submit" class="btn btn-xs btn-ghost">ok</button>
-                </form>
-              </li>
-            </ul>
-          </div>
-        </div>
-
-        <%!-- Queue card --%>
-        <div class="card bg-base-200">
-          <div class="card-body p-4">
-            <div class="flex items-center justify-between">
-              <h3 class="card-title text-sm">
-                Queue
-                <span :if={@queue != []} class="badge badge-sm">{length(@queue)}</span>
-              </h3>
+                  Queue
+                  <span :if={@queue != []} class="badge badge-xs ml-1">{length(@queue)}</span>
+                </button>
+                <button
+                  role="tab"
+                  class={"tab #{if @sidebar_tab == :history, do: "tab-active"}"}
+                  phx-click="switch_tab"
+                  phx-value-tab="history"
+                >
+                  History
+                  <span :if={@history != []} class="badge badge-xs ml-1">
+                    {length(@history)}
+                  </span>
+                </button>
+              </div>
               <button
-                :if={@current_media}
+                :if={@current_media && @sidebar_tab == :queue}
                 phx-click="queue:skip"
                 class="btn btn-xs btn-ghost"
               >
                 Skip
               </button>
             </div>
-            <ul :if={@queue != []} class="space-y-2 mt-1">
+
+            <%!-- Queue list --%>
+            <ul
+              :if={@sidebar_tab == :queue && @queue != []}
+              class="space-y-2 overflow-y-auto flex-1"
+            >
               <li
                 :for={{item, idx} <- Enum.with_index(@queue)}
                 class={"flex items-center gap-2 p-2 rounded-lg text-sm transition-colors #{if idx == @current_index, do: "bg-primary/10 ring-1 ring-primary/20", else: "hover:bg-base-300"}"}
@@ -329,9 +342,82 @@ defmodule WatchPartyWeb.RoomLive do
                 </button>
               </li>
             </ul>
-            <p :if={@queue == []} class="text-sm text-base-content/40 mt-1">
+            <p
+              :if={@sidebar_tab == :queue && @queue == []}
+              class="text-sm text-base-content/40 flex-1 flex items-center justify-center"
+            >
               No videos in queue
             </p>
+
+            <%!-- History list --%>
+            <ul
+              :if={@sidebar_tab == :history && @history != []}
+              class="space-y-2 overflow-y-auto flex-1"
+            >
+              <li
+                :for={entry <- @history}
+                class="flex items-center gap-2 p-2 rounded-lg text-sm hover:bg-base-300 transition-colors"
+              >
+                <img
+                  :if={entry.item.thumbnail_url}
+                  src={entry.item.thumbnail_url}
+                  class="w-14 h-9 object-cover rounded flex-shrink-0"
+                />
+                <div
+                  :if={!entry.item.thumbnail_url}
+                  class="w-14 h-9 bg-base-300 rounded flex-shrink-0 flex items-center justify-center"
+                >
+                  <span class="text-xs text-base-content/30">?</span>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <span :if={entry.item.title} class="block truncate text-sm">
+                    {entry.item.title}
+                  </span>
+                  <span class="block truncate text-xs text-base-content/50">
+                    {entry.item.url}
+                  </span>
+                </div>
+              </li>
+            </ul>
+            <p
+              :if={@sidebar_tab == :history && @history == []}
+              class="text-sm text-base-content/40 flex-1 flex items-center justify-center"
+            >
+              No history yet
+            </p>
+          </div>
+        </div>
+
+        <%!-- Users card — pinned at bottom --%>
+        <div class="card bg-base-200 mt-4 flex-shrink-0">
+          <div class="card-body p-4">
+            <h3 class="card-title text-sm">
+              Users
+              <span class="badge badge-sm">{map_size(@users)}</span>
+            </h3>
+            <ul class="space-y-2 mt-1">
+              <li
+                :for={{uid, user} <- @users}
+                data-user-id={uid}
+                class="flex items-center gap-2 text-sm"
+              >
+                <div class="w-2 h-2 rounded-full bg-success flex-shrink-0" />
+                <span :if={uid != @user_id} class="truncate">{user.username}</span>
+                <form
+                  :if={uid == @user_id}
+                  phx-submit="username:change"
+                  class="flex gap-1 flex-1 min-w-0"
+                >
+                  <input
+                    type="text"
+                    name="username"
+                    value={user.username}
+                    class="input input-xs input-bordered flex-1 min-w-0"
+                  />
+                  <button type="submit" class="btn btn-xs btn-ghost">ok</button>
+                </form>
+              </li>
+            </ul>
           </div>
         </div>
       </div>
