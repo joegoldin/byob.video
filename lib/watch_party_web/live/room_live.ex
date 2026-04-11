@@ -405,42 +405,91 @@ defmodule WatchPartyWeb.RoomLive do
             </div>
 
             <%!-- Queue list --%>
-            <ul
+            <div
               :if={@sidebar_tab == :queue && @queue != []}
-              class="space-y-2 overflow-y-auto flex-1"
+              class="overflow-y-auto flex-1 space-y-2"
             >
-              <li
-                :for={{item, idx} <- Enum.with_index(@queue)}
-                class={"flex items-center gap-2 p-2 rounded-lg text-sm transition-colors #{if idx == @current_index, do: "bg-primary/10 ring-1 ring-primary/20", else: "hover:bg-base-300"}"}
-              >
-                <img
-                  :if={item.thumbnail_url}
-                  src={item.thumbnail_url}
-                  class="w-14 h-9 object-cover rounded flex-shrink-0"
-                />
-                <div
-                  :if={!item.thumbnail_url}
-                  class="w-14 h-9 bg-base-300 rounded flex-shrink-0 flex items-center justify-center"
-                >
-                  <span class="text-xs text-base-content/30">?</span>
+              <%!-- Now Playing --%>
+              <div :if={@current_index != nil && Enum.at(@queue, @current_index)} class="mb-1">
+                <div class="text-xs font-semibold text-primary uppercase tracking-wide mb-1">
+                  Now Playing
                 </div>
-                <button
-                  phx-click="queue:play_index"
-                  phx-value-index={idx}
-                  class="flex-1 text-left min-w-0"
-                >
-                  <span :if={item.title} class="block truncate text-sm">{item.title}</span>
-                  <span class="block truncate text-xs text-base-content/50">{item.url}</span>
-                </button>
-                <button
-                  phx-click="queue:remove"
-                  phx-value-item_id={item.id}
-                  class="btn btn-xs btn-ghost btn-circle opacity-50 hover:opacity-100"
-                >
-                  x
-                </button>
-              </li>
-            </ul>
+                <% now_playing = Enum.at(@queue, @current_index) %>
+                <div class="flex items-center gap-2 p-2 rounded-lg bg-primary/10 ring-1 ring-primary/30 text-sm">
+                  <img
+                    :if={now_playing.thumbnail_url}
+                    src={now_playing.thumbnail_url}
+                    class="w-14 h-9 object-cover rounded flex-shrink-0"
+                  />
+                  <div
+                    :if={!now_playing.thumbnail_url}
+                    class="w-14 h-9 bg-base-300 rounded flex-shrink-0 flex items-center justify-center"
+                  >
+                    <span class="text-xs text-base-content/30">?</span>
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <span :if={now_playing.title} class="block truncate text-sm font-medium">
+                      {now_playing.title}
+                    </span>
+                    <span class="block truncate text-xs text-base-content/50">
+                      {now_playing.url}
+                    </span>
+                  </div>
+                  <button
+                    phx-click="queue:remove"
+                    phx-value-item_id={now_playing.id}
+                    class="btn btn-xs btn-ghost btn-circle opacity-50 hover:opacity-100"
+                  >
+                    x
+                  </button>
+                </div>
+              </div>
+
+              <%!-- Up Next --%>
+              <% up_next =
+                @queue
+                |> Enum.with_index()
+                |> Enum.filter(fn {_item, idx} -> idx != @current_index end)
+              %>
+              <div :if={up_next != []}>
+                <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-1">
+                  Up Next
+                </div>
+                <ul class="space-y-1">
+                  <li
+                    :for={{item, idx} <- up_next}
+                    class="flex items-center gap-2 p-2 rounded-lg text-sm hover:bg-base-300 transition-colors"
+                  >
+                    <img
+                      :if={item.thumbnail_url}
+                      src={item.thumbnail_url}
+                      class="w-14 h-9 object-cover rounded flex-shrink-0"
+                    />
+                    <div
+                      :if={!item.thumbnail_url}
+                      class="w-14 h-9 bg-base-300 rounded flex-shrink-0 flex items-center justify-center"
+                    >
+                      <span class="text-xs text-base-content/30">?</span>
+                    </div>
+                    <button
+                      phx-click="queue:play_index"
+                      phx-value-index={idx}
+                      class="flex-1 text-left min-w-0"
+                    >
+                      <span :if={item.title} class="block truncate text-sm">{item.title}</span>
+                      <span class="block truncate text-xs text-base-content/50">{item.url}</span>
+                    </button>
+                    <button
+                      phx-click="queue:remove"
+                      phx-value-item_id={item.id}
+                      class="btn btn-xs btn-ghost btn-circle opacity-50 hover:opacity-100"
+                    >
+                      x
+                    </button>
+                  </li>
+                </ul>
+              </div>
+            </div>
             <p
               :if={@sidebar_tab == :queue && @queue == []}
               class="text-sm text-base-content/40 flex-1 flex items-center justify-center"
