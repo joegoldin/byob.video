@@ -260,7 +260,12 @@ const VideoPlayer = {
 
   _onSponsorSegments(data) {
     this.sponsorSegments = data.segments || [];
-    this._renderSponsorBar(data.segments, data.duration);
+    // Use player duration if available, fall back to API-provided duration
+    const duration =
+      (this.player && this.player.getDuration && this.player.getDuration()) ||
+      data.duration ||
+      0;
+    this._renderSponsorBar(data.segments, duration);
   },
 
   _renderSponsorBar(segments, duration) {
@@ -269,10 +274,19 @@ const VideoPlayer = {
     if (existing) existing.remove();
     if (!segments || segments.length === 0 || !duration) return;
 
+    // Overlay bar positioned at the bottom of the player, above YouTube's controls
     const bar = document.createElement("div");
     bar.className = "sponsor-bar";
-    bar.style.cssText =
-      "position:absolute;bottom:0;left:0;right:0;height:3px;z-index:10;pointer-events:none;";
+    bar.style.cssText = [
+      "position:absolute",
+      "bottom:0",
+      "left:0",
+      "right:0",
+      "height:4px",
+      "z-index:30",
+      "pointer-events:none",
+      "background:rgba(255,255,255,0.1)",
+    ].join(";");
 
     const colors = {
       sponsor: "#00d400",
@@ -287,9 +301,9 @@ const VideoPlayer = {
 
     for (const seg of segments) {
       const left = (seg.segment[0] / duration) * 100;
-      const width = ((seg.segment[1] - seg.segment[0]) / duration) * 100;
+      const width = Math.max(0.3, ((seg.segment[1] - seg.segment[0]) / duration) * 100);
       const block = document.createElement("div");
-      block.style.cssText = `position:absolute;left:${left}%;width:${width}%;height:100%;background:${colors[seg.category] || "#00d400"};opacity:0.7;`;
+      block.style.cssText = `position:absolute;left:${left}%;width:${width}%;height:100%;background:${colors[seg.category] || "#00d400"};opacity:0.85;border-radius:1px;`;
       block.title = seg.category;
       bar.appendChild(block);
     }

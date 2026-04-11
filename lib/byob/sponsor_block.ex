@@ -17,11 +17,18 @@ defmodule Byob.SponsorBlock do
               segment: seg["segment"],
               category: seg["category"],
               action_type: seg["actionType"],
-              uuid: seg["UUID"]
+              uuid: seg["UUID"],
+              video_duration: seg["videoDuration"]
             }
           end)
 
-        {:ok, segments}
+        duration =
+          body
+          |> Enum.map(& &1["videoDuration"])
+          |> Enum.filter(&(&1 && &1 > 0))
+          |> Enum.max(fn -> 0 end)
+
+        {:ok, segments, duration}
 
       {:ok, %{status: 404}} ->
         {:ok, []}

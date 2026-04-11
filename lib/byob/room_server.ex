@@ -304,13 +304,12 @@ defmodule Byob.RoomServer do
     {:noreply, state}
   end
 
-  def handle_info({:sponsor_segments_result, video_id, segments}, state) do
+  def handle_info({:sponsor_segments_result, video_id, segments, duration}, state) do
     # Only apply if the current video matches
     current_item = if state.current_index, do: Enum.at(state.queue, state.current_index)
 
     if current_item && current_item.source_id == video_id do
       state = %{state | sponsor_segments: segments}
-      duration = current_item.duration || 0
       broadcast(state, {:sponsor_segments, %{segments: segments, duration: duration, video_id: video_id}})
     end
 
@@ -452,7 +451,7 @@ defmodule Byob.RoomServer do
 
       Task.start(fn ->
         case Byob.SponsorBlock.fetch_segments(video_id) do
-          {:ok, segments} -> send(pid, {:sponsor_segments_result, video_id, segments})
+          {:ok, segments, duration} -> send(pid, {:sponsor_segments_result, video_id, segments, duration})
           _ -> :ok
         end
       end)
