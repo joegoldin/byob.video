@@ -83,13 +83,6 @@
       if (e.data?.type === "byob:relay" && e.data.payload && port) {
         port.postMessage(e.data.payload);
       }
-      // Show sync bar in top frame when nested frame hooks video
-      if (e.data?.type === "byob:video-hooked" && window === window.top) {
-        if (!window.location.hostname.includes("youtube.com")) {
-          injectSyncBar();
-          updateSyncBarStatus("hooked");
-        }
-      }
     });
 
     port.onDisconnect.addListener(() => {
@@ -159,14 +152,9 @@
     // Also relay up to top frame in case port isn't working in nested iframe
     try { window.top.postMessage({ type: "byob:relay", payload: reportHooked }, "*"); } catch (_) {}
 
-    // Show sync bar in the top frame (not nested iframes where it gets hidden)
+    // Notify top frame via chrome.runtime that video was hooked
     if (!window.location.hostname.includes("youtube.com")) {
-      try { window.top.postMessage({ type: "byob:video-hooked" }, "*"); } catch (_) {}
-      // If we ARE the top frame, show directly
-      if (window === window.top) {
-        injectSyncBar();
-        updateSyncBarStatus("hooked");
-      }
+      try { chrome.runtime.sendMessage({ type: "byob:video-hooked" }); } catch (_) {}
     }
 
     // Update sync bar to show we found a video
@@ -258,6 +246,15 @@
 
   // Handle commands from service worker
   function handleSWMessage(msg) {
+    // Show sync bar in top frame when notified a nested frame hooked a video
+    if (msg.type === "byob:video-hooked" && window === window.top) {
+      if (!window.location.hostname.includes("youtube.com")) {
+        injectSyncBar();
+        updateSyncBarStatus("hooked");
+      }
+      return;
+    }
+
     if (!hookedVideo) return;
 
     switch (msg.type) {

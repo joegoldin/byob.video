@@ -1,7 +1,7 @@
 // WatchParty service worker — holds content script ports + Phoenix Channel connection
 import { Socket } from "./lib/phoenix.mjs";
 
-const ports = new Map(); // tabId -> port
+const ports = []; // all connected ports
 let socket = null;
 let channel = null;
 let currentRoomId = null;
@@ -11,17 +11,14 @@ let currentServerUrl = null;
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "watchparty") return;
 
-  const tabId = port.sender?.tab?.id;
-  if (tabId) {
-    ports.set(tabId, port);
-  }
+  ports.push(port);
 
-  port.onMessage.addListener((msg) => handleContentMessage(msg, port, tabId));
+  port.onMessage.addListener((msg) => handleContentMessage(msg, port));
 
   port.onDisconnect.addListener(() => {
-    if (tabId) ports.delete(tabId);
-    // If no more ports and no channel, SW can die naturally
-    if (ports.size === 0 && channel) {
+    const idx = ports.indexOf(port);
+    if (idx > -1) ports.splice(idx, 1);
+    if (ports.length === 0 && channel) {
       channel.leave();
       channel = null;
       if (socket) {
@@ -125,8 +122,15 @@ function connectToRoom(roomId, serverUrl) {
     });
 }
 
+// Listen for messages from content scripts (cross-origin safe)
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "byob:video-hooked") {
+    broadcastToContentScripts({ type: "byob:video-hooked" });
+  }
+});
+
 function broadcastToContentScripts(msg) {
-  for (const [_tabId, port] of ports) {
+  for (const port of ports) {
     try {
       port.postMessage(msg);
     } catch (e) {
