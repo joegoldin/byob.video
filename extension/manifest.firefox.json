@@ -1,11 +1,11 @@
 {
-  "manifest_version": 3,
+  "manifest_version": 2,
   "name": "byob - Bring Your Own Binge",
   "version": "0.1.0",
   "description": "Syncs video playback with byob.video rooms",
-  "permissions": ["storage"],
+  "permissions": ["storage", "<all_urls>"],
   "background": {
-    "service_worker": "background.js",
+    "scripts": ["lib/phoenix.mjs", "background.js"],
     "type": "module"
   },
   "content_scripts": [
@@ -16,5 +16,10 @@
       "all_frames": false
     }
   ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "byob@byob.video"
+    }
+  },
   "icons": {}
 }

@@ -39,3 +39,6 @@ watch_party-*.tar
 npm-debug.log
 /assets/node_modules/
 
+# nix flake result
+result/
+result
