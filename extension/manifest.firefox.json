@@ -18,11 +18,11 @@
   ],
   "browser_specific_settings": {
     "gecko": {
-      "id": "byob@byob.video"
+      "id": "byob@byob.video",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
     }
-  },
-  "data_collection_permissions": {
-    "collected": false
   },
   "icons": {}
 }
