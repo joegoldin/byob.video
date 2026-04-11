@@ -216,6 +216,11 @@ const VideoPlayer = {
           this._startSeekDetector();
           // Re-render sponsor bar — retry until getDuration() returns > 0
           this._retrySponsorBar();
+          // Clear any stale sponsor segments from previous video
+          const iframe = this.el.querySelector("iframe");
+          if (iframe) {
+            iframe.contentWindow.postMessage({ type: "byob:clear-segments" }, "*");
+          }
         },
         onStateChange: (event) => this._onYTStateChange(event),
       },
