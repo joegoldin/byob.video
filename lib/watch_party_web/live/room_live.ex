@@ -93,6 +93,17 @@ defmodule WatchPartyWeb.RoomLive do
     {:noreply, socket}
   end
 
+  def handle_event("username:change", %{"username" => new_username}, socket) do
+    new_username = String.trim(new_username)
+
+    if new_username != "" and String.length(new_username) <= 30 do
+      RoomServer.rename_user(socket.assigns.room_pid, socket.assigns.user_id, new_username)
+      {:noreply, assign(socket, username: new_username)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event("sync:ping", %{"t1" => t1}, socket) do
     t2 = System.monotonic_time(:millisecond)
     t3 = System.monotonic_time(:millisecond)
@@ -155,6 +166,14 @@ defmodule WatchPartyWeb.RoomLive do
       <div class="flex-1">
         <div class="mb-4 flex items-center gap-2">
           <span class="font-mono text-sm text-gray-500">Room: {@room_id}</span>
+          <button
+            id="copy-url"
+            phx-hook="CopyUrl"
+            data-url={url(~p"/room/#{@room_id}")}
+            class="btn btn-xs btn-ghost"
+          >
+            Copy Link
+          </button>
         </div>
 
         <div
@@ -237,8 +256,17 @@ defmodule WatchPartyWeb.RoomLive do
           Users ({map_size(@users)})
         </h3>
         <ul class="space-y-1">
-          <li :for={{uid, user} <- @users} data-user-id={uid} class="text-sm">
-            {user.username}
+          <li :for={{uid, user} <- @users} data-user-id={uid} class="text-sm flex items-center gap-1">
+            <span :if={uid != @user_id}>{user.username}</span>
+            <form :if={uid == @user_id} phx-submit="username:change" class="flex gap-1">
+              <input
+                type="text"
+                name="username"
+                value={user.username}
+                class="input input-xs input-bordered w-28"
+              />
+              <button type="submit" class="btn btn-xs btn-ghost">ok</button>
+            </form>
           </li>
         </ul>
       </div>

@@ -13,7 +13,10 @@ defmodule WatchParty.RoomServer do
     play_state: :paused,
     current_time: 0.0,
     last_sync_at: 0,
-    playback_rate: 1.0
+    playback_rate: 1.0,
+    last_seek_at: %{},
+    event_counts: %{},
+    rate_limit_ref: nil
   ]
 
   # Client API
@@ -86,6 +89,7 @@ defmodule WatchParty.RoomServer do
     }
 
     # Start cleanup timer since room starts empty
+    state = schedule_rate_limit_reset(state)
     {:ok, schedule_cleanup(state)}
   end
 
@@ -123,32 +127,44 @@ defmodule WatchParty.RoomServer do
   end
 
   def handle_call({:play, user_id, position}, _from, state) do
-    now = System.monotonic_time(:millisecond)
+    case check_rate_limit(state, user_id) do
+      {:error, state} ->
+        {:reply, {:error, :rate_limited}, state}
 
-    state = %{state | play_state: :playing, current_time: position, last_sync_at: now}
-    state = schedule_sync_correction(state)
-
-    broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
-    {:reply, :ok, state}
+      {:ok, state} ->
+        now = System.monotonic_time(:millisecond)
+        state = %{state | play_state: :playing, current_time: position, last_sync_at: now}
+        state = schedule_sync_correction(state)
+        broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
+        {:reply, :ok, state}
+    end
   end
 
   def handle_call({:pause, user_id, position}, _from, state) do
-    now = System.monotonic_time(:millisecond)
+    case check_rate_limit(state, user_id) do
+      {:error, state} ->
+        {:reply, {:error, :rate_limited}, state}
 
-    state = %{state | play_state: :paused, current_time: position, last_sync_at: now}
-    state = cancel_sync_correction(state)
-
-    broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
-    {:reply, :ok, state}
+      {:ok, state} ->
+        now = System.monotonic_time(:millisecond)
+        state = %{state | play_state: :paused, current_time: position, last_sync_at: now}
+        state = cancel_sync_correction(state)
+        broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
+        {:reply, :ok, state}
+    end
   end
 
   def handle_call({:seek, user_id, position}, _from, state) do
     now = System.monotonic_time(:millisecond)
+    last = Map.get(state.last_seek_at, user_id)
 
-    state = %{state | current_time: position, last_sync_at: now}
-
-    broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
-    {:reply, :ok, state}
+    if last != nil and now - last < 500 do
+      {:reply, {:error, :debounced}, state}
+    else
+      state = %{state | current_time: position, last_sync_at: now, last_seek_at: Map.put(state.last_seek_at, user_id, now)}
+      broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
+      {:reply, :ok, state}
+    end
   end
 
   def handle_call({:add_to_queue, user_id, url, mode}, _from, state) do
@@ -229,6 +245,12 @@ defmodule WatchParty.RoomServer do
     else
       {:noreply, state}
     end
+  end
+
+  def handle_info(:reset_rate_limits, state) do
+    state = %{state | event_counts: %{}}
+    state = schedule_rate_limit_reset(state)
+    {:noreply, state}
   end
 
   def handle_info(:sync_correction, %{play_state: :playing} = state) do
@@ -330,6 +352,21 @@ defmodule WatchParty.RoomServer do
     state = cancel_sync_correction(state)
     ref = Process.send_after(self(), :sync_correction, 5000)
     %{state | sync_correction_ref: ref}
+  end
+
+  defp schedule_rate_limit_reset(state) do
+    ref = Process.send_after(self(), :reset_rate_limits, 5000)
+    %{state | rate_limit_ref: ref}
+  end
+
+  defp check_rate_limit(state, user_id) do
+    count = Map.get(state.event_counts, user_id, 0)
+
+    if count >= 20 do
+      {:error, state}
+    else
+      {:ok, %{state | event_counts: Map.put(state.event_counts, user_id, count + 1)}}
+    end
   end
 
   defp cancel_sync_correction(%{sync_correction_ref: nil} = state), do: state

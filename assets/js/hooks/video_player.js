@@ -39,6 +39,15 @@ const VideoPlayer = {
     this.handleEvent("video:change", (data) => this._onVideoChange(data));
   },
 
+  reconnected() {
+    // LiveView reconnected — server will push fresh sync:state
+    // Reset clock sync to re-calibrate
+    this.clockSync.stop();
+    this.clockSync = new ClockSync((event, payload) =>
+      this.pushEvent(event, payload)
+    );
+  },
+
   destroyed() {
     this.reconcile.stop();
     this.suppression.destroy();
