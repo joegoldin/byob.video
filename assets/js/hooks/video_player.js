@@ -190,6 +190,13 @@ const VideoPlayer = {
     else if (state === YT_PAUSED) stateName = "paused";
     else if (state === YT_ENDED) stateName = "ended";
 
+    // Buffering means a seek or rebuffer is happening — pause reconcile
+    // so it doesn't fight the position change before PLAYING fires
+    if (state === YT_BUFFERING) {
+      this.reconcile.pauseFor(2000);
+      return;
+    }
+
     if (stateName && this.suppression.shouldSuppress(stateName)) {
       return;
     }
