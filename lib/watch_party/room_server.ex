@@ -173,6 +173,20 @@ defmodule WatchParty.RoomServer do
         item = %{item | added_by: user_id, added_at: DateTime.utc_now()}
         state = add_item_to_queue(state, item, mode)
         broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
+
+        # Fetch metadata async for YouTube videos
+        if item.source_type == :youtube do
+          item_id = item.id
+          pid = self()
+
+          Task.start(fn ->
+            case WatchParty.OEmbed.fetch_youtube(url) do
+              {:ok, meta} -> send(pid, {:oembed_result, item_id, meta})
+              _ -> :ok
+            end
+          end)
+        end
+
         {:reply, :ok, state}
 
       {:error, reason} ->
@@ -245,6 +259,21 @@ defmodule WatchParty.RoomServer do
     else
       {:noreply, state}
     end
+  end
+
+  def handle_info({:oembed_result, item_id, meta}, state) do
+    queue =
+      Enum.map(state.queue, fn item ->
+        if item.id == item_id do
+          %{item | title: meta.title, thumbnail_url: meta.thumbnail_url}
+        else
+          item
+        end
+      end)
+
+    state = %{state | queue: queue}
+    broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
+    {:noreply, state}
   end
 
   def handle_info(:reset_rate_limits, state) do

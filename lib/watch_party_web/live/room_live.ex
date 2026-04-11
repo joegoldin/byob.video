@@ -227,17 +227,24 @@ defmodule WatchPartyWeb.RoomLive do
 
         <div :if={@queue != []} class="mb-4">
           <h3 class="font-bold mb-2">Queue</h3>
-          <ul class="space-y-1">
+          <ul class="space-y-2">
             <li
               :for={{item, idx} <- Enum.with_index(@queue)}
               class={"flex items-center gap-2 p-2 rounded text-sm #{if idx == @current_index, do: "bg-primary/10 font-bold", else: ""}"}
             >
+              <img
+                :if={item.thumbnail_url}
+                src={item.thumbnail_url}
+                class="w-16 h-10 object-cover rounded flex-shrink-0"
+              />
+              <div :if={!item.thumbnail_url} class="w-16 h-10 bg-base-300 rounded flex-shrink-0" />
               <button
                 phx-click="queue:play_index"
                 phx-value-index={idx}
                 class="flex-1 text-left truncate"
               >
-                {item.url}
+                <span :if={item.title} class="block truncate">{item.title}</span>
+                <span class="block truncate text-xs text-gray-500">{item.url}</span>
               </button>
               <button
                 phx-click="queue:remove"
