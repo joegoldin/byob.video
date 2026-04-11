@@ -31,11 +31,11 @@ const TeleportToNav = {
   mounted() {
     const target = document.getElementById("nav-room-actions");
     if (target) {
-      // Move children to nav
+      target.innerHTML = ""; // Clear any previous content
       while (this.el.firstChild) {
         target.appendChild(this.el.firstChild);
       }
-      this.el.remove();
+      this.el.style.display = "none";
     }
   },
   destroyed() {
