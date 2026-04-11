@@ -233,39 +233,10 @@
     if (!window.location.hostname.includes("youtube.com")) return;
     if (!window.location.pathname.startsWith("/embed/")) return;
 
-    const colors = {
-      sponsor: "#00d400",
-      selfpromo: "#ffff00",
-      interaction: "#cc00ff",
-      intro: "#00ffff",
-      outro: "#0202ed",
-      preview: "#008fd6",
-      music_offtopic: "#ff9900",
-      filler: "#7300FF",
-    };
-
-    // Track current video — auto-clear when YouTube changes videos
-    // YouTube embeds change the URL path or the video element src when switching
-    let _lastVideoSrc = "";
-    setInterval(() => {
-      const video = document.querySelector("video");
-      const currentSrc = video?.src || window.location.href;
-      if (_lastVideoSrc && currentSrc !== _lastVideoSrc) {
-        clearAllSegments();
-      }
-      _lastVideoSrc = currentSrc;
-    }, 500);
-
     window.addEventListener("message", (e) => {
-      if (e.data?.type === "byob:clear-segments") {
-        clearAllSegments();
-        return;
-      }
       if (!e.data || e.data.type !== "byob:sponsor-segments") return;
       const { segments, duration } = e.data;
       if (!segments || !duration) return;
-
-      clearAllSegments();
 
       // Wait for YouTube's seek bar to appear
       const tryInject = (attempt) => {
@@ -288,18 +259,9 @@
     window.parent.postMessage({ type: "byob:embed-ready" }, "*");
   }
 
-  let _injectedElements = [];
-
-  function clearAllSegments() {
-    _injectedElements.forEach((el) => {
-      try { el.style.display = "none"; } catch (_) {}
-      try { el.remove(); } catch (_) {}
-    });
-    _injectedElements = [];
-  }
-
   function injectSegments(progressBar, segments, duration) {
-    clearAllSegments();
+    // Remove any existing segments (shouldn't be any since iframe is fresh)
+    progressBar.querySelectorAll(".byob-sponsor-segment").forEach((el) => el.remove());
 
     const colors = {
       sponsor: "#00d400",
@@ -354,7 +316,6 @@
         border-radius: 1px;
       `;
       progressBar.appendChild(el);
-      _injectedElements.push(el);
     }
   }
 

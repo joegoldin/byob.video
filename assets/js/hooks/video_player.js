@@ -37,7 +37,6 @@ const VideoPlayer = {
     this.sponsorCheckInterval = null;
     this.sbSettings = {};
     this._lastSponsorData = null;
-    this._isVideoChange = false;
 
     // Listen for YouTube embed iframe signaling it's ready for segments
     this._embedReadyHandler = (e) => {
@@ -214,10 +213,6 @@ const VideoPlayer = {
           this._startSeekDetector();
           // Re-render sponsor bar — retry until getDuration() returns > 0
           this._retrySponsorBar();
-          // Clear any stale sponsor segments from previous video
-          if (iframe) {
-            iframe.contentWindow.postMessage({ type: "byob:clear-segments" }, "*");
-          }
         },
         onStateChange: (event) => this._onYTStateChange(event),
       },
@@ -319,12 +314,6 @@ const VideoPlayer = {
     this.sponsorSegments = [];
     this._sponsorBarSegments = null;
     this._sponsorBarDuration = 0;
-    this._isVideoChange = true;
-    // Tell iframe to clear old segments
-    const iframe = this.el.querySelector("iframe");
-    if (iframe) {
-      iframe.contentWindow.postMessage({ type: "byob:clear-segments" }, "*");
-    }
     this._loadVideo(item.source_type, item.source_id, item.url);
     this._pendingState = {
       play_state: "playing",
@@ -346,19 +335,7 @@ const VideoPlayer = {
   },
 
   _retrySponsorBar(attempt = 0) {
-    if (attempt > 4) {
-      if (this._isVideoChange) {
-        this._isVideoChange = false;
-        const iframe = this.el.querySelector("iframe");
-        if (iframe) iframe.contentWindow.postMessage({ type: "byob:clear-segments" }, "*");
-      }
-      return;
-    }
-    if (!this._lastSponsorData) {
-      setTimeout(() => this._retrySponsorBar(attempt + 1), 250);
-      return;
-    }
-    this._isVideoChange = false;
+    if (!this._lastSponsorData || attempt > 4) return;
     const dur = this.player?.getDuration?.() || 0;
     if (dur > 0) {
       this._applySponsorSettings();
@@ -403,12 +380,7 @@ const VideoPlayer = {
 
     // Send segments to YouTube embed iframe for in-player rendering (requires extension)
     if (barSegments.length > 0) {
-      this._isVideoChange = false;
       this._sendSegmentsToEmbed();
-    } else if (this._isVideoChange) {
-      this._isVideoChange = false;
-      const iframe = this.el.querySelector("iframe");
-      if (iframe) iframe.contentWindow.postMessage({ type: "byob:clear-segments" }, "*");
     }
 
     // Retry sending if duration wasn't ready
