@@ -353,7 +353,7 @@
     if (state === "hooked") {
       dot.style.background = "#00d400";
       status.style.color = "#00d400";
-      status.textContent = "Video captured - Syncing";
+      status.textContent = "Connected";
     } else if (state === "waiting") {
       dot.style.background = "#ff9900";
       status.style.color = "#ff9900";

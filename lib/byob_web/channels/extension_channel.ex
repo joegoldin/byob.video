@@ -42,16 +42,22 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   def handle_in("video:state", payload, socket) do
-    require Logger
-    Logger.info("[ExtChannel] video:state received: #{inspect(payload)}")
-    # Relay extension player state to room for placeholder display
-    Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{socket.assigns.room_id}",
-      {:extension_player_state, %{
-        hooked: payload["hooked"] || false,
-        position: payload["position"] || 0,
-        duration: payload["duration"] || 0,
-        playing: payload["playing"] || false
-      }})
+    # Only broadcast playing state, or hooked notification
+    # This prevents multiple paused clients from fighting over the placeholder
+    is_playing = payload["playing"] || false
+    is_hooked = payload["hooked"] || false
+
+    if is_playing or is_hooked do
+      Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{socket.assigns.room_id}",
+        {:extension_player_state, %{
+          hooked: is_hooked,
+          position: payload["position"] || 0,
+          duration: payload["duration"] || 0,
+          playing: is_playing,
+          user_id: socket.assigns.user_id
+        }})
+    end
+
     {:noreply, socket}
   end
 

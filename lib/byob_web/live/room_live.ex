@@ -298,7 +298,18 @@ defmodule ByobWeb.RoomLive do
   end
 
   def handle_info({:extension_player_state, state}, socket) do
-    {:noreply, socket |> assign(ext_player: state) |> push_event("ext:player-state", state)}
+    current = socket.assigns.ext_player
+    # Only update if: no current state, same user, or new state is playing
+    should_update =
+      current == nil ||
+      state.playing ||
+      state[:user_id] == current[:user_id]
+
+    if should_update do
+      {:noreply, socket |> assign(ext_player: state) |> push_event("ext:player-state", state)}
+    else
+      {:noreply, socket}
+    end
   end
 
   def handle_info({:users_updated, users}, socket) do
