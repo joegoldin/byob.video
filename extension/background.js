@@ -43,18 +43,14 @@ function handleContentMessage(msg, port, tabId) {
       if (channel) {
         channel.push("sync:request_state", {}).receive("ok", (resp) => {
           console.log("[byob] Got current state for sync:", resp);
-          // Enable syncing first so subsequent server events are processed
-          port.postMessage({ type: "command:synced" });
           setTimeout(() => {
             if (resp.play_state === "playing") {
               port.postMessage({ type: "command:play", position: resp.current_time });
             } else {
               port.postMessage({ type: "command:seek", position: resp.current_time });
-              // Retry pause to fight site autoplay
               port.postMessage({ type: "command:pause", position: resp.current_time });
-              setTimeout(() => port.postMessage({ type: "command:pause", position: resp.current_time }), 500);
-              setTimeout(() => port.postMessage({ type: "command:pause", position: resp.current_time }), 1500);
             }
+            port.postMessage({ type: "command:synced" });
           }, 300);
         });
       }
