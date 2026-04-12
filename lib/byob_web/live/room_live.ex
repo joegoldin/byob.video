@@ -70,6 +70,18 @@ defmodule ByobWeb.RoomLive do
           socket
         end
 
+      # Push media info for extension placeholder
+      socket =
+        if current_media && current_media.source_type == :extension_required do
+          push_event(socket, "ext:media-info", %{
+            title: current_media.title,
+            thumbnail_url: current_media.thumbnail_url,
+            url: current_media.url
+          })
+        else
+          socket
+        end
+
       {:ok, socket}
     else
       {:ok, socket}
