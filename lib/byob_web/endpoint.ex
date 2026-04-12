@@ -11,7 +11,8 @@ defmodule ByobWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  socket "/extension", ByobWeb.ExtensionSocket, websocket: true
+  socket "/extension", ByobWeb.ExtensionSocket,
+    websocket: [check_origin: false]
 
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],

@@ -41,6 +41,24 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
+  def handle_in("video:ended", _payload, socket) do
+    # Extension doesn't know the index — use server's current_index
+    state = RoomServer.get_state(socket.assigns.room_pid)
+    if state.current_index do
+      RoomServer.video_ended(socket.assigns.room_pid, state.current_index)
+    end
+    {:noreply, socket}
+  end
+
+  def handle_in("video:all_closed", _payload, socket) do
+    # All extension player windows closed — pause so next joiner syncs without autoplay
+    state = RoomServer.get_state(socket.assigns.room_pid)
+    if state.play_state == :playing do
+      RoomServer.pause(socket.assigns.room_pid, socket.assigns.user_id, state.current_time)
+    end
+    {:noreply, socket}
+  end
+
   def handle_in("video:state", payload, socket) do
     # Only broadcast playing state, or hooked notification
     # This prevents multiple paused clients from fighting over the placeholder

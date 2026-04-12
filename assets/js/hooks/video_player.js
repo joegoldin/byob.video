@@ -112,7 +112,7 @@ const VideoPlayer = {
     if (state.queue && state.queue.length > 0 && state.current_index != null) {
       const item = state.queue[state.current_index];
       if (item) {
-        this._loadVideo(item.source_type, item.source_id, item.url);
+        this._loadVideo(item.source_type, item.source_id, item.url, item);
 
         // After player is ready, seek to correct position
         this._pendingState = state;

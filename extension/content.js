@@ -70,8 +70,11 @@
   }
 
   function activate(roomId, serverUrl) {
-    // Only show sync bar in the frame that hooks the video, not immediately
-    // (nested iframes will show it when they find a <video>)
+    // Show sync bar immediately in top frame with "Loading..." status
+    if (window === window.top) {
+      injectSyncBar();
+      updateSyncBarStatus("loading");
+    }
 
     // Connect port to service worker
     port = chrome.runtime.connect({ name: "watchparty" });
@@ -148,6 +151,7 @@
     video.addEventListener("play", onVideoPlay);
     video.addEventListener("pause", onVideoPause);
     video.addEventListener("seeked", onVideoSeeked);
+    video.addEventListener("ended", onVideoEnded);
 
     // Report that we found a video — try port first, fall back to top-frame relay
     const reportHooked = { type: "video:hooked", duration: video.duration || 0 };
@@ -162,23 +166,22 @@
       try { chrome.runtime.sendMessage({ type: "byob:video-hooked" }); } catch (_) {}
     }
 
-    // Update sync bar to show we found a video
-    updateSyncBarStatus("hooked");
+    // Update sync bar to show we found a video and are syncing
+    updateSyncBarStatus("syncing");
 
     // Send periodic state updates (position, duration, playing) for relay to room + sync bar
     timeReportInterval = setInterval(() => {
-      if (hookedVideo && synced) {
-        const msg = {
-          type: "video:state",
-          position: hookedVideo.currentTime,
-          duration: hookedVideo.duration || 0,
-          playing: !hookedVideo.paused,
-        };
-        if (port) port.postMessage(msg);
-        try { window.top.postMessage({ type: "byob:relay", payload: msg }, "*"); } catch (_) {}
-        // Also send bar update via chrome.runtime so top frame can update its bar
-        try { chrome.runtime.sendMessage({ type: "byob:bar-update", ...msg }); } catch (_) {}
-      }
+      if (!hookedVideo) return;
+      const msg = {
+        type: "video:state",
+        position: hookedVideo.currentTime,
+        duration: hookedVideo.duration || 0,
+        playing: !hookedVideo.paused,
+      };
+      // Only send state to server when synced (prevents corrupting canonical state)
+      if (synced && port) port.postMessage(msg);
+      // Always send bar update via port so background can relay to top frame
+      if (port) port.postMessage({ type: "byob:bar-update", position: msg.position, duration: msg.duration, playing: msg.playing });
     }, 500);
   }
 
@@ -187,6 +190,7 @@
     hookedVideo.removeEventListener("play", onVideoPlay);
     hookedVideo.removeEventListener("pause", onVideoPause);
     hookedVideo.removeEventListener("seeked", onVideoSeeked);
+    hookedVideo.removeEventListener("ended", onVideoEnded);
     hookedVideo = null;
     if (timeReportInterval) {
       clearInterval(timeReportInterval);
@@ -228,6 +232,13 @@
     }
   }
 
+  function onVideoEnded() {
+    if (!synced) return;
+    if (port) {
+      port.postMessage({ type: "video:ended" });
+    }
+  }
+
   // Suppression (generation counter)
   function suppress(state) {
     suppressGen++;
@@ -242,6 +253,8 @@
 
   function shouldSuppress(currentState) {
     if (suppressUntilGen === 0) return false;
+    // Only suppress the event we're expecting (e.g. suppress "playing" after command:play)
+    // Don't suppress other events — user actions like manual pause should go through
     if (currentState === expectedState) {
       suppressUntilGen = 0;
       expectedState = null;
@@ -249,16 +262,28 @@
         clearTimeout(safetyTimeout);
         safetyTimeout = null;
       }
+      return true;
     }
-    return true;
+    // Not the expected event — clear suppression and let it through
+    suppressUntilGen = 0;
+    expectedState = null;
+    if (safetyTimeout) {
+      clearTimeout(safetyTimeout);
+      safetyTimeout = null;
+    }
+    return false;
   }
 
   // Handle commands from service worker
   function handleSWMessage(msg) {
+    if (msg.type === "byob:channel-ready" && window === window.top) {
+      updateSyncBarStatus("searching");
+      return;
+    }
     if (msg.type === "byob:video-hooked" && window === window.top) {
       if (!window.location.hostname.includes("youtube.com")) {
         injectSyncBar();
-        updateSyncBarStatus("hooked");
+        updateSyncBarStatus("syncing");
       }
       return;
     }
@@ -328,19 +353,20 @@
       background: rgba(0,0,0,0.92); color: white;
       font-family: system-ui, sans-serif; font-size: 13px;
       backdrop-filter: blur(10px); border-top: 1px solid rgba(255,255,255,0.15);
-      transition: transform 0.2s ease;
+      transition: all 0.2s ease;
     `;
 
     bar.innerHTML = `
       <div id="byob-bar-content" style="display:flex;align-items:center;gap:12px;padding:6px 16px;">
         <span style="font-weight:bold;font-size:14px;opacity:0.7">byob</span>
-        <span id="byob-dot" style="width:6px;height:6px;border-radius:50%;background:#ff9900;flex-shrink:0"></span>
-        <span id="byob-status" style="color:#ff9900;font-size:12px">Searching for video...</span>
+        <span id="byob-dot" style="width:6px;height:6px;border-radius:50%;background:#888;flex-shrink:0"></span>
+        <span id="byob-status" style="color:#888;font-size:12px">Loading...</span>
         <div style="flex:1"></div>
         <span id="byob-time" style="font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px"></span>
         <button id="byob-collapse" style="
           background:none;color:white;border:none;cursor:pointer;
           font-size:14px;opacity:0.5;padding:0 4px;line-height:1;
+          outline:none;-webkit-user-select:none;user-select:none;
         ">▼</button>
       </div>
     `;
@@ -349,14 +375,27 @@
     let collapsed = false;
     bar.querySelector("#byob-collapse").addEventListener("click", () => {
       collapsed = !collapsed;
-      const content = bar.querySelector("#byob-bar-content");
       if (collapsed) {
-        content.style.padding = "3px 16px";
-        content.querySelectorAll(":scope > *:not(#byob-collapse):not(:first-child)").forEach(el => el.style.display = "none");
+        // Shrink to small pill on the right
+        bar.style.left = "auto";
+        bar.style.right = "16px";
+        bar.style.bottom = "8px";
+        bar.style.borderRadius = "6px";
+        bar.style.border = "1px solid rgba(255,255,255,0.15)";
+        bar.style.borderTop = "1px solid rgba(255,255,255,0.15)";
+        bar.querySelector("#byob-bar-content").style.cssText = "display:flex;align-items:center;gap:6px;padding:4px 10px;";
+        bar.querySelectorAll("#byob-dot, #byob-status, #byob-time, #byob-bar-content > div").forEach(el => el.style.display = "none");
         bar.querySelector("#byob-collapse").textContent = "▲";
       } else {
-        content.style.padding = "6px 16px";
-        content.querySelectorAll(":scope > *").forEach(el => el.style.display = "");
+        // Expand to full bar
+        bar.style.left = "0";
+        bar.style.right = "0";
+        bar.style.bottom = "0";
+        bar.style.borderRadius = "0";
+        bar.style.border = "none";
+        bar.style.borderTop = "1px solid rgba(255,255,255,0.15)";
+        bar.querySelector("#byob-bar-content").style.cssText = "display:flex;align-items:center;gap:12px;padding:6px 16px;";
+        bar.querySelectorAll("#byob-dot, #byob-status, #byob-time, #byob-bar-content > div").forEach(el => el.style.display = "");
         bar.querySelector("#byob-collapse").textContent = "▼";
       }
     });
@@ -369,23 +408,24 @@
     const status = document.getElementById("byob-status");
     if (!dot || !status) return;
 
-    if (state === "hooked") {
-      dot.style.background = "#00d400";
-      status.style.color = "#00d400";
-      status.textContent = "Syncing...";
-    } else if (state === "waiting") {
-      dot.style.background = "#ff9900";
-      status.style.color = "#ff9900";
-      status.textContent = "Waiting for video... Click play to start";
-    }
+    const states = {
+      loading:   { color: "#888",    text: "Loading..." },
+      searching: { color: "#ff9900", text: "Searching for video..." },
+      syncing:   { color: "#ff9900", text: "Syncing..." },
+      playing:   { color: "#00d400", text: "Playing" },
+      paused:    { color: "#ff9900", text: "Paused" },
+    };
+    const s = states[state];
+    if (!s) return;
+    dot.style.background = s.color;
+    status.style.color = s.color;
+    status.textContent = s.text;
   }
 
   // Update time display on the sync bar
   setInterval(() => {
     if (!hookedVideo) return;
     const timeEl = document.getElementById("byob-time");
-    const statusEl = document.getElementById("byob-status");
-    const dotEl = document.getElementById("byob-dot");
     if (!timeEl) return;
 
     const t = hookedVideo.currentTime || 0;
@@ -393,17 +433,8 @@
     const fmt = (s) => Math.floor(s / 60) + ":" + Math.floor(s % 60).toString().padStart(2, "0");
     timeEl.textContent = d > 0 ? `${fmt(t)} / ${fmt(d)}` : fmt(t);
 
-    if (statusEl && dotEl) {
-      if (hookedVideo.paused) {
-        statusEl.textContent = "Paused";
-        statusEl.style.color = "#ff9900";
-        dotEl.style.background = "#ff9900";
-      } else {
-        statusEl.textContent = "Syncing";
-        statusEl.style.color = "#00d400";
-        dotEl.style.background = "#00d400";
-      }
-    }
+    // Show actual video state once we have a video (don't wait for synced flag)
+    updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
   }, 250);
 
   function cleanup() {

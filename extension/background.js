@@ -20,6 +20,8 @@ chrome.runtime.onConnect.addListener((port) => {
     const idx = ports.indexOf(port);
     if (idx > -1) ports.splice(idx, 1);
     if (ports.length === 0 && channel) {
+      // All external player windows closed — pause so next joiner doesn't autoplay
+      channel.push("video:all_closed", {});
       channel.leave();
       channel = null;
       if (socket) {
@@ -68,8 +70,17 @@ function handleContentMessage(msg, port, tabId) {
       if (channel) channel.push("video:seek", { position: msg.position });
       break;
 
+    case "video:ended":
+      if (channel) channel.push("video:ended", {});
+      break;
+
     case "video:state":
       if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing });
+      break;
+
+    case "byob:bar-update":
+      // Relay bar updates to all ports (so top frame can update its sync bar)
+      broadcastToContentScripts(msg);
       break;
   }
 }

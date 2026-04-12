@@ -44,6 +44,39 @@ const TeleportToNav = {
   },
 }
 
+const ExtOpenBtn = {
+  mounted() { this._setup(); },
+  updated() { this._updateLabel(); },
+  _setup() {
+    this._updateLabel();
+    this._interval = setInterval(() => this._updateLabel(), 500);
+    this.el.addEventListener("click", () => {
+      if (window._byobPlayerWindow && !window._byobPlayerWindow.closed) {
+        window._byobPlayerWindow.focus();
+      } else {
+        window.postMessage({
+          type: "byob:open-external",
+          url: this.el.dataset.url,
+          room_id: this.el.dataset.roomId,
+          server_url: this.el.dataset.serverUrl,
+        }, "*");
+        window._byobPlayerWindow = window.open(
+          this.el.dataset.url, "byob_player",
+          "width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no"
+        );
+      }
+      setTimeout(() => this._updateLabel(), 100);
+    });
+  },
+  _updateLabel() {
+    const isOpen = window._byobPlayerWindow && !window._byobPlayerWindow.closed;
+    this.el.textContent = isOpen ? "Focus Player Window" : "Open Player Window";
+  },
+  destroyed() {
+    if (this._interval) clearInterval(this._interval);
+  },
+}
+
 const LocalTime = {
   mounted() { this._format() },
   updated() { this._format() },
@@ -68,7 +101,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     stored_username: localStorage.getItem("watchparty_username"),
     tab_id: sessionStorage.getItem("byob_tab_id"),
   }),
-  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, TeleportToNav, LocalTime},
+  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, TeleportToNav, LocalTime, ExtOpenBtn},
 })
 
 // Listen for username changes to persist to localStorage

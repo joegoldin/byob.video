@@ -354,8 +354,17 @@ defmodule ByobWeb.RoomLive do
     <div id="nav-teleport" phx-hook="TeleportToNav" class="hidden">
       <button
         id="copy-url"
-        phx-hook="CopyUrl"
-        data-url={url(~p"/room/#{@room_id}")}
+        onclick={"
+          var btn = this;
+          navigator.clipboard.writeText('#{url(~p"/room/#{@room_id}")}').then(function() {
+            var svg = btn.querySelector('svg');
+            btn.textContent = 'Copied!';
+            if (svg) btn.prepend(svg);
+            setTimeout(function() {
+              btn.lastChild.textContent = ' Copy Room Link';
+            }, 1500);
+          });
+        "}
         class="btn btn-ghost btn-sm gap-1 text-base-content/60"
       >
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -421,15 +430,11 @@ defmodule ByobWeb.RoomLive do
             </p>
           </div>
           <button
-            onclick={"
-              window.postMessage({
-                type: 'byob:open-external',
-                url: '#{@current_media.url}',
-                room_id: '#{@room_id}',
-                server_url: '#{ByobWeb.Endpoint.url()}'
-              }, '*');
-              window._byobPlayerWindow = window.open('#{@current_media.url}', 'byob_player', 'width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no');
-            "}
+            phx-hook="ExtOpenBtn"
+            id="ext-open-btn"
+            data-url={@current_media.url}
+            data-room-id={@room_id}
+            data-server-url={ByobWeb.Endpoint.url()}
             class="btn btn-primary btn-sm"
           >
             Open Player Window
@@ -828,7 +833,8 @@ defmodule ByobWeb.RoomLive do
       url: item.url,
       source_type: Atom.to_string(item.source_type),
       source_id: item.source_id,
-      title: item.title
+      title: item.title,
+      thumbnail_url: item.thumbnail_url
     }
   end
 
@@ -838,7 +844,8 @@ defmodule ByobWeb.RoomLive do
       url: item[:url] || item["url"],
       source_type: to_string(item[:source_type] || item["source_type"]),
       source_id: item[:source_id] || item["source_id"],
-      title: item[:title] || item["title"]
+      title: item[:title] || item["title"],
+      thumbnail_url: item[:thumbnail_url] || item["thumbnail_url"]
     }
   end
 end
