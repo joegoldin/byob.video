@@ -6,6 +6,7 @@
   let port = null;
   let hookedVideo = null;
   let synced = false; // Don't send events until initial sync is done
+  let pauseEnforcer = null;
   let suppressGen = 0;
   let suppressUntilGen = 0;
   let expectedState = null;
@@ -282,6 +283,7 @@
 
     switch (msg.type) {
       case "command:play":
+        if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         suppress("playing");
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.play().catch(() => {});
@@ -291,6 +293,15 @@
         suppress("paused");
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.pause();
+        // Enforce pause for 2s — fights autoplay/delayed play from sites
+        if (pauseEnforcer) clearInterval(pauseEnforcer);
+        pauseEnforcer = setInterval(() => {
+          if (hookedVideo && !hookedVideo.paused) {
+            suppress("paused");
+            hookedVideo.pause();
+          }
+        }, 200);
+        setTimeout(() => { clearInterval(pauseEnforcer); pauseEnforcer = null; }, 2000);
         break;
 
       case "command:seek":
