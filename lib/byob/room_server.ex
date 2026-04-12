@@ -272,7 +272,7 @@ defmodule Byob.RoomServer do
   end
 
   def handle_call({:video_ended, _stale_index}, _from, state) do
-    {:reply, :ok, state}
+    {:reply, :stale, state}
   end
 
   def handle_call(:skip, _from, state) do

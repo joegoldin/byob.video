@@ -296,6 +296,9 @@ const VideoPlayer = {
       this.pushEvent("video:pause", { position });
       this.reconcile.stop();
     } else if (state === YT_ENDED) {
+      // Stop heartbeat from force-replaying the video
+      this.expectedPlayState = null;
+      this.reconcile.stop();
       const currentIndex = this.el.dataset.currentIndex;
       if (currentIndex != null) {
         this.pushEvent("video:ended", { index: parseInt(currentIndex) });
@@ -513,6 +516,23 @@ const VideoPlayer = {
         }
       }
       this.lastKnownPosition = pos;
+
+      // Detect video ended — YouTube embeds may not fire YT_ENDED reliably
+      // Check position regardless of player state since end screen keeps state as PLAYING
+      const dur = this.player.getDuration?.() || 0;
+      if (dur > 0 && pos >= dur - 1) {
+        if (!this._endedFired) {
+          this._endedFired = true;
+          this.expectedPlayState = null;
+          this.reconcile.stop();
+          const currentIndex = this.el.dataset.currentIndex;
+          if (currentIndex != null) {
+            this.pushEvent("video:ended", { index: parseInt(currentIndex) });
+          }
+        }
+      } else if (pos < dur - 2) {
+        this._endedFired = false;
+      }
     }, 500);
 
     // State sync heartbeat — catches fast pause/unpause desync
