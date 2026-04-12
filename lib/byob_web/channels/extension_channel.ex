@@ -61,6 +61,15 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
+  def handle_in("sync:request_state", _payload, socket) do
+    state = RoomServer.get_state(socket.assigns.room_pid)
+    {:reply, {:ok, %{
+      play_state: Atom.to_string(state.play_state),
+      current_time: state.current_time,
+      server_time: state.server_time
+    }}, socket}
+  end
+
   def handle_in("sync:ping", %{"t1" => t1}, socket) do
     t2 = System.monotonic_time(:millisecond)
     t3 = System.monotonic_time(:millisecond)

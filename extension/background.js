@@ -38,19 +38,23 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:hooked":
-      if (channel) channel.push("video:state", { hooked: true, position: 0, duration: msg.duration || 0, playing: false });
-      // Sync newly hooked video to current room state
-      if (initialRoomState) {
-        const state = initialRoomState;
-        setTimeout(() => {
-          if (state.play_state === "playing") {
-            port.postMessage({ type: "command:play", position: state.current_time });
-          } else {
-            // Paused: seek to position but don't play
-            port.postMessage({ type: "command:seek", position: state.current_time });
-            port.postMessage({ type: "command:pause", position: state.current_time });
-          }
-        }, 500); // Small delay for video to be ready
+      // Don't send position 0 to server - it corrupts the canonical state
+      // Instead, request current state from channel and sync to it
+      if (channel) {
+        channel.push("sync:request_state", {}).receive("ok", (resp) => {
+          console.log("[byob] Got current state for sync:", resp);
+          setTimeout(() => {
+            if (resp.play_state === "playing") {
+              // Calculate where we should be now
+              port.postMessage({ type: "command:play", position: resp.current_time });
+            } else {
+              port.postMessage({ type: "command:seek", position: resp.current_time });
+              port.postMessage({ type: "command:pause", position: resp.current_time });
+            }
+            // Tell content script to start sending events now
+            port.postMessage({ type: "command:synced" });
+          }, 300);
+        });
       }
       break;
 

@@ -5,6 +5,7 @@
 
   let port = null;
   let hookedVideo = null;
+  let synced = false; // Don't send events until initial sync is done
   let suppressGen = 0;
   let suppressUntilGen = 0;
   let expectedState = null;
@@ -165,7 +166,7 @@
 
     // Send periodic state updates (position, duration, playing) for relay to room + sync bar
     timeReportInterval = setInterval(() => {
-      if (hookedVideo) {
+      if (hookedVideo && synced) {
         const msg = {
           type: "video:state",
           position: hookedVideo.currentTime,
@@ -194,6 +195,7 @@
 
   // Event handlers — with suppression
   function onVideoPlay() {
+    if (!synced) return;
     if (shouldSuppress("playing")) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -204,6 +206,7 @@
   }
 
   function onVideoPause() {
+    if (!synced) return;
     if (shouldSuppress("paused")) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -214,6 +217,7 @@
   }
 
   function onVideoSeeked() {
+    if (!synced) return;
     if (shouldSuppress(null)) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -292,6 +296,10 @@
       case "command:seek":
         suppress(null);
         hookedVideo.currentTime = msg.position;
+        break;
+
+      case "command:synced":
+        synced = true;
         break;
     }
   }
