@@ -46,6 +46,14 @@ const VideoPlayer = {
     };
     window.addEventListener("message", this._embedReadyHandler);
 
+    // Close external player window on page unload/refresh
+    this._unloadHandler = () => {
+      if (window._byobPlayerWindow && !window._byobPlayerWindow.closed) {
+        try { window._byobPlayerWindow.close(); } catch (_) {}
+      }
+    };
+    window.addEventListener("beforeunload", this._unloadHandler);
+
     // Listen for server events
     this.handleEvent("sync:state", (state) => this._onSyncState(state));
     this.handleEvent("sync:play", (data) => this._onSyncPlay(data));
@@ -80,6 +88,8 @@ const VideoPlayer = {
     if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
     if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
+    if (this._unloadHandler) window.removeEventListener("beforeunload", this._unloadHandler);
+    this._unloadHandler?.();
     if (this.player && this.player.destroy) {
       this.player.destroy();
     }
