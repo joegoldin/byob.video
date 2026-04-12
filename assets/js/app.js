@@ -27,20 +27,20 @@ import topbar from "../vendor/topbar"
 import VideoPlayer from "./hooks/video_player"
 import CopyUrl from "./hooks/copy_url"
 
-const TeleportToNav = {
+const ReplaceLayoutNav = {
   mounted() {
-    const target = document.getElementById("nav-room-actions");
-    if (target) {
-      target.innerHTML = ""; // Clear any previous content
-      while (this.el.firstChild) {
-        target.appendChild(this.el.firstChild);
-      }
-      this.el.style.display = "none";
-    }
+    // Hide the layout nav bar, this LiveView renders its own
+    const layoutNav = document.getElementById("layout-nav-slot");
+    if (layoutNav) layoutNav.style.display = "none";
+    // Sync theme toggle state
+    const theme = localStorage.getItem("phx:theme") ||
+      (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const cb = this.el.querySelector("#theme-toggle-room");
+    if (cb) cb.checked = (theme === "dark");
   },
   destroyed() {
-    const target = document.getElementById("nav-room-actions");
-    if (target) target.innerHTML = "";
+    const layoutNav = document.getElementById("layout-nav-slot");
+    if (layoutNav) layoutNav.style.display = "";
   },
 }
 
@@ -77,6 +77,42 @@ const ExtOpenBtn = {
   },
 }
 
+const DragSort = {
+  mounted() {
+    this.el.addEventListener("dragstart", (e) => {
+      const li = e.target.closest("[data-queue-idx]");
+      if (!li) return;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", li.dataset.queueIdx);
+      li.classList.add("opacity-30");
+    });
+    this.el.addEventListener("dragend", (e) => {
+      const li = e.target.closest("[data-queue-idx]");
+      if (li) li.classList.remove("opacity-30");
+    });
+    this.el.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      const li = e.target.closest("[data-queue-idx]");
+      if (li) li.classList.add("bg-base-300/50");
+    });
+    this.el.addEventListener("dragleave", (e) => {
+      const li = e.target.closest("[data-queue-idx]");
+      if (li) li.classList.remove("bg-base-300/50");
+    });
+    this.el.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const li = e.target.closest("[data-queue-idx]");
+      if (li) li.classList.remove("bg-base-300/50");
+      const from = e.dataTransfer.getData("text/plain");
+      const to = li?.dataset.queueIdx;
+      if (from != null && to != null && from !== to) {
+        this.pushEvent("queue:reorder", { from, to });
+      }
+    });
+  },
+}
+
 const LocalTime = {
   mounted() { this._format() },
   updated() { this._format() },
@@ -101,7 +137,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     stored_username: localStorage.getItem("watchparty_username"),
     tab_id: sessionStorage.getItem("byob_tab_id"),
   }),
-  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, TeleportToNav, LocalTime, ExtOpenBtn},
+  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort},
 })
 
 // Listen for username changes to persist to localStorage

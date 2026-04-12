@@ -87,6 +87,10 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:play_index, index})
   end
 
+  def reorder_queue(pid, from_index, to_index) do
+    GenServer.call(pid, {:reorder_queue, from_index, to_index})
+  end
+
   def rename_user(pid, user_id, new_username) do
     GenServer.call(pid, {:rename_user, user_id, new_username})
   end
@@ -314,6 +318,30 @@ defmodule Byob.RoomServer do
 
   def handle_call({:play_index, _index}, _from, state) do
     {:reply, {:error, :invalid_index}, state}
+  end
+
+  def handle_call({:reorder_queue, from, to}, _from, state)
+      when from >= 0 and from < length(state.queue) and to >= 0 and to < length(state.queue) and from != to do
+    item = Enum.at(state.queue, from)
+    queue = List.delete_at(state.queue, from) |> List.insert_at(to, item)
+
+    # Adjust current_index to track the currently playing item
+    current_index =
+      cond do
+        state.current_index == nil -> nil
+        state.current_index == from -> to
+        from < state.current_index and to >= state.current_index -> state.current_index - 1
+        from > state.current_index and to <= state.current_index -> state.current_index + 1
+        true -> state.current_index
+      end
+
+    state = %{state | queue: queue, current_index: current_index}
+    broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:reorder_queue, _, _}, _from, state) do
+    {:reply, :ok, state}
   end
 
   def handle_call({:rename_user, user_id, new_username}, _from, state) do

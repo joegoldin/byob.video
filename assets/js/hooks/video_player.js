@@ -658,7 +658,7 @@ const VideoPlayer = {
     // If height-constrained, shrink width to maintain ratio.
     const sizer = this.el.parentElement;
     const availW = sizer.clientWidth;
-    const availH = window.innerHeight - 160; // nav + input + padding
+    const availH = window.innerHeight - 130; // nav + toolbar + padding
     let w = availW;
     let h = w * 9 / 16;
     if (h > availH && availH >= 300) {

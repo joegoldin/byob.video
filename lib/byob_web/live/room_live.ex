@@ -185,6 +185,11 @@ defmodule ByobWeb.RoomLive do
     {:noreply, socket}
   end
 
+  def handle_event("queue:reorder", %{"from" => from, "to" => to}, socket) do
+    RoomServer.reorder_queue(socket.assigns.room_pid, String.to_integer(from), String.to_integer(to))
+    {:noreply, socket}
+  end
+
   def handle_event("switch_tab", %{"tab" => tab}, socket) do
     {:noreply, assign(socket, sidebar_tab: String.to_existing_atom(tab))}
   end
@@ -350,29 +355,139 @@ defmodule ByobWeb.RoomLive do
 
   def render(assigns) do
     ~H"""
-    <%!-- Nav actions teleported to header --%>
-    <div id="nav-teleport" phx-hook="TeleportToNav" class="hidden">
-      <button
-        id="copy-url"
-        onclick={"
-          var btn = this;
-          navigator.clipboard.writeText('#{url(~p"/room/#{@room_id}")}').then(function() {
-            var svg = btn.querySelector('svg');
-            btn.textContent = 'Copied!';
-            if (svg) btn.prepend(svg);
-            setTimeout(function() {
-              btn.lastChild.textContent = ' Copy Room Link';
-            }, 1500);
-          });
-        "}
-        class="btn btn-ghost btn-sm gap-1 text-base-content/60"
-      >
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-        </svg>
-        Copy Room Link
-      </button>
-    </div>
+    <%!-- Room nav bar — replaces layout nav --%>
+    <nav id="room-nav" phx-hook="ReplaceLayoutNav" class="navbar min-h-0 h-10 bg-base-200 border-b border-base-300 px-4" style="margin: -0.5rem -1rem 0.5rem -1rem; width: calc(100% + 2rem);">
+      <div class="flex-1 flex items-center gap-2">
+        <a href="/" class="text-base font-bold tracking-tight flex-shrink-0">byob</a>
+        <button
+          id="copy-url"
+          onclick={"
+            var btn = this;
+            navigator.clipboard.writeText('#{url(~p"/room/#{@room_id}")}').then(function() {
+              var svg = btn.querySelector('svg');
+              btn.textContent = 'Copied!';
+              if (svg) btn.prepend(svg);
+              setTimeout(function() {
+                btn.lastChild.textContent = ' Copy Room Link';
+              }, 1500);
+            });
+          "}
+          class="btn btn-ghost btn-sm gap-1 text-base-content/60 flex-shrink-0"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          </svg>
+          Copy Room Link
+        </button>
+        <div class="relative flex-1 max-w-[33vw]">
+          <form phx-submit="add_url" phx-change="preview_url" id="url-form">
+            <input
+              type="text"
+              name="url"
+              placeholder="Paste a video URL..."
+              class="input input-bordered input-xs w-full"
+              autocomplete="off"
+              phx-debounce="300"
+            />
+          </form>
+          <%!-- Preview dropdown --%>
+          <div
+            :if={@url_preview_loading || @url_preview}
+            class="absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-50"
+          >
+            <div :if={@url_preview_loading} class="flex items-center gap-3 p-3 animate-pulse">
+              <div class="w-16 h-10 bg-base-300 rounded flex-shrink-0" />
+              <div class="flex-1 space-y-2">
+                <div class="h-3 bg-base-300 rounded w-3/4" />
+                <div class="h-2 bg-base-300 rounded w-1/2" />
+              </div>
+            </div>
+            <div
+              :if={@url_preview && @url_preview.source_type == :youtube}
+              class="flex items-center gap-2 p-3"
+            >
+              <img
+                :if={@url_preview.thumbnail_url}
+                src={@url_preview.thumbnail_url}
+                class="w-16 h-10 object-cover rounded flex-shrink-0"
+              />
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium truncate">{@url_preview.title}</p>
+                <p :if={@url_preview.author_name} class="text-xs text-base-content/50">
+                  {@url_preview.author_name}
+                </p>
+              </div>
+              <div class="flex gap-1 flex-shrink-0">
+                <button type="submit" form="url-form" name="mode" value="now" class="btn btn-primary btn-xs">
+                  Play Now
+                </button>
+                <button type="submit" form="url-form" name="mode" value="queue" class="btn btn-outline btn-xs">
+                  Queue
+                </button>
+              </div>
+            </div>
+            <div
+              :if={@url_preview && @url_preview.source_type == :extension_required}
+              class="flex items-center gap-2 p-3"
+            >
+              <img
+                :if={@url_preview.thumbnail_url}
+                src={@url_preview.thumbnail_url}
+                class="w-16 h-10 object-cover rounded flex-shrink-0"
+              />
+              <div
+                :if={!@url_preview.thumbnail_url}
+                class="w-16 h-10 bg-base-300 rounded flex-shrink-0 flex items-center justify-center"
+              >
+                <span class="text-xs text-base-content/30">EXT</span>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p :if={@url_preview.title} class="text-sm font-medium truncate">{@url_preview.title}</p>
+                <p :if={!@url_preview.title} class="text-sm font-medium">External site</p>
+                <p class="text-xs text-warning byob-no-ext">
+                  <a href="https://github.com/joegoldin/byob.video" target="_blank" class="underline">
+                    Extension required
+                  </a>
+                  to sync this site
+                </p>
+              </div>
+              <div class="flex gap-1 flex-shrink-0">
+                <button type="submit" form="url-form" name="mode" value="now" class="btn btn-primary btn-xs">
+                  Play Now
+                </button>
+                <button type="submit" form="url-form" name="mode" value="queue" class="btn btn-outline btn-xs">
+                  Queue
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="flex-none flex items-center gap-1">
+        <button
+          class="btn btn-ghost btn-xs btn-circle"
+          onclick="document.getElementById('sb-settings-modal')?.showModal()"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        </button>
+        <label class="swap swap-rotate btn btn-ghost btn-xs btn-circle">
+          <input
+            type="checkbox"
+            id="theme-toggle-room"
+            onchange="document.documentElement.setAttribute('data-theme', this.checked ? 'dark' : 'light'); localStorage.setItem('phx:theme', this.checked ? 'dark' : 'light')"
+          />
+          <svg class="swap-off h-4 w-4 fill-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M5.64,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,5.64,17ZM5,12a1,1,0,0,0-1-1H3a1,1,0,0,0,0,2H4A1,1,0,0,0,5,12Zm7-7a1,1,0,0,0,1-1V3a1,1,0,0,0-2,0V4A1,1,0,0,0,12,5ZM5.64,7.05a1,1,0,0,0,.7.29,1,1,0,0,0,.71-.29,1,1,0,0,0,0-1.41l-.71-.71A1,1,0,0,0,4.93,6.34Zm12,.29a1,1,0,0,0,.7-.29l.71-.71a1,1,0,1,0-1.41-1.41L17,5.64a1,1,0,0,0,0,1.41A1,1,0,0,0,17.66,7.34ZM21,11H20a1,1,0,0,0,0,2h1a1,1,0,0,0,0-2Zm-9,8a1,1,0,0,0-1,1v1a1,1,0,0,0,2,0V20A1,1,0,0,0,12,19ZM18.36,17A1,1,0,0,0,17,18.36l.71.71a1,1,0,0,0,1.41,0,1,1,0,0,0,0-1.41ZM12,6.5A5.5,5.5,0,1,0,17.5,12,5.51,5.51,0,0,0,12,6.5Zm0,9A3.5,3.5,0,1,1,15.5,12,3.5,3.5,0,0,1,12,15.5Z" />
+          </svg>
+          <svg class="swap-on h-4 w-4 fill-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M21.64,13a1,1,0,0,0-1.05-.14,8.05,8.05,0,0,1-3.37.73A8.15,8.15,0,0,1,9.08,5.49a8.59,8.59,0,0,1,.25-2A1,1,0,0,0,8,2.36,10.14,10.14,0,1,0,22,14.05,1,1,0,0,0,21.64,13Zm-9.5,6.69A8.14,8.14,0,0,1,7.08,5.22v.27A10.15,10.15,0,0,0,17.22,15.63a9.79,9.79,0,0,0,2.1-.22A8.11,8.11,0,0,1,12.14,19.73Z" />
+          </svg>
+        </label>
+      </div>
+    </nav>
 
     <%!-- SponsorBlock settings modal --%>
     <dialog id="sb-settings-modal" class="modal">
@@ -441,89 +556,6 @@ defmodule ByobWeb.RoomLive do
           </button>
         </div>
 
-        <%!-- URL input + preview --%>
-        <form phx-submit="add_url" phx-change="preview_url" class="mb-4">
-          <input
-            type="text"
-            name="url"
-            placeholder="Paste a video URL..."
-            class="input input-bordered w-full"
-            autocomplete="off"
-            phx-debounce="500"
-          />
-
-          <%!-- Loading placeholder --%>
-          <div :if={@url_preview_loading} class="mt-2 flex items-center gap-3 p-3 rounded-lg bg-base-200 animate-pulse">
-            <div class="w-20 h-12 bg-base-300 rounded flex-shrink-0" />
-            <div class="flex-1 space-y-2">
-              <div class="h-3 bg-base-300 rounded w-3/4" />
-              <div class="h-2 bg-base-300 rounded w-1/2" />
-            </div>
-          </div>
-
-          <%!-- YouTube preview with action buttons --%>
-          <div
-            :if={@url_preview && @url_preview.source_type == :youtube}
-            class="mt-2 flex items-center gap-3 p-3 rounded-lg bg-base-200"
-          >
-            <img
-              :if={@url_preview.thumbnail_url}
-              src={@url_preview.thumbnail_url}
-              class="w-20 h-12 object-cover rounded flex-shrink-0"
-            />
-            <div class="flex-1 min-w-0">
-              <p class="text-sm font-medium truncate">{@url_preview.title}</p>
-              <p :if={@url_preview.author_name} class="text-xs text-base-content/50">
-                {@url_preview.author_name}
-              </p>
-            </div>
-            <div class="flex gap-1 flex-shrink-0">
-              <button type="submit" name="mode" value="now" class="btn btn-primary btn-sm">
-                Play Now
-              </button>
-              <button type="submit" name="mode" value="queue" class="btn btn-outline btn-sm">
-                Queue
-              </button>
-            </div>
-          </div>
-
-          <%!-- Extension-required preview with action buttons --%>
-          <div
-            :if={@url_preview && @url_preview.source_type == :extension_required}
-            class="mt-2 flex items-center gap-3 p-3 rounded-lg bg-base-200"
-          >
-            <img
-              :if={@url_preview.thumbnail_url}
-              src={@url_preview.thumbnail_url}
-              class="w-20 h-12 object-cover rounded flex-shrink-0"
-            />
-            <div
-              :if={!@url_preview.thumbnail_url}
-              class="w-20 h-12 bg-base-300 rounded flex-shrink-0 flex items-center justify-center"
-            >
-              <span class="text-xs text-base-content/30">EXT</span>
-            </div>
-            <div class="flex-1 min-w-0">
-              <p :if={@url_preview.title} class="text-sm font-medium truncate">{@url_preview.title}</p>
-              <p :if={!@url_preview.title} class="text-sm font-medium">External site</p>
-              <%!-- Extension not installed warning (hidden by extension via data attribute) --%>
-              <p class="text-xs text-warning byob-no-ext">
-                <a href="https://github.com/joegoldin/byob.video" target="_blank" class="underline">
-                  Extension required
-                </a>
-                to sync this site
-              </p>
-            </div>
-            <div class="flex gap-1 flex-shrink-0">
-              <button type="submit" name="mode" value="now" class="btn btn-primary btn-sm">
-                Play Now
-              </button>
-              <button type="submit" name="mode" value="queue" class="btn btn-outline btn-sm">
-                Queue
-              </button>
-            </div>
-          </div>
-        </form>
       </div>
 
       <%!-- Sidebar: queue/history at top, users pinned at bottom --%>
@@ -609,11 +641,14 @@ defmodule ByobWeb.RoomLive do
                 <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-1">
                   Up Next
                 </div>
-                <ul class="space-y-1">
+                <ul class="space-y-1" id="queue-sortable" phx-hook="DragSort">
                   <li
                     :for={{item, idx} <- up_next}
-                    class="flex items-center gap-2 p-2 rounded-lg text-sm hover:bg-base-300 transition-colors"
+                    draggable="true"
+                    data-queue-idx={idx}
+                    class="flex items-center gap-2 p-2 rounded-lg text-sm hover:bg-base-300 transition-colors cursor-grab active:cursor-grabbing"
                   >
+                    <span class="text-base-content/20 flex-shrink-0 text-xs select-none">⠿</span>
                     <img
                       :if={item.thumbnail_url}
                       src={item.thumbnail_url}
@@ -713,7 +748,7 @@ defmodule ByobWeb.RoomLive do
             </h3>
             <ul class="space-y-2 mt-1 max-h-48 overflow-y-auto">
               <li
-                :for={{uid, user} <- @users}
+                :for={{uid, user} <- Enum.sort_by(@users, fn {id, u} -> {(if id == @user_id, do: 0, else: 1), (if u.connected, do: 0, else: 1)} end)}
                 data-user-id={uid}
                 class="flex items-center gap-2 text-sm"
               >
@@ -725,7 +760,8 @@ defmodule ByobWeb.RoomLive do
                   :if={uid == @user_id && !@editing_username}
                   class="truncate flex-1"
                 >
-                  {user.username}
+                  <span class="font-bold">{user.username}</span>
+                  <span class="text-base-content/40 font-normal">(you)</span>
                 </span>
                 <button
                   :if={uid == @user_id && !@editing_username}
