@@ -403,19 +403,19 @@ defmodule ByobWeb.RoomLive do
       <%!-- Main content --%>
       <div class="flex-1 min-w-0 flex flex-col">
 
-        <%!-- Player --%>
+        <%!-- Player wrapper: sizes the player to fit viewport while maintaining 16:9 --%>
+        <div id="player-sizer" class="mb-3 flex justify-center" phx-update="ignore">
         <div
           id="player"
           phx-hook="VideoPlayer"
-          phx-update="ignore"
           data-user-id={@user_id}
           data-current-index={@current_index}
-          class="relative w-full bg-base-300 rounded-lg overflow-hidden mb-3"
-          style="padding-bottom: 56.25%; height: 0; min-height: 300px;"
+          class="relative bg-base-300 rounded-lg overflow-hidden"
         >
           <div class="absolute inset-0 flex items-center justify-center text-base-content/40">
             Paste a URL below to start watching
           </div>
+        </div>
         </div>
 
         <%!-- Extension mode banner --%>

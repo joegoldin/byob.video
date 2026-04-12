@@ -69,6 +69,11 @@ const VideoPlayer = {
       this._applySponsorSettings();
     });
     this.handleEvent("video:change", (data) => this._onVideoChange(data));
+
+    // Size the player to fit viewport: cap height so aspect-ratio shrinks width
+    this._sizePlayer();
+    this._resizeHandler = () => this._sizePlayer();
+    window.addEventListener("resize", this._resizeHandler);
   },
 
   reconnected() {
@@ -89,6 +94,7 @@ const VideoPlayer = {
     if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
     if (this._unloadHandler) window.removeEventListener("beforeunload", this._unloadHandler);
+    if (this._resizeHandler) window.removeEventListener("resize", this._resizeHandler);
     this._unloadHandler?.();
     if (this.player && this.player.destroy) {
       this.player.destroy();
@@ -240,12 +246,8 @@ const VideoPlayer = {
       events: {
         onReady: () => {
           this.isReady = true;
-          // Absolutely position the iframe inside the padding-bottom container
           const iframe = this.el.querySelector("iframe");
           if (iframe) {
-            iframe.style.position = "absolute";
-            iframe.style.top = "0";
-            iframe.style.left = "0";
             iframe.style.width = "100%";
             iframe.style.height = "100%";
           }
@@ -649,6 +651,23 @@ const VideoPlayer = {
     if (this.sourceType === "youtube" && this.player && this.player.setPlaybackRate) {
       this.player.setPlaybackRate(rate);
     }
+  },
+
+  _sizePlayer() {
+    // Size player to fill width at 16:9, but cap by available height.
+    // If height-constrained, shrink width to maintain ratio.
+    const sizer = this.el.parentElement;
+    const availW = sizer.clientWidth;
+    const availH = window.innerHeight - 160; // nav + input + padding
+    let w = availW;
+    let h = w * 9 / 16;
+    if (h > availH && availH >= 300) {
+      h = availH;
+      w = h * 16 / 9;
+    }
+    h = Math.max(300, h);
+    this.el.style.width = w + "px";
+    this.el.style.height = h + "px";
   },
 };
 
