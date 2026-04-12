@@ -112,13 +112,19 @@ function connectToRoom(roomId, serverUrl) {
     // since the user navigates to the video themselves
   });
 
+  socket.onOpen(() => console.log("[byob] WebSocket connected to", wsUrl));
+  socket.onError((err) => console.error("[byob] WebSocket error:", err));
+  socket.onClose(() => console.log("[byob] WebSocket closed"));
+
   channel
     .join()
     .receive("ok", (resp) => {
-      console.log("[WatchParty] Joined room", roomId, resp);
+      console.log("[byob] Joined room", roomId, resp);
+      // Notify all content scripts that channel is ready
+      broadcastToContentScripts({ type: "byob:channel-ready" });
     })
     .receive("error", (resp) => {
-      console.error("[WatchParty] Failed to join room", roomId, resp);
+      console.error("[byob] Failed to join room", roomId, resp);
     });
 }
 
