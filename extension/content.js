@@ -266,7 +266,7 @@
       else if (timeEl) timeEl.textContent = fmt(msg.position);
       if (statusEl && dotEl) {
         if (msg.playing) {
-          statusEl.textContent = "Syncing"; statusEl.style.color = "#00d400"; dotEl.style.background = "#00d400";
+          statusEl.textContent = "Playing"; statusEl.style.color = "#00d400"; dotEl.style.background = "#00d400";
         } else {
           statusEl.textContent = "Paused"; statusEl.style.color = "#ff9900"; dotEl.style.background = "#ff9900";
         }
@@ -316,7 +316,7 @@
       <div id="byob-bar-content" style="display:flex;align-items:center;gap:12px;padding:6px 16px;">
         <span style="font-weight:bold;font-size:14px;opacity:0.7">byob</span>
         <span id="byob-dot" style="width:6px;height:6px;border-radius:50%;background:#ff9900;flex-shrink:0"></span>
-        <span id="byob-status" style="color:#ff9900;font-size:12px">Waiting for video...</span>
+        <span id="byob-status" style="color:#ff9900;font-size:12px">Searching for video...</span>
         <div style="flex:1"></div>
         <span id="byob-time" style="font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px"></span>
         <button id="byob-collapse" style="
@@ -353,7 +353,7 @@
     if (state === "hooked") {
       dot.style.background = "#00d400";
       status.style.color = "#00d400";
-      status.textContent = "Connected";
+      status.textContent = "Syncing...";
     } else if (state === "waiting") {
       dot.style.background = "#ff9900";
       status.style.color = "#ff9900";
