@@ -55,6 +55,7 @@ const VideoPlayer = {
     this.handleEvent("sync:correction", (data) => this._onSyncCorrection(data));
     this.handleEvent("sponsor:segments", (data) => this._onSponsorSegments(data));
     this.handleEvent("ext:player-state", (data) => this._onExtPlayerState(data));
+    this.handleEvent("ext:media-info", (data) => this._onExtMediaInfo(data));
     this.handleEvent("sb:settings", (data) => {
       this.sbSettings = data;
       this._applySponsorSettings();
@@ -377,6 +378,33 @@ const VideoPlayer = {
     } else {
       status.textContent = "Waiting for external player...";
       if (container) container.style.display = "none";
+    }
+  },
+
+  _onExtMediaInfo(data) {
+    const placeholder = document.getElementById("ext-placeholder");
+    if (!placeholder) return;
+
+    // Update thumbnail
+    const existingImg = placeholder.querySelector("img");
+    const existingSvg = placeholder.querySelector("svg");
+    if (data.thumbnail_url) {
+      if (existingImg) {
+        existingImg.src = data.thumbnail_url;
+      } else {
+        const img = document.createElement("img");
+        img.src = data.thumbnail_url;
+        img.className = "w-32 h-20 object-cover rounded opacity-80";
+        if (existingSvg) existingSvg.replaceWith(img);
+        else placeholder.prepend(img);
+      }
+    }
+
+    // Update title
+    const titleEl = placeholder.querySelector("p.font-medium");
+    if (titleEl && data.title) {
+      titleEl.textContent = data.title;
+      titleEl.title = data.title;
     }
   },
 

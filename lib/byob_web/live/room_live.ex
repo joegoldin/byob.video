@@ -241,13 +241,27 @@ defmodule ByobWeb.RoomLive do
         _ -> socket.assigns.history
       end
 
-    {:noreply,
-     assign(socket,
-       queue: queue,
-       current_index: current_index,
-       current_media: current_media,
-       history: history
-     )}
+    socket =
+      assign(socket,
+        queue: queue,
+        current_index: current_index,
+        current_media: current_media,
+        history: history
+      )
+
+    # Push updated media info to JS for extension placeholder
+    socket =
+      if current_media && current_media.source_type == :extension_required do
+        push_event(socket, "ext:media-info", %{
+          title: current_media.title,
+          thumbnail_url: current_media.thumbnail_url,
+          url: current_media.url
+        })
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   def handle_info({:sponsor_segments, data}, socket) do
