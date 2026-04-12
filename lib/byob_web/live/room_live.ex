@@ -399,9 +399,9 @@ defmodule ByobWeb.RoomLive do
       </form>
     </dialog>
 
-    <div class="flex flex-col lg:flex-row gap-3 h-[calc(100vh-3.5rem)]">
+    <div class="flex flex-col lg:flex-row gap-3 min-h-[calc(100vh-3.5rem)]">
       <%!-- Main content --%>
-      <div class="flex-1 min-w-0 flex flex-col min-h-0">
+      <div class="flex-1 min-w-0 flex flex-col">
 
         <%!-- Player --%>
         <div
@@ -411,7 +411,7 @@ defmodule ByobWeb.RoomLive do
           data-user-id={@user_id}
           data-current-index={@current_index}
           class="relative w-full bg-base-300 rounded-lg overflow-hidden mb-3"
-          style="padding-bottom: 56.25%; height: 0;"
+          style="padding-bottom: 56.25%; height: 0; min-height: 300px;"
         >
           <div class="absolute inset-0 flex items-center justify-center text-base-content/40">
             Paste a URL below to start watching
@@ -711,7 +711,7 @@ defmodule ByobWeb.RoomLive do
               Users
               <span class="badge badge-sm">{map_size(@users)}</span>
             </h3>
-            <ul class="space-y-2 mt-1">
+            <ul class="space-y-2 mt-1 max-h-48 overflow-y-auto">
               <li
                 :for={{uid, user} <- @users}
                 data-user-id={uid}
