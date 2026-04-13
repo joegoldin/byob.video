@@ -18,6 +18,7 @@ defmodule Byob.RoomServer do
     :cleanup_ref,
     :sync_correction_ref,
     :empty_timeout,
+    :api_key,
     users: %{},
     queue: [],
     current_index: nil,
@@ -99,6 +100,10 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:update_sb_settings, category, action})
   end
 
+  def get_api_key(pid) do
+    GenServer.call(pid, :get_api_key)
+  end
+
   # Server callbacks
 
   @impl true
@@ -132,6 +137,14 @@ defmodule Byob.RoomServer do
             last_sync_at: System.monotonic_time(:millisecond),
             sb_settings: @default_sb_settings
           }
+      end
+
+    # Ensure api_key is set
+    state =
+      if state.api_key do
+        state
+      else
+        %{state | api_key: :crypto.strong_rand_bytes(24) |> Base.url_encode64(padding: false)}
       end
 
     # Start timers
@@ -185,6 +198,10 @@ defmodule Byob.RoomServer do
 
   def handle_call(:get_state, _from, state) do
     {:reply, snapshot(state), state}
+  end
+
+  def handle_call(:get_api_key, _from, state) do
+    {:reply, state.api_key, state}
   end
 
   def handle_call({:play, user_id, position}, _from, state) do

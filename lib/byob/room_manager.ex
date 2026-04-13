@@ -10,8 +10,9 @@ defmodule Byob.RoomManager do
       {:error, :max_capacity}
     else
       room_id = Nanoid.generate(8, @alphabet)
-      {:ok, _pid} = ensure_room(room_id)
-      {:ok, room_id}
+      {:ok, pid} = ensure_room(room_id)
+      api_key = RoomServer.get_api_key(pid)
+      {:ok, room_id, api_key}
     end
   end
 

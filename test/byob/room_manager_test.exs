@@ -6,11 +6,13 @@ defmodule Byob.RoomManagerTest do
   # These tests use the real supervision tree started by the application
 
   describe "create_room/0" do
-    test "returns {:ok, room_id} with 8-char alphanumeric id" do
-      {:ok, room_id} = RoomManager.create_room()
+    test "returns {:ok, room_id, api_key} with 8-char alphanumeric id" do
+      {:ok, room_id, api_key} = RoomManager.create_room()
       assert is_binary(room_id)
       assert byte_size(room_id) == 8
       assert room_id =~ ~r/^[0-9a-z]{8}$/
+      assert is_binary(api_key)
+      assert byte_size(api_key) > 0
     end
   end
 

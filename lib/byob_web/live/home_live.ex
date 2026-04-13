@@ -15,7 +15,7 @@ defmodule ByobWeb.HomeLive do
       {:noreply, put_flash(socket, :error, "Too many rooms created. Please wait a moment.")}
     else
       case Byob.RoomManager.create_room() do
-        {:ok, room_id} ->
+        {:ok, room_id, _api_key} ->
           {:noreply, socket |> assign(room_creates: [now | recent]) |> push_navigate(to: ~p"/room/#{room_id}")}
 
         {:error, :max_capacity} ->
