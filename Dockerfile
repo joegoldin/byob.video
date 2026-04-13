@@ -12,7 +12,7 @@ ENV MIX_ENV=prod
 
 RUN mix local.hex --force && mix local.rebar --force
 
-COPY mix.exs mix.lock ./
+COPY mix.exs mix.lock VERSION ./
 RUN mix deps.get --only prod
 RUN mix deps.compile
 

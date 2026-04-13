@@ -151,8 +151,13 @@ const VideoPlayer = {
       const retryPlay = (attempt) => {
         if (attempt > 3) return;
         setTimeout(() => {
-          const yt = this.player?.getPlayerState?.();
-          if (yt !== undefined && yt !== YT_PLAYING && yt !== YT_BUFFERING) {
+          if (this.sourceType === "youtube") {
+            const yt = this.player?.getPlayerState?.();
+            if (yt !== undefined && yt !== YT_PLAYING && yt !== YT_BUFFERING) {
+              this.suppression.suppress("playing");
+              this._play();
+            }
+          } else if (this.sourceType === "direct_url" && this.player?.paused) {
             this.suppression.suppress("playing");
             this._play();
           }
@@ -182,6 +187,8 @@ const VideoPlayer = {
 
     if (sourceType === "youtube") {
       await this._loadYouTube(sourceId);
+    } else if (sourceType === "direct_url") {
+      this._loadDirectUrl(url);
     } else {
       // Extension-required: destroy YouTube player, show placeholder
       if (this.player && this.player.destroy) {
@@ -258,6 +265,70 @@ const VideoPlayer = {
         },
         onStateChange: (event) => this._onYTStateChange(event),
       },
+    });
+  },
+
+  _loadDirectUrl(url) {
+    // Clear existing player
+    if (this.player && this.player.destroy) {
+      try { this.player.destroy(); } catch (_) {}
+    }
+    this.player = null;
+    this.isReady = false;
+
+    this.el.innerHTML = "";
+    const video = document.createElement("video");
+    video.src = url;
+    video.controls = true;
+    video.style.width = "100%";
+    video.style.height = "100%";
+    video.style.backgroundColor = "#000";
+    video.preload = "auto";
+    video.crossOrigin = "anonymous";
+
+    this.el.appendChild(video);
+    this.player = video;
+
+    video.addEventListener("loadedmetadata", () => {
+      this.isReady = true;
+      this._applyPendingState();
+      this._startSeekDetector();
+    });
+
+    video.addEventListener("play", () => {
+      if (this.suppression.shouldSuppress("playing")) return;
+      this.expectedPlayState = "playing";
+      const position = video.currentTime;
+      this.pushEvent("video:play", { position });
+      const serverTime = this.clockSync.serverNow();
+      this.reconcile.setServerState(position, serverTime, this.clockSync);
+      this.reconcile.pauseFor(1000);
+      this.reconcile.start();
+    });
+
+    video.addEventListener("pause", () => {
+      if (this.suppression.shouldSuppress("paused")) return;
+      this.expectedPlayState = "paused";
+      const position = video.currentTime;
+      this.pushEvent("video:pause", { position });
+      this.reconcile.stop();
+    });
+
+    video.addEventListener("seeked", () => {
+      if (this.suppression.isActive()) return;
+      this.pushEvent("video:seek", { position: video.currentTime });
+      const serverTime = this.clockSync.serverNow();
+      this.reconcile.setServerState(video.currentTime, serverTime, this.clockSync);
+      this.reconcile.pauseFor(1000);
+    });
+
+    video.addEventListener("ended", () => {
+      this.expectedPlayState = null;
+      this.reconcile.stop();
+      const currentIndex = this.el.dataset.currentIndex;
+      if (currentIndex != null) {
+        this.pushEvent("video:ended", { index: parseInt(currentIndex) });
+      }
     });
   },
 
@@ -502,14 +573,17 @@ const VideoPlayer = {
   _startSeekDetector() {
     if (this.seekDetectorInterval) clearInterval(this.seekDetectorInterval);
     this.seekDetectorInterval = setInterval(() => {
-      if (!this.player || !this.player.getCurrentTime) return;
-      const pos = this.player.getCurrentTime();
-      const state = this.player.getPlayerState?.();
+      if (!this.player) return;
+      const pos = this._getCurrentTime();
+      const isPaused = this.sourceType === "youtube"
+        ? this.player.getPlayerState?.() === YT_PAUSED
+        : this.sourceType === "direct_url"
+          ? this.player.paused
+          : false;
       // Only detect seeks while paused
-      if (state === YT_PAUSED && Math.abs(pos - this.lastKnownPosition) > 1) {
+      if (isPaused && Math.abs(pos - this.lastKnownPosition) > 1) {
         if (!this.suppression.isActive()) {
           this.pushEvent("video:seek", { position: pos });
-          // Update reconcile immediately so it doesn't fight the seek
           const serverTime = this.clockSync.serverNow();
           this.reconcile.setServerState(pos, serverTime, this.clockSync);
           this.reconcile.pauseFor(1000);
@@ -518,8 +592,11 @@ const VideoPlayer = {
       this.lastKnownPosition = pos;
 
       // Detect video ended — YouTube embeds may not fire YT_ENDED reliably
-      // Check position regardless of player state since end screen keeps state as PLAYING
-      const dur = this.player.getDuration?.() || 0;
+      const dur = this.sourceType === "youtube"
+        ? (this.player.getDuration?.() || 0)
+        : this.sourceType === "direct_url"
+          ? (this.player.duration || 0)
+          : 0;
       if (dur > 0 && pos >= dur - 1) {
         if (!this._endedFired) {
           this._endedFired = true;
@@ -540,9 +617,14 @@ const VideoPlayer = {
     this._mismatchSince = null;
     if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
     this.stateCheckInterval = setInterval(() => {
-      if (!this.player || !this.player.getPlayerState || !this.expectedPlayState) return;
-      const ytState = this.player.getPlayerState();
-      const localState = ytState === YT_PLAYING ? "playing" : ytState === YT_PAUSED ? "paused" : null;
+      if (!this.player || !this.expectedPlayState) return;
+      let localState = null;
+      if (this.sourceType === "youtube" && this.player.getPlayerState) {
+        const ytState = this.player.getPlayerState();
+        localState = ytState === YT_PLAYING ? "playing" : ytState === YT_PAUSED ? "paused" : null;
+      } else if (this.sourceType === "direct_url") {
+        localState = this.player.paused ? "paused" : "playing";
+      }
       if (!localState) return;
       if (localState !== this.expectedPlayState) {
         if (!this._mismatchSince) {
@@ -643,33 +725,44 @@ const VideoPlayer = {
 
   // Player abstraction
   _getCurrentTime() {
-    if (this.sourceType === "youtube" && this.player && this.player.getCurrentTime) {
+    if (this.sourceType === "youtube" && this.player?.getCurrentTime) {
       return this.player.getCurrentTime();
+    }
+    if (this.sourceType === "direct_url" && this.player) {
+      return this.player.currentTime || 0;
     }
     return 0;
   },
 
   _seekTo(seconds) {
-    if (this.sourceType === "youtube" && this.player && this.player.seekTo) {
+    if (this.sourceType === "youtube" && this.player?.seekTo) {
       this.player.seekTo(seconds, true);
+    } else if (this.sourceType === "direct_url" && this.player) {
+      this.player.currentTime = seconds;
     }
   },
 
   _play() {
-    if (this.sourceType === "youtube" && this.player && this.player.playVideo) {
+    if (this.sourceType === "youtube" && this.player?.playVideo) {
       this.player.playVideo();
+    } else if (this.sourceType === "direct_url" && this.player) {
+      this.player.play().catch(() => {});
     }
   },
 
   _pause() {
-    if (this.sourceType === "youtube" && this.player && this.player.pauseVideo) {
+    if (this.sourceType === "youtube" && this.player?.pauseVideo) {
       this.player.pauseVideo();
+    } else if (this.sourceType === "direct_url" && this.player) {
+      this.player.pause();
     }
   },
 
   _setPlaybackRate(rate) {
-    if (this.sourceType === "youtube" && this.player && this.player.setPlaybackRate) {
+    if (this.sourceType === "youtube" && this.player?.setPlaybackRate) {
       this.player.setPlaybackRate(rate);
+    } else if (this.sourceType === "direct_url" && this.player) {
+      this.player.playbackRate = rate;
     }
   },
 

@@ -6,21 +6,36 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
         # Extension packaging
+        version = builtins.replaceStrings [ "\n" ] [ "" ] (builtins.readFile ./VERSION);
         extensionSrc = ./extension;
 
         chromeExtension = pkgs.stdenv.mkDerivation {
           pname = "byob-chrome-extension";
-          version = "0.1.0";
+          inherit version;
           src = extensionSrc;
-          nativeBuildInputs = [ pkgs.zip pkgs.chromium ];
-          phases = [ "unpackPhase" "buildPhase" "installPhase" ];
+          nativeBuildInputs = [
+            pkgs.zip
+            pkgs.chromium
+          ];
+          phases = [
+            "unpackPhase"
+            "buildPhase"
+            "installPhase"
+          ];
           buildPhase = ''
+            ${pkgs.gnused}/bin/sed -i 's/"version": "[^"]*"/"version": "${version}"/' manifest.json
             rm -f manifest.firefox.json
             mkdir -p $TMPDIR/ext
             cp -r . $TMPDIR/ext/src
@@ -41,13 +56,17 @@
 
         firefoxExtension = pkgs.stdenv.mkDerivation {
           pname = "byob-firefox-extension";
-          version = "0.1.0";
+          inherit version;
           src = extensionSrc;
           nativeBuildInputs = [ pkgs.zip ];
-          phases = [ "unpackPhase" "buildPhase" "installPhase" ];
+          phases = [
+            "unpackPhase"
+            "buildPhase"
+            "installPhase"
+          ];
           buildPhase = ''
             cp manifest.firefox.json manifest.json
-            rm manifest.firefox.json
+            ${pkgs.gnused}/bin/sed -i 's/"version": "[^"]*"/"version": "${version}"/' manifest.json
             zip -r byob-firefox.xpi .
           '';
           installPhase = ''
@@ -68,12 +87,19 @@
             openssl
           ];
           config = {
-            Cmd = [ "${pkgs.bash}/bin/bash" "-c" "echo 'Use the Dockerfile for the server image'" ];
-            ExposedPorts = { "4000/tcp" = {}; };
+            Cmd = [
+              "${pkgs.bash}/bin/bash"
+              "-c"
+              "echo 'Use the Dockerfile for the server image'"
+            ];
+            ExposedPorts = {
+              "4000/tcp" = { };
+            };
           };
         };
 
-      in {
+      in
+      {
         packages = {
           chrome-extension = chromeExtension;
           firefox-extension = firefoxExtension;
@@ -88,5 +114,6 @@
             inotify-tools
           ];
         };
-      });
+      }
+    );
 }

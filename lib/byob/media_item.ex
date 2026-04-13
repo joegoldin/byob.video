@@ -23,13 +23,22 @@ defmodule Byob.MediaItem do
 
   def parse_url(_), do: {:error, :invalid_url}
 
+  @video_extensions ~w(.mp4 .webm .ogg .mov .mkv .avi .m4v)
+
   defp classify(host, uri) do
-    if youtube_host?(host) do
-      {:youtube, extract_youtube_id(host, uri)}
-    else
-      {:extension_required, nil}
+    cond do
+      youtube_host?(host) -> {:youtube, extract_youtube_id(host, uri)}
+      direct_video_url?(uri) -> {:direct_url, nil}
+      true -> {:extension_required, nil}
     end
   end
+
+  defp direct_video_url?(%URI{path: path}) when is_binary(path) do
+    ext = path |> String.downcase() |> Path.extname()
+    ext in @video_extensions
+  end
+
+  defp direct_video_url?(_), do: false
 
   defp youtube_host?(host), do: host in @youtube_hosts
 

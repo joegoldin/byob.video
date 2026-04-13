@@ -126,6 +126,17 @@ defmodule ByobWeb.RoomLive do
 
           {:noreply, socket}
 
+        {:ok, %{source_type: :direct_url}} ->
+          # Direct video URLs don't need metadata fetching
+          filename = url |> URI.parse() |> Map.get(:path, "") |> Path.basename()
+          preview = %{
+            source_type: :direct_url,
+            title: filename,
+            thumbnail_url: nil,
+            url: url
+          }
+          {:noreply, assign(socket, url_preview: preview, url_preview_loading: false)}
+
         {:ok, %{source_type: :extension_required}} ->
           socket = assign(socket, url_preview_loading: true, url_preview: nil)
           me = self()
@@ -434,6 +445,32 @@ defmodule ByobWeb.RoomLive do
                 </button>
               </div>
             </div>
+            <%!-- Direct URL preview --%>
+            <div
+              :if={@url_preview && @url_preview.source_type == :direct_url}
+              class="flex items-center gap-2 p-3"
+            >
+              <div class="w-16 h-10 bg-base-300 rounded flex-shrink-0 flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-base-content/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z" />
+                </svg>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p :if={@url_preview.title} class="text-sm font-medium truncate">{@url_preview.title}</p>
+                <p :if={!@url_preview.title} class="text-sm font-medium truncate">{@url_preview.url || "Direct video"}</p>
+                <p class="text-xs text-base-content/50">Direct video file</p>
+              </div>
+              <div class="flex gap-1 flex-shrink-0">
+                <button type="submit" form="url-form" name="mode" value="now" class="btn btn-primary btn-xs">
+                  Play Now
+                </button>
+                <button type="submit" form="url-form" name="mode" value="queue" class="btn btn-outline btn-xs">
+                  Queue
+                </button>
+              </div>
+            </div>
+            <%!-- Extension-required preview --%>
             <div
               :if={@url_preview && @url_preview.source_type == :extension_required}
               class="flex items-center gap-2 p-3"

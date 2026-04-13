@@ -1,10 +1,10 @@
 # byob - bring your own binge
 
 # Build all packages
-build: chrome firefox docker
+build: sync-version chrome firefox docker
 
 # Build Chrome extension (.crx + unpacked)
-chrome:
+chrome: sync-version
     nix build .#chrome-extension -o result-chrome
     @echo "Chrome extension:"
     @echo "  .crx:     result-chrome/byob-chrome.crx"
@@ -12,7 +12,7 @@ chrome:
     @echo "  unpacked: result-chrome/unpacked/"
 
 # Build Firefox extension (.xpi)
-firefox:
+firefox: sync-version
     nix build .#firefox-extension -o result-firefox
     @echo "Firefox extension: result-firefox/byob-firefox.xpi"
     @echo "Install via about:addons"
@@ -29,6 +29,20 @@ dev:
 # Run tests
 test:
     mix test
+
+# Sync VERSION file into extension manifests
+sync-version:
+    #!/usr/bin/env bash
+    V=$(cat VERSION | tr -d '\n')
+    for f in extension/manifest.json extension/manifest.firefox.json; do
+      sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$V\"/" "$f"
+    done
+    echo "Synced version $V to manifests"
+
+# Bump version everywhere: just bump 0.7.0
+bump NEW_VERSION:
+    echo "{{NEW_VERSION}}" > VERSION
+    just sync-version
 
 # Clean build artifacts
 clean:
