@@ -4,6 +4,14 @@ defmodule ByobWeb.RoomLive do
   alias Byob.{RoomManager, RoomServer}
 
   def mount(%{"id" => room_id}, _session, socket) do
+    if not Regex.match?(~r/^[a-z0-9]{1,16}$/, room_id) do
+      {:ok, push_navigate(socket, to: "/")}
+    else
+      mount_room(room_id, socket)
+    end
+  end
+
+  defp mount_room(room_id, socket) do
     {:ok, pid} = RoomManager.ensure_room(room_id)
 
     socket =

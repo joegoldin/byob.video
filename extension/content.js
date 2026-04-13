@@ -18,8 +18,9 @@
 
   // Check if we should activate on this page
   async function init() {
-    // Listen for room page messages
+    // Listen for room page messages — only accept from our own origin
     window.addEventListener("message", (e) => {
+      if (e.origin !== window.location.origin) return;
       if (e.data?.type === "byob:clear-external") {
         chrome.storage.local.remove("watchparty_config");
         return;

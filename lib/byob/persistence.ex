@@ -88,7 +88,7 @@ defmodule Byob.Persistence do
     result =
       case Exqlite.Sqlite3.step(db, stmt) do
         {:row, [blob]} when is_binary(blob) ->
-          {:ok, :erlang.binary_to_term(blob)}
+          {:ok, :erlang.binary_to_term(blob, [:safe])}
         _ ->
           :not_found
       end

@@ -350,8 +350,9 @@ defmodule Byob.RoomServer do
     {:reply, :ok, state}
   end
 
+  @sb_categories ~w(sponsor selfpromo interaction intro outro preview music_offtopic filler)
   def handle_call({:update_sb_settings, category, action}, _from, state)
-      when is_binary(category) and action in ["auto_skip", "show_bar", "disabled"] do
+      when category in @sb_categories and action in ["auto_skip", "show_bar", "disabled"] do
     state = put_in(state.sb_settings[category], action)
     broadcast(state, {:sb_settings_updated, state.sb_settings})
     {:reply, :ok, state}
@@ -469,17 +470,23 @@ defmodule Byob.RoomServer do
     Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{state.room_id}", message)
   end
 
+  @max_history 99
   defp add_to_history(state, item) do
     entry = %{item: item, played_at: DateTime.utc_now()}
     # Deduplicate: don't add if the last history entry is the same item
     case state.history do
       [%{item: %{id: id}} | _] when id == item.id -> state
-      _ -> %{state | history: [entry | state.history]}
+      _ -> %{state | history: Enum.take([entry | state.history], @max_history)}
     end
   end
 
+  @max_queue_size 200
   defp add_item_to_queue(state, item, :queue) do
-    %{state | queue: state.queue ++ [item]}
+    if length(state.queue) >= @max_queue_size do
+      state
+    else
+      %{state | queue: state.queue ++ [item]}
+    end
   end
 
   defp add_item_to_queue(state, item, :now) do

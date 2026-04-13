@@ -6,7 +6,7 @@ defmodule Byob.OEmbed do
   Metadata map has :title, :thumbnail_url, :author_name keys.
   """
   def fetch_youtube(url) do
-    case Req.get(@youtube_oembed, params: [url: url, format: "json"]) do
+    case Req.get(@youtube_oembed, params: [url: url, format: "json"], receive_timeout: 5000) do
       {:ok, %{status: 200, body: body}} when is_map(body) ->
         {:ok,
          %{
@@ -28,6 +28,14 @@ defmodule Byob.OEmbed do
   Falls back to <title> tag if no OG tags found.
   """
   def fetch_opengraph(url) do
+    if internal_url?(url) do
+      {:error, :blocked}
+    else
+      fetch_opengraph_unsafe(url)
+    end
+  end
+
+  defp fetch_opengraph_unsafe(url) do
     case Req.get(url, redirect: true, max_redirects: 3, receive_timeout: 5000) do
       {:ok, %{status: 200, body: body}} when is_binary(body) ->
         title =
@@ -47,6 +55,22 @@ defmodule Byob.OEmbed do
 
       _ ->
         {:error, :fetch_failed}
+    end
+  end
+
+  defp internal_url?(url) do
+    case URI.parse(url) do
+      %{host: host} when is_binary(host) ->
+        case :inet.getaddr(String.to_charlist(host), :inet) do
+          {:ok, {127, _, _, _}} -> true
+          {:ok, {10, _, _, _}} -> true
+          {:ok, {172, b, _, _}} when b >= 16 and b <= 31 -> true
+          {:ok, {192, 168, _, _}} -> true
+          {:ok, {169, 254, _, _}} -> true
+          {:ok, {0, _, _, _}} -> true
+          _ -> false
+        end
+      _ -> true
     end
   end
 
