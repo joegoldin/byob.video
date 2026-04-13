@@ -10,10 +10,9 @@ defmodule ByobWeb.ApiController do
       {:ok, room_id, api_key} ->
         url = ByobWeb.Endpoint.url() <> "/room/#{room_id}"
 
-        json(conn, %{
-          ok: true,
-          data: %{room_id: room_id, url: url, api_key: api_key}
-        })
+        conn
+        |> put_status(201)
+        |> json(%{ok: true, data: %{room_id: room_id, url: url, api_key: api_key}})
 
       {:error, :max_capacity} ->
         conn
