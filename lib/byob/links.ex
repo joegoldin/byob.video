@@ -4,8 +4,8 @@ defmodule Byob.Links do
   def source_code, do: "https://github.com/joegoldin/byob.video"
   def privacy_policy, do: "https://github.com/joegoldin/byob.video/blob/main/PRIVACY.md"
   def sponsor_block, do: "https://sponsor.ajay.app"
-  def chrome_extension, do: "https://github.com/joegoldin/byob.video/releases"
-  def firefox_extension, do: "https://github.com/joegoldin/byob.video/releases"
+  def chrome_extension, do: "https://chromewebstore.google.com/detail/jlpogmjckejgpbbfhafgjgkbnocjfbmb"
+  def firefox_extension, do: "https://addons.mozilla.org/en-US/firefox/addon/byob-bring-your-own-binge/"
 
   @doc "Returns JS expression that navigates to the right extension page based on browser"
   def extension_js do
