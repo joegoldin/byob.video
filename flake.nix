@@ -20,7 +20,7 @@
         # Extension packaging
         version = builtins.replaceStrings [ "\n" ] [ "" ] (builtins.readFile ./VERSION);
         extensionSrc = ./extension;
-        iconSvg = ./assets/img/favicon.svg;
+        iconSvg = ./priv/static/images/favicon.svg;
 
         chromeExtension = pkgs.stdenv.mkDerivation {
           pname = "byob-chrome-extension";

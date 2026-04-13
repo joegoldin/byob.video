@@ -29,6 +29,7 @@ defmodule ByobWeb.RoomLive do
         editing_username: false,
         url_preview: nil,
         url_preview_loading: false,
+        url_focused: false,
         sb_settings: Byob.RoomServer.default_sb_settings()
       )
 
@@ -105,6 +106,15 @@ defmodule ByobWeb.RoomLive do
   end
 
   # Client events
+
+  def handle_event("url:focus", _params, socket) do
+    {:noreply, assign(socket, url_focused: true)}
+  end
+
+  def handle_event("url:blur", _params, socket) do
+    # Small delay so clicking a dropdown item doesn't close it first
+    {:noreply, assign(socket, url_focused: false)}
+  end
 
   def handle_event("preview_url", %{"url" => url}, socket) do
     url = String.trim(url)
@@ -410,8 +420,38 @@ defmodule ByobWeb.RoomLive do
               class="input input-bordered input-xs w-full"
               autocomplete="off"
               phx-debounce="300"
+              phx-focus="url:focus"
+              phx-blur="url:blur"
             />
           </form>
+          <%!-- Supported sites hint (shown on focus with empty input) --%>
+          <div
+            :if={@url_focused && !@url_preview_loading && !@url_preview}
+            class="absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-50 p-3"
+          >
+            <p class="text-xs font-semibold text-base-content/60 mb-2">Paste a URL to watch together</p>
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-2 text-xs text-base-content/50">
+                <svg class="w-4 h-4 flex-shrink-0 text-red-500" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                </svg>
+                <span>YouTube — synced playback with SponsorBlock</span>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-base-content/50">
+                <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none"/>
+                </svg>
+                <span>Direct video files — .mp4, .webm, .ogg, .mov, .mkv</span>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-base-content/50">
+                <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>
+                </svg>
+                <span>Any site — via browser extension (Crunchyroll, etc.)</span>
+              </div>
+            </div>
+          </div>
           <%!-- Preview dropdown --%>
           <div
             :if={@url_preview_loading || @url_preview}
@@ -541,14 +581,10 @@ defmodule ByobWeb.RoomLive do
     <dialog id="sb-settings-modal" class="modal">
       <div class="modal-box max-w-md">
         <%!-- About section --%>
-        <div class="flex items-center gap-3 mb-4">
-          <img src={~p"/images/favicon.svg"} class="w-10 h-10" />
-          <div>
-            <h3 class="font-bold text-lg leading-tight">byob</h3>
-            <p class="text-xs text-base-content/50">bring your own binge</p>
-          </div>
+        <div class="flex flex-col items-center mb-4 p-3 bg-base-100 rounded-xl">
+          <img src={~p"/images/logo.svg"} class="w-64 h-64" />
         </div>
-        <div class="text-xs text-base-content/50 space-y-1 mb-4 pb-4 border-b border-base-300">
+        <div class="text-xs text-base-content/50 space-y-1 mb-4 pb-4 border-b border-base-300 text-center">
           <p>
             <a href="https://github.com/joegoldin/byob.video" target="_blank" class="link link-primary">Source Code</a>
             <span class="mx-1">&middot;</span>
