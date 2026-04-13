@@ -125,9 +125,9 @@ const LocalTime = {
   },
 }
 
-// Stable per-tab ID: survives reconnects but unique per tab
-if (!sessionStorage.getItem("byob_tab_id")) {
-  sessionStorage.setItem("byob_tab_id", crypto.randomUUID())
+// Stable per-browser ID: all tabs in same browser share one identity
+if (!localStorage.getItem("byob_browser_id")) {
+  localStorage.setItem("byob_browser_id", crypto.randomUUID())
 }
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
@@ -136,7 +136,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
   params: () => ({
     _csrf_token: csrfToken,
     stored_username: localStorage.getItem("watchparty_username"),
-    tab_id: sessionStorage.getItem("byob_tab_id"),
+    tab_id: localStorage.getItem("byob_browser_id"),
   }),
   hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort},
 })
