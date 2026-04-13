@@ -69,6 +69,7 @@ const VideoPlayer = {
       this._applySponsorSettings();
     });
     this.handleEvent("video:change", (data) => this._onVideoChange(data));
+    this.handleEvent("queue:ended", () => this._onQueueEnded());
 
     // Size the player to fit viewport: cap height so aspect-ratio shrinks width
     this._sizePlayer();
@@ -184,6 +185,8 @@ const VideoPlayer = {
   async _loadVideo(sourceType, sourceId, url, mediaItem) {
     this.sourceType = sourceType;
     this.sourceId = sourceId;
+    this._lastTitle = mediaItem?.title || url;
+    this._lastThumb = mediaItem?.thumbnail_url;
 
     if (sourceType === "youtube") {
       await this._loadYouTube(sourceId);
@@ -455,6 +458,36 @@ const VideoPlayer = {
       current_time: 0,
       server_time: this.clockSync.serverNow(),
     };
+  },
+
+  _onQueueEnded() {
+    this.reconcile.stop();
+    this.expectedPlayState = null;
+    if (this.player && this.player.destroy) {
+      try { this.player.destroy(); } catch (_) {}
+    }
+    this.player = null;
+    this.sourceType = null;
+
+    // Get last played item info from the current player element's last known state
+    const lastTitle = this._lastTitle || "the queue";
+    const lastThumb = this._lastThumb;
+
+    const thumbHtml = lastThumb
+      ? `<img src="${lastThumb}" class="w-40 h-24 object-cover rounded opacity-60" />`
+      : "";
+
+    this.el.innerHTML = `
+      <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-base-content/60 bg-base-300">
+        ${thumbHtml}
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <p class="text-sm font-medium text-base-content/50">Finished playing</p>
+        <p class="text-xs text-base-content/30 max-w-sm text-center px-4 line-clamp-2">${lastTitle}</p>
+        <p class="text-xs text-base-content/30 mt-2">Paste a URL above to keep watching</p>
+      </div>
+    `;
   },
 
   _onExtPlayerState(data) {

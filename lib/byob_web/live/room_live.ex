@@ -316,6 +316,23 @@ defmodule ByobWeb.RoomLive do
     {:noreply, push_event(socket, "sponsor:segments", data)}
   end
 
+  def handle_info({:queue_ended, _}, socket) do
+    history =
+      case RoomServer.get_state(socket.assigns.room_pid) do
+        %{history: h} -> h
+        _ -> socket.assigns.history
+      end
+
+    socket =
+      assign(socket,
+        play_state: :ended,
+        current_index: nil,
+        history: history
+      )
+
+    {:noreply, push_event(socket, "queue:ended", %{})}
+  end
+
   def handle_info({:video_changed, data}, socket) do
     socket = assign(socket, ext_player: nil)
     history =

@@ -556,8 +556,10 @@ defmodule Byob.RoomServer do
       broadcast(state, {:queue_updated, %{queue: state.queue, current_index: next_index}})
       state
     else
-      state = %{state | play_state: :ended, current_time: 0.0, last_sync_at: now}
+      state = %{state | play_state: :ended, current_time: 0.0, last_sync_at: now, current_index: nil}
       state = cancel_sync_correction(state)
+      broadcast(state, {:queue_ended, %{}})
+      broadcast(state, {:queue_updated, %{queue: state.queue, current_index: nil}})
       state
     end
   end
