@@ -13,8 +13,10 @@
   let safetyTimeout = null;
   let timeReportInterval = null;
 
-  // Signal extension is installed (page JS can detect this)
-  document.documentElement.setAttribute("data-byob-extension", "true");
+  // Signal extension is installed — only on our domain so other sites can't detect it
+  if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
+    document.documentElement.setAttribute("data-byob-extension", "true");
+  }
 
   // Check if we should activate on this page
   async function init() {
@@ -31,6 +33,7 @@
             room_id: e.data.room_id,
             server_url: e.data.server_url,
             target_url: e.data.url,
+            token: e.data.token,
             timestamp: Date.now(),
           },
         });
@@ -44,13 +47,13 @@
       try {
         const config = await chrome.storage.local.get("watchparty_config");
         if (config.watchparty_config) {
-          const { room_id, server_url, target_url, timestamp } = config.watchparty_config;
+          const { room_id, server_url, target_url, token, timestamp } = config.watchparty_config;
           const age = Date.now() - (timestamp || 0);
           if (age < 30 * 60 * 1000) {
             // In nested iframes (video player embeds), always activate
             const isTopFrame = window === window.top;
             if (!isTopFrame) {
-              activate(room_id, server_url);
+              activate(room_id, server_url, token);
               return;
             }
             // In top frame, match URL
@@ -58,7 +61,7 @@
               const targetBase = new URL(target_url).origin + new URL(target_url).pathname;
               const currentBase = window.location.origin + window.location.pathname;
               if (currentBase.startsWith(targetBase) || targetBase.startsWith(currentBase)) {
-                activate(room_id, server_url);
+                activate(room_id, server_url, token);
                 return;
               }
             }
@@ -70,7 +73,7 @@
     tryActivate(0);
   }
 
-  function activate(roomId, serverUrl) {
+  function activate(roomId, serverUrl, token) {
     // Show sync bar immediately in top frame with "Loading..." status
     if (window === window.top) {
       injectSyncBar();
@@ -83,6 +86,7 @@
       type: "connect",
       room_id: roomId,
       server_url: serverUrl,
+      token: token,
     });
 
     port.onMessage.addListener(handleSWMessage);
@@ -159,10 +163,7 @@
     if (port) {
       port.postMessage(reportHooked);
     }
-    // Also relay up to top frame in case port isn't working in nested iframe
-    try { window.top.postMessage({ type: "byob:relay", payload: reportHooked }, "*"); } catch (_) {}
-
-    // Notify top frame via chrome.runtime that video was hooked
+    // Notify top frame via extension messaging (works cross-origin, no postMessage("*"))
     if (!window.location.hostname.includes("youtube.com")) {
       try { chrome.runtime.sendMessage({ type: "byob:video-hooked" }); } catch (_) {}
     }
@@ -357,20 +358,37 @@
       transition: all 0.2s ease;
     `;
 
-    bar.innerHTML = `
-      <div id="byob-bar-content" style="display:flex;align-items:center;gap:12px;padding:6px 16px;">
-        <span style="font-weight:bold;font-size:14px;opacity:0.7">byob</span>
-        <span id="byob-dot" style="width:6px;height:6px;border-radius:50%;background:#888;flex-shrink:0"></span>
-        <span id="byob-status" style="color:#888;font-size:12px">Loading...</span>
-        <div style="flex:1"></div>
-        <span id="byob-time" style="font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px"></span>
-        <button id="byob-collapse" style="
-          background:none;color:white;border:none;cursor:pointer;
-          font-size:14px;opacity:0.5;padding:0 4px;line-height:1;
-          outline:none;-webkit-user-select:none;user-select:none;
-        ">▼</button>
-      </div>
-    `;
+    const content = document.createElement("div");
+    content.id = "byob-bar-content";
+    content.style.cssText = "display:flex;align-items:center;gap:12px;padding:6px 16px;";
+
+    const logo = document.createElement("span");
+    logo.style.cssText = "font-weight:bold;font-size:14px;opacity:0.7";
+    logo.textContent = "byob";
+
+    const dot = document.createElement("span");
+    dot.id = "byob-dot";
+    dot.style.cssText = "width:6px;height:6px;border-radius:50%;background:#888;flex-shrink:0";
+
+    const status = document.createElement("span");
+    status.id = "byob-status";
+    status.style.cssText = "color:#888;font-size:12px";
+    status.textContent = "Loading...";
+
+    const spacer = document.createElement("div");
+    spacer.style.flex = "1";
+
+    const time = document.createElement("span");
+    time.id = "byob-time";
+    time.style.cssText = "font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px";
+
+    const collapse = document.createElement("button");
+    collapse.id = "byob-collapse";
+    collapse.style.cssText = "background:none;color:white;border:none;cursor:pointer;font-size:14px;opacity:0.5;padding:0 4px;line-height:1;outline:none;-webkit-user-select:none;user-select:none;";
+    collapse.textContent = "\u25BC";
+
+    content.append(logo, dot, status, spacer, time, collapse);
+    bar.appendChild(content);
 
     // Collapse/expand toggle
     let collapsed = false;

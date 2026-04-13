@@ -5,9 +5,17 @@ defmodule ByobWeb.ExtensionChannel do
 
   @impl true
   def join("extension:" <> room_id, params, socket) do
+    if not Regex.match?(~r/^[a-z0-9]{1,16}$/, room_id) do
+      {:error, %{reason: "invalid room"}}
+    else
+      join_room(room_id, params, socket)
+    end
+  end
+
+  defp join_room(room_id, params, socket) do
     {:ok, pid} = RoomManager.ensure_room(room_id)
     user_id = socket.assigns.user_id
-    username = params["username"] || "ExtensionUser"
+    username = (params["username"] || "ExtensionUser") |> String.slice(0, 30)
 
     {:ok, state} = RoomServer.join(pid, user_id, username)
     Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")

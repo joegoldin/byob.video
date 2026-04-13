@@ -59,6 +59,7 @@ const ExtOpenBtn = {
           url: this.el.dataset.url,
           room_id: this.el.dataset.roomId,
           server_url: this.el.dataset.serverUrl,
+          token: this.el.dataset.token,
         }, "*");
         window._byobPlayerWindow = window.open(
           this.el.dataset.url, "byob_player",

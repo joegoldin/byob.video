@@ -6,7 +6,8 @@ defmodule Byob.Persistence do
 
   use GenServer
 
-  @db_path "priv/byob.db"
+  @default_db_path "priv/byob.db"
+  defp db_path, do: System.get_env("BYOB_DB_PATH") || @default_db_path
   @max_rooms 100
   @max_history 99
 
@@ -40,9 +41,9 @@ defmodule Byob.Persistence do
 
   @impl true
   def init(_) do
-    db_dir = Path.dirname(@db_path)
+    db_dir = Path.dirname(db_path())
     File.mkdir_p!(db_dir)
-    {:ok, db} = Exqlite.Sqlite3.open(@db_path)
+    {:ok, db} = Exqlite.Sqlite3.open(db_path())
 
     Exqlite.Sqlite3.execute(db, """
     CREATE TABLE IF NOT EXISTS rooms (

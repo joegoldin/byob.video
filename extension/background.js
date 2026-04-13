@@ -36,7 +36,7 @@ chrome.runtime.onConnect.addListener((port) => {
 function handleContentMessage(msg, port, tabId) {
   switch (msg.type) {
     case "connect":
-      connectToRoom(msg.room_id, msg.server_url);
+      connectToRoom(msg.room_id, msg.server_url, msg.token);
       break;
 
     case "video:hooked":
@@ -85,7 +85,7 @@ function handleContentMessage(msg, port, tabId) {
   }
 }
 
-function connectToRoom(roomId, serverUrl) {
+function connectToRoom(roomId, serverUrl, token) {
   // Don't reconnect if already connected to this room
   if (currentRoomId === roomId && channel) return;
 
@@ -102,10 +102,11 @@ function connectToRoom(roomId, serverUrl) {
   currentRoomId = roomId;
   currentServerUrl = serverUrl;
 
-  // Connect Phoenix Socket
+  // Connect Phoenix Socket with auth token
   const wsUrl = serverUrl.replace(/^http/, "ws") + "/extension";
   socket = new Socket(wsUrl, {
-    heartbeatIntervalMs: 20000, // Shorter heartbeat to keep SW alive
+    heartbeatIntervalMs: 20000,
+    params: token ? { token } : {},
   });
 
   socket.connect();
