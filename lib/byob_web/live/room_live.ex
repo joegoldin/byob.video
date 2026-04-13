@@ -596,6 +596,8 @@ defmodule ByobWeb.RoomLive do
             <span>MIT License</span>
             <span class="mx-1">&middot;</span>
             <a href={Byob.Links.privacy_policy()} target="_blank" class="link link-primary">Privacy</a>
+            <span class="mx-1">&middot;</span>
+            <span>v{Application.spec(:byob, :vsn)}</span>
           </p>
         </div>
 

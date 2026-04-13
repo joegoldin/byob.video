@@ -1,4 +1,13 @@
-# byob Release Notes
+# byob Changelog
+
+---
+
+# v1.0.1
+
+- Chrome Web Store and Firefox AMO extension links
+- Chrome Web Store submission docs
+- Privacy policy link and version number in settings modal
+- Centralized extension store URLs in `Byob.Links`
 
 ---
 
