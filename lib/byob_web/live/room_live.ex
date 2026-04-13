@@ -385,7 +385,7 @@ defmodule ByobWeb.RoomLive do
   def render(assigns) do
     ~H"""
     <%!-- Room nav bar — replaces layout nav --%>
-    <nav id="room-nav" phx-hook="ReplaceLayoutNav" class="navbar min-h-0 h-10 bg-base-200 border-b border-base-300 px-4" style="margin: -0.5rem -1rem 0.5rem -1rem; width: calc(100% + 2rem);">
+    <nav id="room-nav" phx-hook="ReplaceLayoutNav" class="navbar min-h-0 h-10 bg-base-200 border-b border-base-300 px-2 sm:px-4" style="margin: -0.5rem -1rem 0.5rem -1rem; width: calc(100% + 2rem);">
       <div class="flex-1 flex items-center gap-2">
         <a href="/" class="flex items-center gap-1.5 flex-shrink-0">
           <img src={~p"/images/favicon.svg"} class="w-5 h-5" />
@@ -409,9 +409,9 @@ defmodule ByobWeb.RoomLive do
           <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
           </svg>
-          Copy Room Link
+          <span class="hidden sm:inline">Copy Room Link</span>
         </button>
-        <div class="relative flex-1 max-w-[33vw]">
+        <div class="relative flex-1 min-w-0 max-w-[40vw]">
           <form phx-submit="add_url" phx-change="preview_url" id="url-form">
             <input
               type="text"
@@ -435,7 +435,7 @@ defmodule ByobWeb.RoomLive do
                 <svg class="w-4 h-4 flex-shrink-0 text-red-500" viewBox="0 0 24 24" fill="currentColor">
                   <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
                 </svg>
-                <span>YouTube — synced playback with SponsorBlock</span>
+                <span>YouTube — synced playback with <a href={Byob.Links.sponsor_block()} target="_blank" class="link link-primary">SponsorBlock</a></span>
               </div>
               <div class="flex items-center gap-2 text-xs text-base-content/50">
                 <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -579,23 +579,28 @@ defmodule ByobWeb.RoomLive do
 
     <%!-- SponsorBlock settings modal --%>
     <dialog id="sb-settings-modal" class="modal">
-      <div class="modal-box max-w-md">
+      <div class="modal-box max-w-md relative">
+        <form method="dialog">
+          <button class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3">✕</button>
+        </form>
         <%!-- About section --%>
         <div class="flex flex-col items-center mb-4 p-3 bg-base-100 rounded-xl">
           <img src={~p"/images/logo.svg"} class="w-64 h-64" />
         </div>
         <div class="text-xs text-base-content/50 space-y-1 mb-4 pb-4 border-b border-base-300 text-center">
           <p>
-            <a href="https://github.com/joegoldin/byob.video" target="_blank" class="link link-primary">Source Code</a>
-            <span class="mx-1">&middot;</span>
-            <a href="https://github.com/joegoldin/byob.video/releases" target="_blank" class="link link-primary">Extensions</a>
+            <a href={Byob.Links.source_code()} target="_blank" class="text-base-content/50 hover:text-base-content/70" title="Source on GitHub">
+              <svg class="w-4 h-4 inline" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            </a>
             <span class="mx-1">&middot;</span>
             <span>MIT License</span>
+            <span class="mx-1">&middot;</span>
+            <a href={Byob.Links.privacy_policy()} target="_blank" class="link link-primary">Privacy</a>
           </p>
         </div>
 
         <%!-- SponsorBlock settings --%>
-        <h3 class="font-bold text-lg mb-1">SponsorBlock Settings</h3>
+        <h3 class="font-bold text-lg mb-1"><a href={Byob.Links.sponsor_block()} target="_blank" class="link">SponsorBlock</a> Settings</h3>
         <p class="text-xs text-base-content/50 mb-4">
           Settings apply to this room for all users.
         </p>
@@ -606,10 +611,15 @@ defmodule ByobWeb.RoomLive do
             action={action}
           />
         </div>
-        <div class="modal-action">
-          <form method="dialog">
-            <button class="btn btn-sm">Close</button>
-          </form>
+        <%!-- Attribution --%>
+        <div class="mt-4 pt-4 border-t border-base-300 text-xs text-base-content/40 space-y-1">
+          <p>
+            <a href={Byob.Links.sponsor_block()} target="_blank" class="link link-primary">SponsorBlock</a>
+            API by <a href="https://ajay.app" target="_blank" class="link link-primary">Ajay Ramachandran</a> (GPLv3)
+          </p>
+          <p>
+            byob is <a href={Byob.Links.source_code()} target="_blank" class="link link-primary">open source</a> under MIT License
+          </p>
         </div>
       </div>
       <form method="dialog" class="modal-backdrop">
@@ -617,7 +627,7 @@ defmodule ByobWeb.RoomLive do
       </form>
     </dialog>
 
-    <div class="flex flex-col lg:flex-row gap-3 min-h-[calc(100vh-3.5rem)]">
+    <div class="flex flex-col lg:flex-row gap-3 lg:min-h-[calc(100vh-3.5rem)]">
       <%!-- Main content --%>
       <div class="flex-1 min-w-0 flex flex-col">
 

@@ -767,18 +767,22 @@ const VideoPlayer = {
   },
 
   _sizePlayer() {
-    // Size player to fill width at 16:9, but cap by available height.
-    // If height-constrained, shrink width to maintain ratio.
+    // Size player to fill width at 16:9, but cap by available height on desktop.
+    // On mobile (stacked layout), just use 16:9 from width without height capping.
     const sizer = this.el.parentElement;
     const availW = sizer.clientWidth;
-    const availH = window.innerHeight - 130; // nav + toolbar + padding
+    const isDesktop = window.innerWidth >= 1024; // lg breakpoint
     let w = availW;
     let h = w * 9 / 16;
-    if (h > availH && availH >= 300) {
-      h = availH;
-      w = h * 16 / 9;
+    if (isDesktop) {
+      const availH = window.innerHeight - 80; // nav + padding
+      if (h > availH && availH >= 300) {
+        h = availH;
+        w = h * 16 / 9;
+      }
     }
-    h = Math.max(300, h);
+    h = Math.max(150, h);
+    if (!isDesktop) w = availW; // on mobile, always fill width
     this.el.style.width = w + "px";
     this.el.style.height = h + "px";
   },
