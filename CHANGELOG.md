@@ -2,6 +2,38 @@
 
 ---
 
+# v1.2.0
+
+## Queue UX and tab management
+
+- Reuse YouTube player instance on queue selection — autoplay works without requiring a click
+- "Finished playing" screen when queue ends, showing last video thumbnail and title
+- Queue ended state clears "Now Playing" in sidebar
+- Duplicate tab detection: new tab takes over, old tab gets disabled overlay with "Use this tab instead" button
+- Per-browser user identity (all tabs share one user, no more duplicate users)
+- Room API key moved below SponsorBlock settings in the modal
+- Attribution text improvements
+
+---
+
+# v1.1.2
+
+## Per-browser identity and duplicate tab warning
+
+- Use localStorage for browser ID so all tabs share one user identity
+- BroadcastChannel-based duplicate tab detection with warning banner
+
+---
+
+# v1.1.1
+
+## API fix
+
+- Return HTTP 201 (not 200) from `POST /api/rooms`
+- Discord bot accepts both 200 and 201
+
+---
+
 # v1.1.0
 
 ## REST API

@@ -614,7 +614,7 @@ defmodule ByobWeb.RoomLive do
             <span class="mx-1">&middot;</span>
             <a href={Byob.Links.privacy_policy()} target="_blank" class="link link-primary">Privacy</a>
             <span class="mx-1">&middot;</span>
-            <span>v{Application.spec(:byob, :vsn)}</span>
+            <a href="https://github.com/joegoldin/byob.video/blob/main/CHANGELOG.md" target="_blank" class="link link-primary">v{Application.spec(:byob, :vsn)}</a>
           </p>
         </div>
 
@@ -644,6 +644,12 @@ defmodule ByobWeb.RoomLive do
           <p>
             <a href={Byob.Links.sponsor_block()} target="_blank" class="link link-primary">SponsorBlock</a>
             API by <a href="https://ajay.app" target="_blank" class="link link-primary">Ajay Ramachandran</a> (GPLv3)
+          </p>
+          <p>
+            Built with
+            <a href="https://phoenixframework.org" target="_blank" class="link link-primary">Phoenix</a>,
+            <a href="https://daisyui.com" target="_blank" class="link link-primary">daisyUI</a>,
+            and <a href="https://tailwindcss.com" target="_blank" class="link link-primary">Tailwind CSS</a>
           </p>
           <p>
             byob.video is <a href={Byob.Links.source_code()} target="_blank" class="link link-primary">open source</a> under MIT License
