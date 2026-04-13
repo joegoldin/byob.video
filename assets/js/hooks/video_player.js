@@ -223,29 +223,42 @@ const VideoPlayer = {
 
   async _loadYouTube(videoId) {
     const YT = await loadYouTubeAPI();
+    const shouldPlay = this._pendingState?.play_state === "playing";
 
-    // Clear existing player
+    // Reuse existing player if possible — preserves user gesture context for autoplay
+    if (this.player && this.player.loadVideoById && this.sourceType === "youtube") {
+      this.isReady = false;
+      this._endedFired = false;
+      if (shouldPlay) {
+        this.player.loadVideoById(videoId);
+      } else {
+        this.player.cueVideoById(videoId);
+      }
+      this.isReady = true;
+      this._applyPendingState();
+      this._startSeekDetector();
+      this._retrySponsorBar();
+      return;
+    }
+
+    // First time — create player from scratch
     if (this.player && this.player.destroy) {
       this.player.destroy();
     }
 
     this.isReady = false;
 
-    // Always create a fresh container — destroys old iframe and any injected segments
     this.el.innerHTML = "";
     const container = document.createElement("div");
     container.id = "yt-player";
     this.el.appendChild(container);
-
-    // Autoplay if we have a pending state that says playing
-    const shouldAutoplay = this._pendingState?.play_state === "playing" ? 1 : 0;
 
     this.player = new YT.Player("yt-player", {
       videoId: videoId,
       width: "100%",
       height: "100%",
       playerVars: {
-        autoplay: shouldAutoplay,
+        autoplay: shouldPlay ? 1 : 0,
         controls: 1,
         modestbranding: 1,
         rel: 0,
@@ -260,7 +273,6 @@ const VideoPlayer = {
           }
           this._applyPendingState();
           this._startSeekDetector();
-          // Re-render sponsor bar — retry until getDuration() returns > 0
           this._retrySponsorBar();
         },
         onStateChange: (event) => this._onYTStateChange(event),
