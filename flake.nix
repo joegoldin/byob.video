@@ -20,6 +20,7 @@
         # Extension packaging
         version = builtins.replaceStrings [ "\n" ] [ "" ] (builtins.readFile ./VERSION);
         extensionSrc = ./extension;
+        iconSvg = ./assets/img/favicon.svg;
 
         chromeExtension = pkgs.stdenv.mkDerivation {
           pname = "byob-chrome-extension";
@@ -28,6 +29,7 @@
           nativeBuildInputs = [
             pkgs.zip
             pkgs.chromium
+            pkgs.imagemagick
           ];
           phases = [
             "unpackPhase"
@@ -36,6 +38,10 @@
           ];
           buildPhase = ''
             ${pkgs.gnused}/bin/sed -i 's/"version": "[^"]*"/"version": "${version}"/' manifest.json
+            # Generate icons from SVG source
+            magick ${iconSvg} -resize 16x16 icon-16.png
+            magick ${iconSvg} -resize 48x48 icon-48.png
+            magick ${iconSvg} -resize 128x128 icon-128.png
             rm -f manifest.firefox.json
             mkdir -p $TMPDIR/ext
             cp -r . $TMPDIR/ext/src
@@ -45,7 +51,7 @@
           '';
           installPhase = ''
             mkdir -p $out/unpacked
-            cp -r background.js content.js manifest.json lib $out/unpacked/
+            cp -r background.js content.js manifest.json lib icon-*.png $out/unpacked/
             cp $TMPDIR/byob-chrome.zip $out/
             if [ -f $TMPDIR/ext/src.crx ]; then
               cp $TMPDIR/ext/src.crx $out/byob-chrome.crx
@@ -58,7 +64,7 @@
           pname = "byob-firefox-extension";
           inherit version;
           src = extensionSrc;
-          nativeBuildInputs = [ pkgs.zip ];
+          nativeBuildInputs = [ pkgs.zip pkgs.imagemagick ];
           phases = [
             "unpackPhase"
             "buildPhase"
@@ -67,12 +73,15 @@
           buildPhase = ''
             cp manifest.firefox.json manifest.json
             ${pkgs.gnused}/bin/sed -i 's/"version": "[^"]*"/"version": "${version}"/' manifest.json
+            magick ${iconSvg} -resize 16x16 icon-16.png
+            magick ${iconSvg} -resize 48x48 icon-48.png
+            magick ${iconSvg} -resize 128x128 icon-128.png
             zip -r byob-firefox.xpi .
           '';
           installPhase = ''
             mkdir -p $out/unpacked
             cp byob-firefox.xpi $out/
-            cp -r background.js content.js manifest.json lib $out/unpacked/
+            cp -r background.js content.js manifest.json lib icon-*.png $out/unpacked/
           '';
         };
 

@@ -377,7 +377,10 @@ defmodule ByobWeb.RoomLive do
     <%!-- Room nav bar — replaces layout nav --%>
     <nav id="room-nav" phx-hook="ReplaceLayoutNav" class="navbar min-h-0 h-10 bg-base-200 border-b border-base-300 px-4" style="margin: -0.5rem -1rem 0.5rem -1rem; width: calc(100% + 2rem);">
       <div class="flex-1 flex items-center gap-2">
-        <a href="/" class="text-base font-bold tracking-tight flex-shrink-0">byob</a>
+        <a href="/" class="flex items-center gap-1.5 flex-shrink-0">
+          <img src={~p"/images/favicon.svg"} class="w-5 h-5" />
+          <span class="text-base font-bold tracking-tight">byob</span>
+        </a>
         <button
           id="copy-url"
           onclick={"
@@ -537,6 +540,25 @@ defmodule ByobWeb.RoomLive do
     <%!-- SponsorBlock settings modal --%>
     <dialog id="sb-settings-modal" class="modal">
       <div class="modal-box max-w-md">
+        <%!-- About section --%>
+        <div class="flex items-center gap-3 mb-4">
+          <img src={~p"/images/favicon.svg"} class="w-10 h-10" />
+          <div>
+            <h3 class="font-bold text-lg leading-tight">byob</h3>
+            <p class="text-xs text-base-content/50">bring your own binge</p>
+          </div>
+        </div>
+        <div class="text-xs text-base-content/50 space-y-1 mb-4 pb-4 border-b border-base-300">
+          <p>
+            <a href="https://github.com/joegoldin/byob.video" target="_blank" class="link link-primary">Source Code</a>
+            <span class="mx-1">&middot;</span>
+            <a href="https://github.com/joegoldin/byob.video/releases" target="_blank" class="link link-primary">Extensions</a>
+            <span class="mx-1">&middot;</span>
+            <span>MIT License</span>
+          </p>
+        </div>
+
+        <%!-- SponsorBlock settings --%>
         <h3 class="font-bold text-lg mb-1">SponsorBlock Settings</h3>
         <p class="text-xs text-base-content/50 mb-4">
           Settings apply to this room for all users.
