@@ -30,6 +30,7 @@ defmodule ByobWeb.RoomLive do
         url_preview: nil,
         url_preview_loading: false,
         url_focused: false,
+        api_key: nil,
         sb_settings: Byob.RoomServer.default_sb_settings()
       )
 
@@ -59,7 +60,8 @@ defmodule ByobWeb.RoomLive do
           current_index: state.current_index,
           play_state: state.play_state,
           current_media: current_media,
-          sb_settings: state.sb_settings
+          sb_settings: state.sb_settings,
+          api_key: RoomServer.get_api_key(pid)
         )
 
       # Push full state to client hook for two-step join
@@ -599,6 +601,16 @@ defmodule ByobWeb.RoomLive do
             <span class="mx-1">&middot;</span>
             <span>v{Application.spec(:byob, :vsn)}</span>
           </p>
+        </div>
+
+        <%!-- Room API Key --%>
+        <div :if={@api_key} class="mb-4 pb-4 border-b border-base-300">
+          <h4 class="font-semibold text-sm mb-2">Room API Key</h4>
+          <div class="flex items-center gap-2">
+            <code class="text-xs bg-base-100 px-2 py-1 rounded flex-1 truncate select-all">{@api_key}</code>
+            <button onclick={"navigator.clipboard.writeText('#{@api_key}')"} class="btn btn-xs btn-ghost">Copy</button>
+          </div>
+          <a href="/api" target="_blank" class="text-xs link link-primary mt-1 block">API Documentation</a>
         </div>
 
         <%!-- SponsorBlock settings --%>

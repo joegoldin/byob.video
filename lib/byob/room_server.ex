@@ -502,7 +502,19 @@ defmodule Byob.RoomServer do
     if length(state.queue) >= @max_queue_size do
       state
     else
-      %{state | queue: state.queue ++ [item]}
+      queue = state.queue ++ [item]
+      # Auto-play if nothing is currently playing
+      if state.current_index == nil do
+        now = System.monotonic_time(:millisecond)
+        state = %{state | queue: queue, current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
+        state = add_to_history(state, item)
+        state = schedule_sync_correction(state)
+        fetch_sponsor_segments(item)
+        broadcast(state, {:video_changed, %{media_item: item, index: 0}})
+        state
+      else
+        %{state | queue: queue}
+      end
     end
   end
 

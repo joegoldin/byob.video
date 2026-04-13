@@ -2,6 +2,33 @@
 
 ---
 
+# v1.1.0
+
+## REST API
+
+- **`POST /api/rooms`** — create a room, get back room_id, URL, and API key
+- **`GET /api/rooms/:id`** — room info (current video, play state, user count)
+- **`GET /api/rooms/:id/queue`** — full queue with current index
+- **`POST /api/rooms/:id/queue`** — add URL (mode: "now" or "queue")
+- **`DELETE /api/rooms/:id/queue/:item_id`** — remove from queue
+- **`PUT /api/rooms/:id/queue/reorder`** — reorder items
+- **`POST /api/rooms/:id/skip`** — skip to next
+- **`POST /api/rooms/:id/play`** — play at position
+- **`POST /api/rooms/:id/pause`** — pause at position
+- **`GET /api/rooms/:id/users`** — list users
+- **`PUT /api/rooms/:id/username`** — change API user's name
+- **`GET /api`** — self-documenting endpoint page with curl examples
+- Auth via `Authorization: Bearer <token>` or `?api_key=<token>`
+- ETS-based rate limiting (5/min create, 20/min mutations, 60/min reads)
+- Room API key shown in settings modal with copy button
+- API users appear in the room's user list
+
+## Fixes
+
+- Auto-play first video when added to empty queue via "Queue" mode
+
+---
+
 # v1.0.1
 
 - Chrome Web Store and Firefox AMO extension links
