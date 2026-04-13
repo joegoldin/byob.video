@@ -198,7 +198,13 @@ defmodule ByobWeb.RoomLive do
     {:noreply, socket}
   end
 
+  def handle_event("video:ended", %{"index" => index}, socket) do
+    RoomServer.video_ended(socket.assigns.room_pid, index)
+    {:noreply, socket}
+  end
+
   def handle_event("video:ended", _params, socket) do
+    # Fallback without index — use skip but only once
     RoomServer.skip(socket.assigns.room_pid)
     {:noreply, socket}
   end

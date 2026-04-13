@@ -408,9 +408,13 @@ const VideoPlayer = {
       // Stop heartbeat from force-replaying the video
       this.expectedPlayState = null;
       this.reconcile.stop();
-      const currentIndex = this.el.dataset.currentIndex;
-      if (currentIndex != null) {
-        this.pushEvent("video:ended", { index: parseInt(currentIndex) });
+      // Only send ended if the position-based detector hasn't already
+      if (!this._endedFired) {
+        this._endedFired = true;
+        const currentIndex = this.el.dataset.currentIndex;
+        if (currentIndex != null) {
+          this.pushEvent("video:ended", { index: parseInt(currentIndex) });
+        }
       }
     }
   },
