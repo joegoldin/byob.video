@@ -149,27 +149,18 @@ const VideoPlayer = {
       this.reconcile.pauseFor(2000);
       this.reconcile.start();
 
-      // Retry play if autoplay was blocked — try muted as last resort
+      // Retry play if autoplay was blocked
       const retryPlay = (attempt) => {
-        if (attempt > 4) return;
+        if (attempt > 3) return;
         setTimeout(() => {
           if (this.sourceType === "youtube") {
             const yt = this.player?.getPlayerState?.();
             if (yt !== undefined && yt !== YT_PLAYING && yt !== YT_BUFFERING) {
               this.suppression.suppress("playing");
-              // On last attempt, try muted autoplay
-              if (attempt === 4 && this.player.mute) {
-                this.player.mute();
-                this._autoplayMuted = true;
-              }
               this._play();
             }
           } else if (this.sourceType === "direct_url" && this.player?.paused) {
             this.suppression.suppress("playing");
-            if (attempt === 4) {
-              this.player.muted = true;
-              this._autoplayMuted = true;
-            }
             this._play();
           }
         }, attempt * 500);
@@ -177,7 +168,6 @@ const VideoPlayer = {
       retryPlay(1);
       retryPlay(2);
       retryPlay(3);
-      retryPlay(4);
     } else if (state.play_state === "paused") {
       this.expectedPlayState = "paused";
       this.suppression.suppress("paused");
@@ -267,14 +257,12 @@ const VideoPlayer = {
     container.id = "yt-player";
     this.el.appendChild(container);
 
-    this._autoplayMuted = shouldPlay;
     this.player = new YT.Player("yt-player", {
       videoId: videoId,
       width: "100%",
       height: "100%",
       playerVars: {
         autoplay: shouldPlay ? 1 : 0,
-        mute: shouldPlay ? 1 : 0,
         controls: 1,
         modestbranding: 1,
         rel: 0,
@@ -324,11 +312,6 @@ const VideoPlayer = {
     });
 
     video.addEventListener("play", () => {
-      // Unmute if we muted for autoplay
-      if (video.muted && this._autoplayMuted) {
-        video.muted = false;
-        this._autoplayMuted = false;
-      }
       if (this.suppression.shouldSuppress("playing")) return;
       this.expectedPlayState = "playing";
       const position = video.currentTime;
@@ -379,12 +362,6 @@ const VideoPlayer = {
     if (state === YT_BUFFERING) {
       this.reconcile.pauseFor(2000);
       return;
-    }
-
-    // Unmute before suppression check — autoplay mute must always be undone
-    if (state === YT_PLAYING && this._autoplayMuted && this.player.isMuted?.()) {
-      this.player.unMute();
-      this._autoplayMuted = false;
     }
 
     if (stateName && this.suppression.shouldSuppress(stateName)) {
@@ -501,21 +478,39 @@ const VideoPlayer = {
     const lastTitle = this._lastTitle || "the queue";
     const lastThumb = this._lastThumb;
 
-    const thumbHtml = lastThumb
-      ? `<img src="${lastThumb}" class="w-40 h-24 object-cover rounded opacity-60" />`
-      : "";
+    // Build finished screen with DOM APIs (no innerHTML)
+    const container = document.createElement("div");
+    container.className = "absolute inset-0 flex flex-col items-center justify-center gap-4 bg-base-300";
 
-    this.el.innerHTML = `
-      <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-base-content/60 bg-base-300">
-        ${thumbHtml}
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <p class="text-sm font-medium text-base-content/50">Finished playing</p>
-        <p class="text-xs text-base-content/30 max-w-sm text-center px-4 line-clamp-2">${lastTitle}</p>
-        <p class="text-xs text-base-content/30 mt-2">Paste a URL above to keep watching</p>
-      </div>
-    `;
+    if (lastThumb) {
+      const img = document.createElement("img");
+      img.src = lastThumb;
+      img.className = "w-48 h-28 object-cover rounded-lg opacity-50";
+      container.appendChild(img);
+    }
+
+    const icon = document.createElement("div");
+    icon.className = "w-12 h-12 rounded-full bg-success/20 flex items-center justify-center";
+    icon.innerHTML = '<svg class="w-6 h-6 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
+    container.appendChild(icon);
+
+    const heading = document.createElement("p");
+    heading.className = "text-base font-semibold text-base-content/60";
+    heading.textContent = "Queue finished";
+    container.appendChild(heading);
+
+    const title = document.createElement("p");
+    title.className = "text-sm text-base-content/40 max-w-md text-center px-6 line-clamp-2";
+    title.textContent = `Last played: ${lastTitle}`;
+    container.appendChild(title);
+
+    const hint = document.createElement("p");
+    hint.className = "text-xs text-base-content/25 mt-2";
+    hint.textContent = "Paste a URL above to keep watching";
+    container.appendChild(hint);
+
+    this.el.innerHTML = "";
+    this.el.appendChild(container);
   },
 
   _onExtPlayerState(data) {
