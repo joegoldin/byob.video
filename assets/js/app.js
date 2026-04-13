@@ -114,6 +114,51 @@ const DragSort = {
   },
 }
 
+const QueueContextMenu = {
+  mounted() { this._bind(); },
+  updated() { this._bind(); },
+  _bind() {
+    this.el.oncontextmenu = (e) => {
+      e.preventDefault();
+      // Remove any existing menu
+      document.querySelector(".byob-ctx-menu")?.remove();
+
+      const url = this.el.dataset.url;
+      if (!url) return;
+
+      const menu = document.createElement("div");
+      menu.className = "byob-ctx-menu";
+      menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:99999;background:var(--b2,#1f2937);border:1px solid var(--b3,#374151);border-radius:6px;padding:4px 0;min-width:200px;font-size:12px;font-family:system-ui;box-shadow:0 4px 12px rgba(0,0,0,0.3);`;
+
+      // URL display (grayed, not clickable)
+      const urlItem = document.createElement("div");
+      urlItem.style.cssText = "padding:6px 12px;color:rgba(255,255,255,0.3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px;cursor:default;";
+      urlItem.textContent = url;
+      menu.appendChild(urlItem);
+
+      // Divider
+      const divider = document.createElement("div");
+      divider.style.cssText = "height:1px;background:rgba(255,255,255,0.1);margin:2px 0;";
+      menu.appendChild(divider);
+
+      // Copy URL option
+      const copyItem = document.createElement("div");
+      copyItem.style.cssText = "padding:6px 12px;color:rgba(255,255,255,0.8);cursor:pointer;";
+      copyItem.textContent = "Copy URL";
+      copyItem.onmouseenter = () => copyItem.style.background = "rgba(255,255,255,0.1)";
+      copyItem.onmouseleave = () => copyItem.style.background = "none";
+      copyItem.onclick = () => { navigator.clipboard.writeText(url); menu.remove(); };
+      menu.appendChild(copyItem);
+
+      document.body.appendChild(menu);
+
+      // Close on click outside
+      const close = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener("click", close); } };
+      setTimeout(() => document.addEventListener("click", close), 0);
+    };
+  },
+}
+
 const LocalTime = {
   mounted() { this._format() },
   updated() { this._format() },
@@ -130,63 +175,29 @@ if (!localStorage.getItem("byob_browser_id")) {
   localStorage.setItem("byob_browser_id", crypto.randomUUID())
 }
 
-// Detect duplicate room tabs — NEW tab takes over, OLD tab gets disabled
+// Detect duplicate room tabs — show a small notice, don't block
 (() => {
   const path = window.location.pathname;
   const roomMatch = path.match(/^\/room\/([a-z0-9]+)$/);
   if (!roomMatch) return;
 
-  const roomId = roomMatch[1];
-  const bc = new BroadcastChannel(`byob_room_${roomId}`);
+  const bc = new BroadcastChannel(`byob_room_${roomMatch[1]}`);
   const myId = crypto.randomUUID();
 
-  // Announce ourselves — this tells older tabs to yield
-  bc.postMessage({ type: "takeover", from: myId });
-
+  bc.postMessage({ type: "ping", from: myId });
   bc.onmessage = (e) => {
     if (e.data.from === myId) return;
-
-    if (e.data.type === "takeover") {
-      // A newer tab opened — we are the old tab, disable ourselves
-      disableTab();
-      // Acknowledge so the new tab knows we yielded
-      bc.postMessage({ type: "yielded", from: myId });
+    if (e.data.type === "ping") bc.postMessage({ type: "pong", from: myId });
+    if (e.data.type === "pong" && !document.getElementById("byob-dupe-notice")) {
+      const notice = document.createElement("div");
+      notice.id = "byob-dupe-notice";
+      notice.style.cssText = "position:fixed;bottom:8px;right:8px;z-index:9999;background:rgba(245,158,11,0.9);color:#000;padding:4px 12px;border-radius:6px;font-size:11px;font-family:system-ui;cursor:pointer;";
+      notice.textContent = "Room open in another tab";
+      notice.onclick = () => notice.remove();
+      document.body.appendChild(notice);
+      setTimeout(() => notice.remove(), 5000);
     }
   };
-
-  function disableTab() {
-    if (document.getElementById("byob-disabled-overlay")) return;
-
-    // Create full-page overlay
-    const overlay = document.createElement("div");
-    overlay.id = "byob-disabled-overlay";
-    overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;font-family:system-ui;color:white;";
-
-    const msg = document.createElement("p");
-    msg.style.cssText = "font-size:16px;font-weight:600;";
-    msg.textContent = "This room is now active in another tab";
-
-    const sub = document.createElement("p");
-    sub.style.cssText = "font-size:13px;opacity:0.6;";
-    sub.textContent = "Close this tab or click below to take it back";
-
-    const btn = document.createElement("button");
-    btn.textContent = "Use this tab instead";
-    btn.style.cssText = "background:#6366f1;color:white;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:14px;font-weight:500;";
-    btn.onclick = () => {
-      overlay.remove();
-      // Re-announce takeover so the other tab yields
-      bc.postMessage({ type: "takeover", from: myId });
-    };
-
-    const closeBtn = document.createElement("button");
-    closeBtn.textContent = "Close this tab";
-    closeBtn.style.cssText = "background:none;color:white;border:1px solid rgba(255,255,255,0.3);border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px;opacity:0.7;";
-    closeBtn.onclick = () => window.close();
-
-    overlay.append(msg, sub, btn, closeBtn);
-    document.body.appendChild(overlay);
-  }
 })();
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
@@ -197,7 +208,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     stored_username: localStorage.getItem("watchparty_username"),
     tab_id: localStorage.getItem("byob_browser_id"),
   }),
-  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort},
+  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu},
 })
 
 // Listen for username changes to persist to localStorage

@@ -70,6 +70,7 @@ const VideoPlayer = {
     });
     this.handleEvent("video:change", (data) => this._onVideoChange(data));
     this.handleEvent("queue:ended", () => this._onQueueEnded());
+    this.handleEvent("toast", (data) => this._showToast(data.text));
 
     // Size the player to fit viewport: cap height so aspect-ratio shrinks width
     this._sizePlayer();
@@ -706,6 +707,29 @@ const VideoPlayer = {
         }
       }
     }, 250);
+  },
+
+  _showToast(text) {
+    if (!text) return;
+    const existing = document.querySelector(".byob-action-toast");
+    if (existing) existing.remove();
+
+    const toast = document.createElement("div");
+    toast.className = "byob-action-toast";
+    toast.style.cssText = `
+      position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
+      padding:6px 16px;border-radius:8px;
+      background:rgba(0,0,0,0.8);color:rgba(255,255,255,0.8);
+      font-size:12px;z-index:9998;pointer-events:none;
+      animation:sb-toast-in 0.2s ease-out;
+      max-width:400px;text-align:center;
+    `;
+    toast.textContent = text;
+    document.body.appendChild(toast);
+    setTimeout(() => {
+      toast.style.animation = "sb-toast-out 0.3s ease-in forwards";
+      setTimeout(() => toast.remove(), 300);
+    }, 2500);
   },
 
   _showSkipToast(category) {

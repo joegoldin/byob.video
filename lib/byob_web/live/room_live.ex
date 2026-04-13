@@ -31,6 +31,7 @@ defmodule ByobWeb.RoomLive do
         url_preview_loading: false,
         url_focused: false,
         api_key: nil,
+        activity_log: [],
         sb_settings: Byob.RoomServer.default_sb_settings()
       )
 
@@ -61,6 +62,7 @@ defmodule ByobWeb.RoomLive do
           play_state: state.play_state,
           current_media: current_media,
           sb_settings: state.sb_settings,
+          activity_log: state.activity_log || [],
           api_key: RoomServer.get_api_key(pid)
         )
 
@@ -393,6 +395,14 @@ defmodule ByobWeb.RoomLive do
 
   def handle_info({:users_updated, users}, socket) do
     {:noreply, assign(socket, users: users)}
+  end
+
+  def handle_info({:activity_log_entry, entry}, socket) do
+    log = Enum.take([entry | socket.assigns.activity_log], 50)
+    socket = assign(socket, activity_log: log)
+    # Push toast to client
+    socket = push_event(socket, "toast", %{text: format_log_entry(entry)})
+    {:noreply, socket}
   end
 
   def handle_info(_msg, socket) do
@@ -794,6 +804,9 @@ defmodule ByobWeb.RoomLive do
                     :for={{item, idx} <- up_next}
                     draggable="true"
                     data-queue-idx={idx}
+                    data-url={item.url}
+                    phx-hook="QueueContextMenu"
+                    id={"queue-item-#{item.id}"}
                     class="flex items-center gap-2 p-2 rounded-lg text-sm hover:bg-base-300 transition-colors cursor-grab active:cursor-grabbing"
                   >
                     <span class="text-base-content/20 flex-shrink-0 text-xs select-none">⠿</span>
@@ -813,13 +826,13 @@ defmodule ByobWeb.RoomLive do
                       phx-value-index={idx}
                       class="flex-1 text-left min-w-0"
                     >
-                      <span :if={item.title} title={item.title} class="block text-sm line-clamp-3">
+                      <span :if={item.title} title={item.title} class="block text-xs font-medium line-clamp-2">
                         {item.title}
                       </span>
-                      <span title={item.url} class="block text-xs text-base-content/50 line-clamp-2">
+                      <span :if={!item.title} class="block text-xs text-base-content/50 truncate">
                         {item.url}
                       </span>
-                      <span :if={item.added_by_name} class="block text-xs text-base-content/40 mt-0.5">
+                      <span :if={item.added_by_name} class="block text-[10px] text-base-content/40 mt-0.5">
                         {item.added_by_name}
                         <time :if={format_time(item.added_at)} datetime={format_time(item.added_at)} phx-hook="LocalTime" id={"time-q-#{item.id}"}></time>
                       </span>
@@ -865,10 +878,10 @@ defmodule ByobWeb.RoomLive do
                   <span class="text-xs text-base-content/30">?</span>
                 </div>
                 <div class="flex-1 min-w-0">
-                  <span :if={entry.item.title} title={entry.item.title} class="block text-sm line-clamp-3">
+                  <span :if={entry.item.title} title={entry.item.title} class="block text-xs font-medium line-clamp-2">
                     {entry.item.title}
                   </span>
-                  <span title={entry.item.url} class="block text-xs text-base-content/50 line-clamp-2">
+                  <span :if={!entry.item.title} class="block text-xs text-base-content/50 truncate">
                     {entry.item.url}
                   </span>
                   <span class="block text-xs text-base-content/40 mt-0.5">
@@ -884,6 +897,26 @@ defmodule ByobWeb.RoomLive do
             >
               No history yet
             </p>
+          </div>
+        </div>
+
+        <%!-- Activity log --%>
+        <div class="card bg-base-200 mt-2 flex-shrink-0">
+          <div class="card-body p-3">
+            <h3 class="card-title text-xs text-base-content/40">Activity</h3>
+            <ul class="space-y-0.5 mt-1 max-h-32 overflow-y-auto text-xs text-base-content/50">
+              <li :for={entry <- Enum.take(@activity_log, 20)} class="truncate">
+                <span :if={entry.action == :joined} class="text-success/60">+</span>
+                <span :if={entry.action == :left} class="text-error/60">-</span>
+                <span :if={entry.action == :play} class="text-success/60">&#9654;</span>
+                <span :if={entry.action == :pause} class="text-warning/60">&#10074;&#10074;</span>
+                <span :if={entry.action == :added} class="text-primary/60">+</span>
+                <span :if={entry.action == :skipped} class="text-base-content/40">&#9197;</span>
+                <span :if={entry.action == :renamed} class="text-base-content/40">&#9998;</span>
+                {format_log_entry(entry)}
+              </li>
+              <li :if={@activity_log == []} class="text-base-content/30 italic">No activity yet</li>
+            </ul>
           </div>
         </div>
 
@@ -990,6 +1023,15 @@ defmodule ByobWeb.RoomLive do
 
     %{uri | query: URI.encode_query(params)} |> URI.to_string()
   end
+
+  defp format_log_entry(%{action: :joined, user: user}), do: "#{user} joined"
+  defp format_log_entry(%{action: :left, user: user}), do: "#{user} left"
+  defp format_log_entry(%{action: :play, user: user}), do: "#{user} played"
+  defp format_log_entry(%{action: :pause, user: user}), do: "#{user} paused"
+  defp format_log_entry(%{action: :added, user: user, detail: url}), do: "#{user} added #{url}"
+  defp format_log_entry(%{action: :skipped}), do: "Skipped to next"
+  defp format_log_entry(%{action: :renamed, detail: detail}), do: "Renamed: #{detail}"
+  defp format_log_entry(_), do: nil
 
   defp format_time(nil), do: nil
   defp format_time(%DateTime{} = dt), do: DateTime.to_iso8601(dt)

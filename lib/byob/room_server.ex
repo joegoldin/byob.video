@@ -31,8 +31,11 @@ defmodule Byob.RoomServer do
     sb_settings: %{},
     last_seek_at: %{},
     event_counts: %{},
-    rate_limit_ref: nil
+    rate_limit_ref: nil,
+    activity_log: []
   ]
+
+  @max_log_entries 200
 
   def default_sb_settings, do: @default_sb_settings
 
@@ -171,11 +174,13 @@ defmodule Byob.RoomServer do
       if current_item, do: fetch_sponsor_segments(current_item)
     end
 
+    state = log_activity(state, :joined, user_id)
     broadcast(state, {:users_updated, state.users})
     {:reply, {:ok, snapshot(state)}, state}
   end
 
   def handle_call({:leave, user_id}, _from, state) do
+    state = log_activity(state, :left, user_id)
     # Mark as disconnected instead of removing
     state =
       case Map.get(state.users, user_id) do
@@ -213,6 +218,7 @@ defmodule Byob.RoomServer do
         now = System.monotonic_time(:millisecond)
         state = %{state | play_state: :playing, current_time: position, last_sync_at: now}
         state = schedule_sync_correction(state)
+        state = log_activity(state, :play, user_id)
         broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
         {:reply, :ok, state}
     end
@@ -227,6 +233,7 @@ defmodule Byob.RoomServer do
         now = System.monotonic_time(:millisecond)
         state = %{state | play_state: :paused, current_time: position, last_sync_at: now}
         state = cancel_sync_correction(state)
+        state = log_activity(state, :pause, user_id)
         broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
         {:reply, :ok, state}
     end
@@ -256,6 +263,7 @@ defmodule Byob.RoomServer do
 
         item = %{item | added_by: user_id, added_by_name: added_by_name, added_at: DateTime.utc_now()}
         state = add_item_to_queue(state, item, mode)
+        state = log_activity(state, :added, user_id, url)
         broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
 
         # Fetch metadata async
@@ -293,6 +301,7 @@ defmodule Byob.RoomServer do
   end
 
   def handle_call(:skip, _from, state) do
+    state = log_activity(state, :skipped)
     state = advance_queue(state)
     {:reply, :ok, state}
   end
@@ -362,7 +371,9 @@ defmodule Byob.RoomServer do
   end
 
   def handle_call({:rename_user, user_id, new_username}, _from, state) do
+    old_name = get_in(state, [Access.key(:users), user_id, Access.key(:username)])
     state = put_in(state.users[user_id].username, new_username)
+    state = log_activity(state, :renamed, user_id, "#{old_name} → #{new_username}")
     broadcast(state, {:users_updated, state.users})
     {:reply, :ok, state}
   end
@@ -464,7 +475,8 @@ defmodule Byob.RoomServer do
       playback_rate: state.playback_rate,
       history: state.history,
       sponsor_segments: state.sponsor_segments,
-      sb_settings: state.sb_settings
+      sb_settings: state.sb_settings,
+      activity_log: Enum.take(state.activity_log, 50)
     }
   end
 
@@ -562,6 +574,20 @@ defmodule Byob.RoomServer do
       broadcast(state, {:queue_updated, %{queue: state.queue, current_index: nil}})
       state
     end
+  end
+
+  defp log_activity(state, action, user_id \\ nil, detail \\ nil) do
+    username = if user_id, do: get_in(state, [Access.key(:users), user_id, Access.key(:username)]), else: nil
+    entry = %{
+      action: action,
+      user: username || user_id,
+      detail: detail,
+      at: DateTime.utc_now()
+    }
+    log = Enum.take([entry | state.activity_log], @max_log_entries)
+    state = %{state | activity_log: log}
+    broadcast(state, {:activity_log_entry, entry})
+    state
   end
 
   defp schedule_sync_correction(state) do
