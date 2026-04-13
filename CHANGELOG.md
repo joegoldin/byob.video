@@ -2,6 +2,35 @@
 
 ---
 
+# v1.3.2
+
+- Fix double-skip on video end (position detector + YT_ENDED both fired)
+- Deduplicate ended events via `_endedFired` flag and server-side index matching
+
+---
+
+# v1.3.1
+
+- Muted autoplay fallback when joining a playing room (Chrome allows muted autoplay)
+- Auto-unmute once playback starts
+- Fly.io health check grace period to suppress startup warning
+
+---
+
+# v1.3.0
+
+## Activity log, toasts, and queue polish
+
+- Activity log in sidebar: tracks joins, leaves, play/pause, queue adds, skips, renames
+- Toast notifications at bottom of screen for room events
+- Right-click context menu on queue items: shows URL (grayed) + Copy URL
+- Hide URLs from queue display (title only, URL via context menu)
+- Smaller text for Up Next and History items
+- Simplified duplicate tab notice (non-blocking)
+- Attribution: Phoenix, daisyUI, Tailwind CSS credits in settings
+
+---
+
 # v1.2.0
 
 ## Queue UX and tab management
