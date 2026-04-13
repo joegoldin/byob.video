@@ -381,16 +381,17 @@ const VideoPlayer = {
       return;
     }
 
+    // Unmute before suppression check — autoplay mute must always be undone
+    if (state === YT_PLAYING && this._autoplayMuted && this.player.isMuted?.()) {
+      this.player.unMute();
+      this._autoplayMuted = false;
+    }
+
     if (stateName && this.suppression.shouldSuppress(stateName)) {
       return;
     }
 
     if (state === YT_PLAYING) {
-      // Unmute if we muted for autoplay
-      if (this.player.isMuted?.() && this._autoplayMuted) {
-        this.player.unMute();
-        this._autoplayMuted = false;
-      }
       this.expectedPlayState = "playing";
       const position = this.player.getCurrentTime();
       this.pushEvent("video:play", { position });
