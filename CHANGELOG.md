@@ -2,6 +2,17 @@
 
 ---
 
+# v1.3.4
+
+- Fix stale room_pid after deploy/restart: auto-reconnect via attach_hook
+- Always assign user_id (fallback anon ID if session missing)
+- Activity log shows video title for play/pause events
+- Activity log timestamps in local time
+- Prettier queue finished screen
+- Revert muted autoplay hack (caused volume issues)
+
+---
+
 # v1.3.3
 
 - Fix Fly.io deploy health check: add `/health` endpoint excluded from force_ssl

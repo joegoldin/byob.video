@@ -95,7 +95,9 @@ defmodule ByobWeb.RoomLive do
           socket
         end
 
-      {:ok, socket}
+      {:ok, attach_hook(socket, :ensure_pid, :handle_event, fn _event, _params, socket ->
+        {:cont, ensure_room_pid(socket)}
+      end)}
     else
       {:ok, socket}
     end
@@ -910,16 +912,23 @@ defmodule ByobWeb.RoomLive do
         <div class="card bg-base-200 mt-2 flex-shrink-0">
           <div class="card-body p-3">
             <h3 class="card-title text-xs text-base-content/40">Activity</h3>
-            <ul class="space-y-0.5 mt-1 max-h-32 overflow-y-auto text-xs text-base-content/50">
-              <li :for={entry <- Enum.take(@activity_log, 20)} class="truncate">
-                <span :if={entry.action == :joined} class="text-success/60">+</span>
-                <span :if={entry.action == :left} class="text-error/60">-</span>
-                <span :if={entry.action == :play} class="text-success/60">&#9654;</span>
-                <span :if={entry.action == :pause} class="text-warning/60">&#10074;&#10074;</span>
-                <span :if={entry.action == :added} class="text-primary/60">+</span>
-                <span :if={entry.action == :skipped} class="text-base-content/40">&#9197;</span>
-                <span :if={entry.action == :renamed} class="text-base-content/40">&#9998;</span>
-                {format_log_entry(entry)}
+            <ul class="space-y-0.5 mt-1 max-h-32 overflow-y-auto text-[11px] text-base-content/50 leading-relaxed">
+              <li :for={entry <- Enum.take(@activity_log, 30)} class="flex gap-1">
+                <span :if={entry.action == :joined} class="text-success/60 flex-shrink-0">+</span>
+                <span :if={entry.action == :left} class="text-error/60 flex-shrink-0">-</span>
+                <span :if={entry.action == :play} class="text-success/60 flex-shrink-0">&#9654;</span>
+                <span :if={entry.action == :pause} class="text-warning/60 flex-shrink-0">&#10074;&#10074;</span>
+                <span :if={entry.action == :added} class="text-primary/60 flex-shrink-0">+</span>
+                <span :if={entry.action == :skipped} class="text-base-content/40 flex-shrink-0">&#9197;</span>
+                <span :if={entry.action == :renamed} class="text-base-content/40 flex-shrink-0">&#9998;</span>
+                <span class="truncate flex-1">{format_log_entry(entry)}</span>
+                <time
+                  :if={entry.at}
+                  datetime={DateTime.to_iso8601(entry.at)}
+                  phx-hook="LocalTime"
+                  id={"log-#{System.unique_integer([:positive])}"}
+                  class="text-base-content/30 flex-shrink-0 whitespace-nowrap"
+                ></time>
               </li>
               <li :if={@activity_log == []} class="text-base-content/30 italic">No activity yet</li>
             </ul>
@@ -1032,12 +1041,30 @@ defmodule ByobWeb.RoomLive do
 
   defp format_log_entry(%{action: :joined, user: user}), do: "#{user} joined"
   defp format_log_entry(%{action: :left, user: user}), do: "#{user} left"
-  defp format_log_entry(%{action: :play, user: user}), do: "#{user} played"
-  defp format_log_entry(%{action: :pause, user: user}), do: "#{user} paused"
+  defp format_log_entry(%{action: :play, user: user, detail: nil}), do: "#{user} played"
+  defp format_log_entry(%{action: :play, user: user, detail: title}), do: "#{user} played #{title}"
+  defp format_log_entry(%{action: :pause, user: user, detail: nil}), do: "#{user} paused"
+  defp format_log_entry(%{action: :pause, user: user, detail: title}), do: "#{user} paused #{title}"
   defp format_log_entry(%{action: :added, user: user, detail: url}), do: "#{user} added #{url}"
   defp format_log_entry(%{action: :skipped}), do: "Skipped to next"
   defp format_log_entry(%{action: :renamed, detail: detail}), do: "Renamed: #{detail}"
   defp format_log_entry(_), do: nil
+
+  defp ensure_room_pid(socket) do
+    pid = socket.assigns[:room_pid]
+    if pid && Process.alive?(pid) do
+      socket
+    else
+      {:ok, new_pid} = RoomManager.ensure_room(socket.assigns.room_id)
+      # Re-join the room with the new pid
+      if socket.assigns[:user_id] do
+        username = socket.assigns[:username] || "Guest"
+        RoomServer.join(new_pid, socket.assigns.user_id, username)
+        Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{socket.assigns.room_id}")
+      end
+      assign(socket, room_pid: new_pid)
+    end
+  end
 
   defp format_time(nil), do: nil
   defp format_time(%DateTime{} = dt), do: DateTime.to_iso8601(dt)

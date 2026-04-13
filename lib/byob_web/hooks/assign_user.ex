@@ -5,10 +5,8 @@ defmodule ByobWeb.Hooks.AssignUser do
     user_id = session["user_id"]
     username = session["username"]
 
-    if user_id do
-      {:cont, assign(socket, user_id: user_id, username: username)}
-    else
-      {:cont, socket}
-    end
+    user_id = user_id || "anon:#{:crypto.strong_rand_bytes(8) |> Base.url_encode64(padding: false)}"
+    username = username || "Guest"
+    {:cont, assign(socket, user_id: user_id, username: username)}
   end
 end

@@ -218,7 +218,8 @@ defmodule Byob.RoomServer do
         now = System.monotonic_time(:millisecond)
         state = %{state | play_state: :playing, current_time: position, last_sync_at: now}
         state = schedule_sync_correction(state)
-        state = log_activity(state, :play, user_id)
+        current_title = current_media_title(state)
+        state = log_activity(state, :play, user_id, current_title)
         broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
         {:reply, :ok, state}
     end
@@ -233,7 +234,8 @@ defmodule Byob.RoomServer do
         now = System.monotonic_time(:millisecond)
         state = %{state | play_state: :paused, current_time: position, last_sync_at: now}
         state = cancel_sync_correction(state)
-        state = log_activity(state, :pause, user_id)
+        current_title = current_media_title(state)
+        state = log_activity(state, :pause, user_id, current_title)
         broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
         {:reply, :ok, state}
     end
@@ -573,6 +575,15 @@ defmodule Byob.RoomServer do
       broadcast(state, {:queue_ended, %{}})
       broadcast(state, {:queue_updated, %{queue: state.queue, current_index: nil}})
       state
+    end
+  end
+
+  defp current_media_title(state) do
+    case state.current_index do
+      nil -> nil
+      idx ->
+        item = Enum.at(state.queue, idx)
+        if item, do: item.title || item.url, else: nil
     end
   end
 
