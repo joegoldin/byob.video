@@ -149,18 +149,27 @@ const VideoPlayer = {
       this.reconcile.pauseFor(2000);
       this.reconcile.start();
 
-      // Retry play if autoplay was blocked — check at 500ms, 1s, 2s
+      // Retry play if autoplay was blocked — try muted as last resort
       const retryPlay = (attempt) => {
-        if (attempt > 3) return;
+        if (attempt > 4) return;
         setTimeout(() => {
           if (this.sourceType === "youtube") {
             const yt = this.player?.getPlayerState?.();
             if (yt !== undefined && yt !== YT_PLAYING && yt !== YT_BUFFERING) {
               this.suppression.suppress("playing");
+              // On last attempt, try muted autoplay
+              if (attempt === 4 && this.player.mute) {
+                this.player.mute();
+                this._autoplayMuted = true;
+              }
               this._play();
             }
           } else if (this.sourceType === "direct_url" && this.player?.paused) {
             this.suppression.suppress("playing");
+            if (attempt === 4) {
+              this.player.muted = true;
+              this._autoplayMuted = true;
+            }
             this._play();
           }
         }, attempt * 500);
@@ -168,6 +177,7 @@ const VideoPlayer = {
       retryPlay(1);
       retryPlay(2);
       retryPlay(3);
+      retryPlay(4);
     } else if (state.play_state === "paused") {
       this.expectedPlayState = "paused";
       this.suppression.suppress("paused");
@@ -257,12 +267,14 @@ const VideoPlayer = {
     container.id = "yt-player";
     this.el.appendChild(container);
 
+    this._autoplayMuted = shouldPlay;
     this.player = new YT.Player("yt-player", {
       videoId: videoId,
       width: "100%",
       height: "100%",
       playerVars: {
         autoplay: shouldPlay ? 1 : 0,
+        mute: shouldPlay ? 1 : 0,
         controls: 1,
         modestbranding: 1,
         rel: 0,
@@ -312,6 +324,11 @@ const VideoPlayer = {
     });
 
     video.addEventListener("play", () => {
+      // Unmute if we muted for autoplay
+      if (video.muted && this._autoplayMuted) {
+        video.muted = false;
+        this._autoplayMuted = false;
+      }
       if (this.suppression.shouldSuppress("playing")) return;
       this.expectedPlayState = "playing";
       const position = video.currentTime;
@@ -369,6 +386,11 @@ const VideoPlayer = {
     }
 
     if (state === YT_PLAYING) {
+      // Unmute if we muted for autoplay
+      if (this.player.isMuted?.() && this._autoplayMuted) {
+        this.player.unMute();
+        this._autoplayMuted = false;
+      }
       this.expectedPlayState = "playing";
       const position = this.player.getCurrentTime();
       this.pushEvent("video:play", { position });
