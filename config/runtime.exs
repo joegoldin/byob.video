@@ -42,6 +42,12 @@ if config_env() == :prod do
 
   config :byob, ByobWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
+    check_origin: [
+      "https://#{host}",
+      "https://byob-video.fly.dev",
+      "https://byob.video",
+      "https://www.byob.video"
+    ],
     http: [
       # Enable IPv6 and bind on all interfaces.
       # Set it to  {0, 0, 0, 0, 0, 0, 0, 1} for local network only access.
