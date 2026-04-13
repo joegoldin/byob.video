@@ -130,47 +130,62 @@ if (!localStorage.getItem("byob_browser_id")) {
   localStorage.setItem("byob_browser_id", crypto.randomUUID())
 }
 
-// Detect duplicate room tabs via BroadcastChannel
+// Detect duplicate room tabs — NEW tab takes over, OLD tab gets disabled
 (() => {
   const path = window.location.pathname;
   const roomMatch = path.match(/^\/room\/([a-z0-9]+)$/);
   if (!roomMatch) return;
 
   const roomId = roomMatch[1];
-  const channelName = `byob_room_${roomId}`;
-  const bc = new BroadcastChannel(channelName);
+  const bc = new BroadcastChannel(`byob_room_${roomId}`);
   const myId = crypto.randomUUID();
 
-  // Ask if anyone else has this room open
-  bc.postMessage({ type: "ping", from: myId });
+  // Announce ourselves — this tells older tabs to yield
+  bc.postMessage({ type: "takeover", from: myId });
 
   bc.onmessage = (e) => {
-    if (e.data.type === "ping" && e.data.from !== myId) {
-      // Someone else pinged — reply so they know we're here
-      bc.postMessage({ type: "pong", from: myId });
-    }
-    if (e.data.type === "pong" && e.data.from !== myId) {
-      // Another tab has this room open — show banner
-      showDupeBanner();
+    if (e.data.from === myId) return;
+
+    if (e.data.type === "takeover") {
+      // A newer tab opened — we are the old tab, disable ourselves
+      disableTab();
+      // Acknowledge so the new tab knows we yielded
+      bc.postMessage({ type: "yielded", from: myId });
     }
   };
 
-  function showDupeBanner() {
-    if (document.getElementById("byob-dupe-banner")) return;
-    const banner = document.createElement("div");
-    banner.id = "byob-dupe-banner";
-    banner.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:99999;background:#f59e0b;color:#000;text-align:center;padding:6px 16px;font-size:13px;font-family:system-ui;display:flex;align-items:center;justify-content:center;gap:8px;";
-    banner.textContent = "This room is already open in another tab.";
+  function disableTab() {
+    if (document.getElementById("byob-disabled-overlay")) return;
+
+    // Create full-page overlay
+    const overlay = document.createElement("div");
+    overlay.id = "byob-disabled-overlay";
+    overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.85);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;font-family:system-ui;color:white;";
+
+    const msg = document.createElement("p");
+    msg.style.cssText = "font-size:16px;font-weight:600;";
+    msg.textContent = "This room is now active in another tab";
+
+    const sub = document.createElement("p");
+    sub.style.cssText = "font-size:13px;opacity:0.6;";
+    sub.textContent = "Close this tab or click below to take it back";
+
     const btn = document.createElement("button");
-    btn.textContent = "Close this tab";
-    btn.style.cssText = "background:#000;color:#f59e0b;border:none;border-radius:4px;padding:2px 10px;cursor:pointer;font-size:12px;";
-    btn.onclick = () => window.close();
-    const dismiss = document.createElement("button");
-    dismiss.textContent = "\u00d7";
-    dismiss.style.cssText = "background:none;border:none;cursor:pointer;font-size:18px;opacity:0.6;padding:0 4px;";
-    dismiss.onclick = () => banner.remove();
-    banner.append(btn, dismiss);
-    document.body.prepend(banner);
+    btn.textContent = "Use this tab instead";
+    btn.style.cssText = "background:#6366f1;color:white;border:none;border-radius:6px;padding:8px 20px;cursor:pointer;font-size:14px;font-weight:500;";
+    btn.onclick = () => {
+      overlay.remove();
+      // Re-announce takeover so the other tab yields
+      bc.postMessage({ type: "takeover", from: myId });
+    };
+
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "Close this tab";
+    closeBtn.style.cssText = "background:none;color:white;border:1px solid rgba(255,255,255,0.3);border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px;opacity:0.7;";
+    closeBtn.onclick = () => window.close();
+
+    overlay.append(msg, sub, btn, closeBtn);
+    document.body.appendChild(overlay);
   }
 })();
 
