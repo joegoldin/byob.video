@@ -25,7 +25,7 @@ primary_region = "sjc"
     interval = "15s"
     method = "GET"
     timeout = "5s"
-    path = "/"
+    path = "/health"
 
 [mounts]
   source = "byob_data"

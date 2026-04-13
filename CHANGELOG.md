@@ -2,6 +2,13 @@
 
 ---
 
+# v1.3.3
+
+- Fix Fly.io deploy health check: add `/health` endpoint excluded from force_ssl
+- SSL redirect was causing health check redirect loop (301 to external domain)
+
+---
+
 # v1.3.2
 
 - Fix double-skip on video end (position detector + YT_ENDED both fired)

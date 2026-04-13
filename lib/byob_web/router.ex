@@ -33,6 +33,9 @@ defmodule ByobWeb.Router do
     plug ByobWeb.Plugs.RateLimit, limit: 20, window: 60, by: :api_key
   end
 
+  # Health check for Fly.io (excluded from force_ssl)
+  get "/health", ByobWeb.HealthController, :index
+
   scope "/", ByobWeb do
     pipe_through :browser
 
