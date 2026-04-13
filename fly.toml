@@ -5,6 +5,7 @@ primary_region = "sjc"
 
 [env]
   PHX_HOST = "byob.video"
+  PHX_SERVER = "true"
   BYOB_DB_PATH = "/data/byob.db"
 
 [http_service]
