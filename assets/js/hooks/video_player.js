@@ -149,25 +149,30 @@ const VideoPlayer = {
       this.reconcile.pauseFor(2000);
       this.reconcile.start();
 
-      // Retry play if autoplay was blocked
-      const retryPlay = (attempt) => {
-        if (attempt > 3) return;
+      // Retry play if autoplay was blocked, then show click-to-play overlay
+      const checkAndRetry = (attempt) => {
         setTimeout(() => {
+          let isPlaying = false;
           if (this.sourceType === "youtube") {
             const yt = this.player?.getPlayerState?.();
-            if (yt !== undefined && yt !== YT_PLAYING && yt !== YT_BUFFERING) {
+            isPlaying = yt === YT_PLAYING || yt === YT_BUFFERING;
+          } else if (this.sourceType === "direct_url") {
+            isPlaying = this.player && !this.player.paused;
+          }
+
+          if (!isPlaying) {
+            if (attempt < 3) {
               this.suppression.suppress("playing");
               this._play();
+              checkAndRetry(attempt + 1);
+            } else {
+              // Autoplay blocked — show click-to-play overlay
+              this._showClickToPlay(position);
             }
-          } else if (this.sourceType === "direct_url" && this.player?.paused) {
-            this.suppression.suppress("playing");
-            this._play();
           }
         }, attempt * 500);
       };
-      retryPlay(1);
-      retryPlay(2);
-      retryPlay(3);
+      checkAndRetry(1);
     } else if (state.play_state === "paused") {
       this.expectedPlayState = "paused";
       this.suppression.suppress("paused");
@@ -399,6 +404,8 @@ const VideoPlayer = {
 
   _onSyncPlay(data) {
     this.expectedPlayState = "playing";
+    // Remove click-to-play overlay if present
+    this.el.querySelector(".byob-click-to-play")?.remove();
     if (data.user_id === this.userId) return;
     this.suppression.suppress("playing");
     this._seekTo(data.time);
@@ -729,6 +736,35 @@ const VideoPlayer = {
         }
       }
     }, 250);
+  },
+
+  _showClickToPlay(position) {
+    // Remove any existing overlay
+    this.el.querySelector(".byob-click-to-play")?.remove();
+
+    const overlay = document.createElement("div");
+    overlay.className = "byob-click-to-play";
+    overlay.style.cssText = "position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;cursor:pointer;background:rgba(0,0,0,0.4);";
+
+    const btn = document.createElement("div");
+    btn.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:8px;";
+    btn.innerHTML = `
+      <div style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.9);display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="#000"><polygon points="6,3 20,12 6,21"/></svg>
+      </div>
+      <span style="color:white;font-size:14px;font-weight:600;text-shadow:0 1px 3px rgba(0,0,0,0.5);">Click to join playback</span>
+    `;
+    overlay.appendChild(btn);
+
+    overlay.addEventListener("click", () => {
+      overlay.remove();
+      this.suppression.suppress("playing");
+      if (position != null) this._seekTo(position);
+      this._play();
+      this.reconcile.start();
+    }, { once: true });
+
+    this.el.appendChild(overlay);
   },
 
   _showToast(text) {
