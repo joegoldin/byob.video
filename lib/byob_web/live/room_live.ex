@@ -955,6 +955,7 @@ defmodule ByobWeb.RoomLive do
                 <span :if={entry.action == :pause} class="text-warning/60 flex-shrink-0">&#10074;&#10074;</span>
                 <span :if={entry.action == :added} class="text-primary/60 flex-shrink-0">+</span>
                 <span :if={entry.action == :skipped} class="text-base-content/40 flex-shrink-0">&#9197;</span>
+                <span :if={entry.action == :seeked} class="text-info/60 flex-shrink-0">&#8644;</span>
                 <span :if={entry.action == :renamed} class="text-base-content/40 flex-shrink-0">&#9998;</span>
                 <span class="flex-1 line-clamp-2">{format_log_entry(entry)}</span>
                 <time
@@ -1082,6 +1083,7 @@ defmodule ByobWeb.RoomLive do
   defp format_log_entry(%{action: :pause, user: user, detail: nil}), do: "#{user} paused"
   defp format_log_entry(%{action: :pause, user: user, detail: title}), do: "#{user} paused #{title}"
   defp format_log_entry(%{action: :added, user: user, detail: url}), do: "#{user} added #{url}"
+  defp format_log_entry(%{action: :seeked, user: user, detail: detail}), do: "#{user} seeked #{detail}"
   defp format_log_entry(%{action: :skipped}), do: "Skipped to next"
   defp format_log_entry(%{action: :renamed, detail: detail}), do: "Renamed: #{detail}"
   defp format_log_entry(_), do: nil

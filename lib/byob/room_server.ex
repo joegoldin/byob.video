@@ -248,7 +248,9 @@ defmodule Byob.RoomServer do
     if last != nil and now - last < 500 do
       {:reply, {:error, :debounced}, state}
     else
+      old_pos = current_position(state)
       state = %{state | current_time: position, last_sync_at: now, last_seek_at: Map.put(state.last_seek_at, user_id, now)}
+      state = log_activity(state, :seeked, user_id, "#{format_seconds(old_pos)} → #{format_seconds(position)}")
       broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
       {:reply, :ok, state}
     end
@@ -607,6 +609,13 @@ defmodule Byob.RoomServer do
       state
     end
   end
+
+  defp format_seconds(s) when is_number(s) do
+    mins = trunc(s / 60)
+    secs = trunc(rem(trunc(s), 60))
+    "#{mins}:#{String.pad_leading(Integer.to_string(secs), 2, "0")}"
+  end
+  defp format_seconds(_), do: "0:00"
 
   defp current_media_title(state) do
     case state.current_index do
