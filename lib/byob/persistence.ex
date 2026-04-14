@@ -6,6 +6,8 @@ defmodule Byob.Persistence do
 
   use GenServer
 
+  alias Byob.DB.Migrations
+
   @default_db_path "priv/byob.db"
   defp db_path, do: System.get_env("BYOB_DB_PATH") || @default_db_path
   @max_rooms 100
@@ -53,6 +55,13 @@ defmodule Byob.Persistence do
     )
     """)
 
+    # Add schema_version column (idempotent — fails silently if already exists)
+    try do
+      Exqlite.Sqlite3.execute(db, "ALTER TABLE rooms ADD COLUMN schema_version INTEGER DEFAULT 1")
+    rescue
+      _ -> :ok
+    end
+
     {:ok, %{db: db}}
   end
 
@@ -65,8 +74,8 @@ defmodule Byob.Persistence do
     now = System.system_time(:second)
 
     {:ok, stmt} = Exqlite.Sqlite3.prepare(db,
-      "INSERT OR REPLACE INTO rooms (room_id, state, updated_at) VALUES (?1, ?2, ?3)")
-    :ok = Exqlite.Sqlite3.bind(stmt, [room_id, blob, now])
+      "INSERT OR REPLACE INTO rooms (room_id, state, updated_at, schema_version) VALUES (?1, ?2, ?3, ?4)")
+    :ok = Exqlite.Sqlite3.bind(stmt, [room_id, blob, now, Migrations.current_version()])
     Exqlite.Sqlite3.step(db, stmt)
     Exqlite.Sqlite3.release(db, stmt)
 
@@ -83,13 +92,16 @@ defmodule Byob.Persistence do
 
   @impl true
   def handle_call({:load_room, room_id}, _from, %{db: db} = s) do
-    {:ok, stmt} = Exqlite.Sqlite3.prepare(db, "SELECT state FROM rooms WHERE room_id = ?1")
+    {:ok, stmt} = Exqlite.Sqlite3.prepare(db,
+      "SELECT state, schema_version FROM rooms WHERE room_id = ?1")
     :ok = Exqlite.Sqlite3.bind(stmt, [room_id])
 
     result =
       case Exqlite.Sqlite3.step(db, stmt) do
-        {:row, [blob]} when is_binary(blob) ->
-          {:ok, :erlang.binary_to_term(blob, [:safe])}
+        {:row, [blob, schema_version]} when is_binary(blob) ->
+          loaded_version = schema_version || 1
+          state = :erlang.binary_to_term(blob, [:safe])
+          {:ok, Migrations.run(state, loaded_version, Migrations.current_version())}
         _ ->
           :not_found
       end
