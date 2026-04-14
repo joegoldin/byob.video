@@ -2,6 +2,7 @@ defmodule ByobWeb.RoomLive do
   use ByobWeb, :live_view
 
   alias Byob.{RoomManager, RoomServer}
+  alias ByobWeb.RoomLive.UrlPreview
 
   def mount(%{"id" => room_id}, _session, socket) do
     if not Regex.match?(~r/^[a-z0-9]{1,16}$/, room_id) do
@@ -119,94 +120,18 @@ defmodule ByobWeb.RoomLive do
 
   # Client events
 
-  def handle_event("url:focus", _params, socket) do
-    {:noreply, assign(socket, url_focused: true)}
-  end
-
-  def handle_event("url:blur", _params, socket) do
-    {:noreply, assign(socket, url_focused: false)}
-  end
-
-  def handle_event("preview_url", %{"url" => url}, socket) do
-    url = String.trim(url)
-
-    if url == "" do
-      {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
-    else
-      case Byob.MediaItem.parse_url(url) do
-        {:ok, %{source_type: :youtube}} ->
-          socket = assign(socket, url_preview_loading: true, url_preview: nil, preview_url: url)
-          pid = self()
-
-          Task.start(fn ->
-            case Byob.OEmbed.fetch_youtube(url) do
-              {:ok, meta} -> send(pid, {:url_preview_result, meta})
-              _ -> send(pid, {:url_preview_result, nil})
-            end
-          end)
-
-          {:noreply, socket}
-
-        {:ok, %{source_type: :direct_url}} ->
-          # Direct video URLs don't need metadata fetching
-          filename = url |> URI.parse() |> Map.get(:path, "") |> Path.basename()
-          preview = %{
-            source_type: :direct_url,
-            title: filename,
-            thumbnail_url: nil,
-            url: url
-          }
-          {:noreply, assign(socket, url_preview: preview, url_preview_loading: false, preview_url: url)}
-
-        {:ok, %{source_type: :extension_required}} ->
-          socket = assign(socket, url_preview_loading: true, url_preview: nil, preview_url: url)
-          me = self()
-
-          Task.start(fn ->
-            case Byob.OEmbed.fetch_opengraph(url) do
-              {:ok, meta} ->
-                send(me, {:url_preview_result, Map.put(meta, :source_type, :extension_required)})
-              _ ->
-                send(me, {:url_preview_result, %{title: nil, thumbnail_url: nil, source_type: :extension_required}})
-            end
-          end)
-
-          {:noreply, socket}
-
-        _ ->
-          {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
-      end
-    end
-  end
+  def handle_event("url:focus", params, socket), do: UrlPreview.handle_url_focus(params, socket)
+  def handle_event("url:blur", params, socket), do: UrlPreview.handle_url_blur(params, socket)
+  def handle_event("preview_url", params, socket), do: UrlPreview.handle_preview_url(params, socket)
 
   def handle_event("history:play", %{"url" => url}, socket) do
     RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :now)
     {:noreply, socket}
   end
 
-  def handle_event("add_url", %{"url" => url, "mode" => mode}, socket) do
-    mode_atom = if mode == "now", do: :now, else: :queue
-    RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, mode_atom)
-    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
-  end
-
-  def handle_event("preview:play_now", _params, socket) do
-    if url = socket.assigns.preview_url do
-      source_type = if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
-      Byob.Analytics.video_added(socket.assigns[:browser_id] || socket.assigns.user_id, socket.assigns.room_id, source_type)
-      RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :now)
-    end
-    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
-  end
-
-  def handle_event("preview:queue", _params, socket) do
-    if url = socket.assigns.preview_url do
-      source_type = if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
-      Byob.Analytics.video_added(socket.assigns[:browser_id] || socket.assigns.user_id, socket.assigns.room_id, source_type)
-      RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :queue)
-    end
-    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
-  end
+  def handle_event("add_url", params, socket), do: UrlPreview.handle_add_url(params, socket)
+  def handle_event("preview:play_now", params, socket), do: UrlPreview.handle_play_now(params, socket)
+  def handle_event("preview:queue", params, socket), do: UrlPreview.handle_queue(params, socket)
 
   def handle_event("analytics:has_extension", _params, socket) do
     Byob.Analytics.identify(socket.assigns[:browser_id] || socket.assigns.user_id, %{has_extension: true})
@@ -421,24 +346,7 @@ defmodule ByobWeb.RoomLive do
     {:noreply, push_event(socket, "video:change", serialize_media_item(data))}
   end
 
-  def handle_info({:url_preview_result, nil}, socket) do
-    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
-  end
-
-  def handle_info({:url_preview_result, nil}, socket) do
-    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
-  end
-
-  def handle_info({:url_preview_result, meta}, socket) do
-    preview = %{
-      title: meta[:title],
-      thumbnail_url: meta[:thumbnail_url],
-      author_name: meta[:author_name],
-      source_type: meta[:source_type] || :youtube
-    }
-
-    {:noreply, assign(socket, url_preview: preview, url_preview_loading: false)}
-  end
+  def handle_info({:url_preview_result, result}, socket), do: UrlPreview.handle_preview_result(result, socket)
 
   def handle_info({:sb_settings_updated, sb_settings}, socket) do
     # Push updated settings to JS for the auto-skip logic
@@ -1089,21 +997,6 @@ defmodule ByobWeb.RoomLive do
   end
 
   # Private helpers
-
-  defp extension_open_url(url, room_id) do
-    # Append watchparty params to the URL so the content script can detect it
-    uri = URI.parse(url)
-    params = URI.decode_query(uri.query || "")
-    server_url = ByobWeb.Endpoint.url()
-
-    params =
-      Map.merge(params, %{
-        "watchparty_room" => room_id,
-        "watchparty_server" => server_url
-      })
-
-    %{uri | query: URI.encode_query(params)} |> URI.to_string()
-  end
 
   defp format_log_entry(%{action: :joined, user: user}), do: "#{user} joined"
   defp format_log_entry(%{action: :left, user: user}), do: "#{user} left"
