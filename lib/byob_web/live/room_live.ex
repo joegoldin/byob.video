@@ -29,6 +29,7 @@ defmodule ByobWeb.RoomLive do
         editing_username: false,
         url_preview: nil,
         url_preview_loading: false,
+        preview_url: nil,
         url_focused: false,
         api_key: nil,
         activity_log: [],
@@ -125,11 +126,11 @@ defmodule ByobWeb.RoomLive do
     url = String.trim(url)
 
     if url == "" do
-      {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
+      {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
     else
       case Byob.MediaItem.parse_url(url) do
         {:ok, %{source_type: :youtube}} ->
-          socket = assign(socket, url_preview_loading: true, url_preview: nil)
+          socket = assign(socket, url_preview_loading: true, url_preview: nil, preview_url: url)
           pid = self()
 
           Task.start(fn ->
@@ -150,10 +151,10 @@ defmodule ByobWeb.RoomLive do
             thumbnail_url: nil,
             url: url
           }
-          {:noreply, assign(socket, url_preview: preview, url_preview_loading: false)}
+          {:noreply, assign(socket, url_preview: preview, url_preview_loading: false, preview_url: url)}
 
         {:ok, %{source_type: :extension_required}} ->
-          socket = assign(socket, url_preview_loading: true, url_preview: nil)
+          socket = assign(socket, url_preview_loading: true, url_preview: nil, preview_url: url)
           me = self()
 
           Task.start(fn ->
@@ -181,7 +182,21 @@ defmodule ByobWeb.RoomLive do
   def handle_event("add_url", %{"url" => url, "mode" => mode}, socket) do
     mode_atom = if mode == "now", do: :now, else: :queue
     RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, mode_atom)
-    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
+    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
+  end
+
+  def handle_event("preview:play_now", _params, socket) do
+    if url = socket.assigns.preview_url do
+      RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :now)
+    end
+    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
+  end
+
+  def handle_event("preview:queue", _params, socket) do
+    if url = socket.assigns.preview_url do
+      RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :queue)
+    end
+    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
   end
 
   def handle_event("video:play", %{"position" => position}, socket) do
@@ -528,10 +543,10 @@ defmodule ByobWeb.RoomLive do
                 </p>
               </div>
               <div class="flex gap-1 flex-shrink-0">
-                <button type="submit" form="url-form" name="mode" value="now" class="btn btn-primary btn-xs">
+                <button type="button" phx-click="preview:play_now" class="btn btn-primary btn-xs">
                   Play Now
                 </button>
-                <button type="submit" form="url-form" name="mode" value="queue" class="btn btn-outline btn-xs">
+                <button type="button" phx-click="preview:queue" class="btn btn-outline btn-xs">
                   Queue
                 </button>
               </div>
@@ -553,10 +568,10 @@ defmodule ByobWeb.RoomLive do
                 <p class="text-xs text-base-content/50">Direct video file</p>
               </div>
               <div class="flex gap-1 flex-shrink-0">
-                <button type="submit" form="url-form" name="mode" value="now" class="btn btn-primary btn-xs">
+                <button type="button" phx-click="preview:play_now" class="btn btn-primary btn-xs">
                   Play Now
                 </button>
-                <button type="submit" form="url-form" name="mode" value="queue" class="btn btn-outline btn-xs">
+                <button type="button" phx-click="preview:queue" class="btn btn-outline btn-xs">
                   Queue
                 </button>
               </div>
@@ -588,10 +603,10 @@ defmodule ByobWeb.RoomLive do
                 </p>
               </div>
               <div class="flex gap-1 flex-shrink-0">
-                <button type="submit" form="url-form" name="mode" value="now" class="btn btn-primary btn-xs">
+                <button type="button" phx-click="preview:play_now" class="btn btn-primary btn-xs">
                   Play Now
                 </button>
-                <button type="submit" form="url-form" name="mode" value="queue" class="btn btn-outline btn-xs">
+                <button type="button" phx-click="preview:queue" class="btn btn-outline btn-xs">
                   Queue
                 </button>
               </div>
