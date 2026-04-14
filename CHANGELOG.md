@@ -2,6 +2,13 @@
 
 ---
 
+# v1.4.1
+
+- Fix Play Now / Queue buttons requiring multiple clicks (race condition between blur and form submit)
+- Buttons now use phx-click with stored URL — no form submission, deterministic single-click behavior
+
+---
+
 # v1.4.0
 
 ## Queue management and embed fallback
