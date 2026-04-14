@@ -230,6 +230,25 @@ window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 // connect if there are any LiveViews on the page
 liveSocket.connect()
 
+// Auto-reload on server disconnect (deploy/restart)
+// LiveView tries to reconnect, but if the page JS is stale after deploy, force reload
+let disconnectedAt = null;
+window.addEventListener("phx:page-loading-start", (info) => {
+  if (info.detail?.kind === "error") {
+    disconnectedAt = disconnectedAt || Date.now();
+  }
+});
+window.addEventListener("phx:page-loading-stop", () => {
+  disconnectedAt = null;
+});
+// If disconnected for >5s, reload to get fresh assets
+setInterval(() => {
+  if (disconnectedAt && Date.now() - disconnectedAt > 5000) {
+    disconnectedAt = null;
+    window.location.reload();
+  }
+}, 2000);
+
 // expose liveSocket on window for web console debug logs and latency simulation:
 // >> liveSocket.enableDebug()
 // >> liveSocket.enableLatencySim(1000)  // enabled for duration of browser session
