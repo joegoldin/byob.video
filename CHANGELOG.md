@@ -2,6 +2,20 @@
 
 ---
 
+# v2.0.3
+
+- Embed-blocked UI: detects extension, shows "Watch on YouTube" or "Get Extension" with correct store link
+- Auto-detects extension install and updates UI without refresh (polls every 2s)
+- No click-to-play overlay on embed-blocked videos
+- Analytics for embed-blocked events with source_type
+- Detect seeks while playing, suppress duplicate play/pause log spam
+- Hide YouTube URLs in sidebar when title available
+- Auto-reload page after 5s server disconnect
+- Concise README with extension store links
+- Updated privacy policy
+
+---
+
 # v2.0.2
 
 - Detect seeks while playing (3s threshold) — no longer missed in activity log

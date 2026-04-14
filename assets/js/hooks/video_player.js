@@ -195,6 +195,7 @@ const VideoPlayer = {
     this._lastTitle = mediaItem?.title || url;
     this._lastThumb = mediaItem?.thumbnail_url;
     this._embedBlocked = false;
+    if (this._extPollInterval) { clearInterval(this._extPollInterval); this._extPollInterval = null; }
 
     if (sourceType === "youtube") {
       await this._loadYouTube(sourceId);
@@ -495,6 +496,18 @@ const VideoPlayer = {
 
       this.el.innerHTML = "";
       this.el.appendChild(container);
+
+      // Poll for extension install — update UI when detected
+      if (!hasExtension) {
+        this._extPollInterval = setInterval(() => {
+          if (document.documentElement.hasAttribute("data-byob-extension")) {
+            clearInterval(this._extPollInterval);
+            this._extPollInterval = null;
+            // Re-render with extension UI
+            this._onYTError({ data: code });
+          }
+        }, 2000);
+      }
 
       // Notify server this is now extension-required
       this.pushEvent("video:embed_blocked", { video_id: videoId, url: url });
