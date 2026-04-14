@@ -2,6 +2,12 @@
 
 ---
 
+# v3.3.3
+
+- Clear button visible while input is focused (no DOM churn on re-render)
+
+---
+
 # v3.3.2
 
 - Clear button stays visible while input is focused
