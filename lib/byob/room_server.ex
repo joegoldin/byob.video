@@ -223,12 +223,14 @@ defmodule Byob.RoomServer do
         state = if was_paused do
           title = current_media_title(state)
           added_by = current_media_added_by(state)
-          detail = cond do
-            position < 2 && added_by && title -> "#{title} (added by #{added_by})"
-            title -> title
-            true -> nil
+          if position < 2 && title do
+            # Video starting from beginning — log as "now playing" not "user played"
+            detail = if added_by, do: "#{title} (added by #{added_by})", else: title
+            log_activity(state, :now_playing, nil, detail)
+          else
+            # Resume from pause — log who resumed
+            log_activity(state, :play, user_id, title)
           end
-          log_activity(state, :play, user_id, detail)
         else
           state
         end
@@ -572,6 +574,10 @@ defmodule Byob.RoomServer do
         now = System.monotonic_time(:millisecond)
         state = %{state | queue: queue, current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
         state = add_to_history(state, item)
+        added_by = item.added_by_name
+        title = item.title || item.url
+        detail = if added_by, do: "#{title} (added by #{added_by})", else: title
+        state = log_activity(state, :now_playing, nil, detail)
         state = schedule_sync_correction(state)
         fetch_sponsor_segments(item)
         broadcast(state, {:video_changed, %{media_item: item, index: 0}})

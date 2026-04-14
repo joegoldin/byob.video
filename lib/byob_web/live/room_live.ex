@@ -968,6 +968,7 @@ defmodule ByobWeb.RoomLive do
               <li :for={entry <- Enum.reverse(Enum.take(@activity_log, 30))} class="flex gap-1">
                 <span :if={entry.action == :joined} class="text-success/60 flex-shrink-0">+</span>
                 <span :if={entry.action == :left} class="text-error/60 flex-shrink-0">-</span>
+                <span :if={entry.action == :now_playing} class="text-primary/60 flex-shrink-0">&#9654;</span>
                 <span :if={entry.action == :play} class="text-success/60 flex-shrink-0">&#9654;</span>
                 <span :if={entry.action == :pause} class="text-warning/60 flex-shrink-0">&#10074;&#10074;</span>
                 <span :if={entry.action == :added} class="text-primary/60 flex-shrink-0">+</span>
@@ -1095,8 +1096,9 @@ defmodule ByobWeb.RoomLive do
 
   defp format_log_entry(%{action: :joined, user: user}), do: "#{user} joined"
   defp format_log_entry(%{action: :left, user: user}), do: "#{user} left"
-  defp format_log_entry(%{action: :play, user: user, detail: nil}), do: "#{user} played"
-  defp format_log_entry(%{action: :play, user: user, detail: title}), do: "#{user} played #{title}"
+  defp format_log_entry(%{action: :now_playing, detail: detail}), do: "Now playing: #{detail}"
+  defp format_log_entry(%{action: :play, user: user, detail: nil}), do: "#{user} resumed"
+  defp format_log_entry(%{action: :play, user: user, detail: title}), do: "#{user} resumed #{title}"
   defp format_log_entry(%{action: :pause, user: user, detail: nil}), do: "#{user} paused"
   defp format_log_entry(%{action: :pause, user: user, detail: title}), do: "#{user} paused #{title}"
   defp format_log_entry(%{action: :added, user: user, detail: url}), do: "#{user} added #{url}"
