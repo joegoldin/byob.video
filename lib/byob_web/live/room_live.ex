@@ -518,7 +518,7 @@ defmodule ByobWeb.RoomLive do
                 class="w-16 h-10 object-cover rounded flex-shrink-0"
               />
               <div class="flex-1 min-w-0">
-                <p class="text-sm font-medium truncate">{@url_preview.title}</p>
+                <p class="text-sm font-medium line-clamp-3">{@url_preview.title}</p>
                 <p :if={@url_preview.author_name} class="text-xs text-base-content/50">
                   {@url_preview.author_name}
                 </p>
@@ -544,7 +544,7 @@ defmodule ByobWeb.RoomLive do
                 </svg>
               </div>
               <div class="flex-1 min-w-0">
-                <p :if={@url_preview.title} class="text-sm font-medium truncate">{@url_preview.title}</p>
+                <p :if={@url_preview.title} class="text-sm font-medium line-clamp-3">{@url_preview.title}</p>
                 <p :if={!@url_preview.title} class="text-sm font-medium truncate">{@url_preview.url || "Direct video"}</p>
                 <p class="text-xs text-base-content/50">Direct video file</p>
               </div>
@@ -574,7 +574,7 @@ defmodule ByobWeb.RoomLive do
                 <span class="text-xs text-base-content/30">EXT</span>
               </div>
               <div class="flex-1 min-w-0">
-                <p :if={@url_preview.title} class="text-sm font-medium truncate">{@url_preview.title}</p>
+                <p :if={@url_preview.title} class="text-sm font-medium line-clamp-3">{@url_preview.title}</p>
                 <p :if={!@url_preview.title} class="text-sm font-medium">External site</p>
                 <p class="text-xs text-warning byob-no-ext">
                   <a href="https://github.com/joegoldin/byob.video" target="_blank" class="underline">
