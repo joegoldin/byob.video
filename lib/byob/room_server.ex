@@ -221,7 +221,14 @@ defmodule Byob.RoomServer do
         state = schedule_sync_correction(state)
         # Only log play if actually transitioning from paused (not seek-resume)
         state = if was_paused do
-          log_activity(state, :play, user_id, current_media_title(state))
+          title = current_media_title(state)
+          added_by = current_media_added_by(state)
+          detail = cond do
+            position < 2 && added_by && title -> "#{title} (added by #{added_by})"
+            title -> title
+            true -> nil
+          end
+          log_activity(state, :play, user_id, detail)
         else
           state
         end
@@ -632,6 +639,15 @@ defmodule Byob.RoomServer do
     "#{mins}:#{String.pad_leading(Integer.to_string(secs), 2, "0")}"
   end
   defp format_seconds(_), do: "0:00"
+
+  defp current_media_added_by(state) do
+    case state.current_index do
+      nil -> nil
+      idx ->
+        item = Enum.at(state.queue, idx)
+        if item, do: item.added_by_name, else: nil
+    end
+  end
 
   defp current_media_title(state) do
     case state.current_index do
