@@ -2,7 +2,7 @@ defmodule ByobWeb.RoomLive do
   use ByobWeb, :live_view
 
   alias Byob.{RoomManager, RoomServer}
-  alias ByobWeb.RoomLive.{Playback, UrlPreview}
+  alias ByobWeb.RoomLive.{Playback, Queue, UrlPreview}
 
   def mount(%{"id" => room_id}, _session, socket) do
     if not Regex.match?(~r/^[a-z0-9]{1,16}$/, room_id) do
@@ -124,10 +124,7 @@ defmodule ByobWeb.RoomLive do
   def handle_event("url:blur", params, socket), do: UrlPreview.handle_url_blur(params, socket)
   def handle_event("preview_url", params, socket), do: UrlPreview.handle_preview_url(params, socket)
 
-  def handle_event("history:play", %{"url" => url}, socket) do
-    RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :now)
-    {:noreply, socket}
-  end
+  def handle_event("history:play", params, socket), do: Queue.handle_history_play(params, socket)
 
   def handle_event("add_url", params, socket), do: UrlPreview.handle_add_url(params, socket)
   def handle_event("preview:play_now", params, socket), do: UrlPreview.handle_play_now(params, socket)
@@ -140,34 +137,12 @@ defmodule ByobWeb.RoomLive do
   def handle_event("video:embed_blocked", params, socket), do: Playback.handle_embed_blocked(params, socket)
   def handle_event("video:ended", params, socket), do: Playback.handle_ended(params, socket)
 
-  def handle_event("queue:skip", _params, socket) do
-    RoomServer.skip(socket.assigns.room_pid)
-    {:noreply, socket}
-  end
-
-  def handle_event("queue:remove", %{"item_id" => item_id}, socket) do
-    RoomServer.remove_from_queue(socket.assigns.room_pid, item_id)
-    {:noreply, socket}
-  end
-
-  def handle_event("queue:play_index", %{"index" => index}, socket) do
-    RoomServer.play_index(socket.assigns.room_pid, String.to_integer(index))
-    {:noreply, socket}
-  end
-
-  def handle_event("queue:reorder", %{"from" => from, "to" => to}, socket) do
-    RoomServer.reorder_queue(socket.assigns.room_pid, String.to_integer(from), String.to_integer(to))
-    {:noreply, socket}
-  end
-
-  def handle_event("switch_tab", %{"tab" => tab}, socket) do
-    {:noreply, assign(socket, sidebar_tab: String.to_existing_atom(tab))}
-  end
-
-  def handle_event("sb:update", %{"category" => category, "action" => action}, socket) do
-    RoomServer.update_sb_settings(socket.assigns.room_pid, category, action)
-    {:noreply, socket}
-  end
+  def handle_event("queue:skip", params, socket), do: Queue.handle_skip(params, socket)
+  def handle_event("queue:remove", params, socket), do: Queue.handle_remove(params, socket)
+  def handle_event("queue:play_index", params, socket), do: Queue.handle_play_index(params, socket)
+  def handle_event("queue:reorder", params, socket), do: Queue.handle_reorder(params, socket)
+  def handle_event("switch_tab", params, socket), do: Queue.handle_switch_tab(params, socket)
+  def handle_event("sb:update", params, socket), do: Queue.handle_sb_update(params, socket)
 
   def handle_event("username:edit", _params, socket) do
     {:noreply, assign(socket, editing_username: true)}
