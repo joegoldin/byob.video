@@ -2,6 +2,17 @@
 
 ---
 
+# v3.1.0
+
+- Comments panel fills available space below video (responsive height)
+- Comments persist across page reloads (re-fetched on mount)
+- URL preview dropdown hides on blur without clearing data
+- Extension required link detects browser and opens correct store page
+- Theme toggle syncs with saved preference on page load
+- Removed comment count from comments header
+
+---
+
 # v3.0.0
 
 ### Architecture refactor
