@@ -211,7 +211,7 @@ defmodule ByobWeb.RoomLive do
 
     <div class="flex flex-col lg:flex-row gap-3 lg:h-[calc(100vh-3.5rem)]">
       <%!-- Main content --%>
-      <div class="flex-1 min-w-0 min-h-0 flex flex-col">
+      <div class="flex-1 min-w-0 min-h-0 flex flex-col pb-4">
 
         <%!-- Player wrapper: sizes the player to fit viewport while maintaining 16:9 --%>
         <div id="player-sizer" class="flex justify-center flex-shrink-0" phx-update="ignore">

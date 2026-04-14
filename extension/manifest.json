@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "byob - Bring Your Own Binge",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "description": "Syncs video playback with byob.video rooms",
   "permissions": ["storage"],
   "background": {

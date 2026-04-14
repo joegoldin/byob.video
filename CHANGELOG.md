@@ -2,6 +2,12 @@
 
 ---
 
+# v3.1.2
+
+- Fix sidebar clipping at bottom (Users card no longer cut off)
+
+---
+
 # v3.1.1
 
 - Fix comments panel alignment with player
