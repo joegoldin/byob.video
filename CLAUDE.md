@@ -70,6 +70,17 @@ fly deploy --app byob-video # Deploy to production
 - `force_ssl` in prod excludes `/health` path for Fly.io health checks.
 - Room state persists to SQLite every 30s. On deploy, GenServers restart and reload from SQLite. The `ensure_room_pid` hook transparently reconnects LiveView sockets.
 
+## Release workflow
+
+After completing a set of changes:
+
+1. Update `CHANGELOG.md` with a new version section at the top
+2. Bump version: `echo "X.Y.Z" > VERSION && just sync-version`
+3. Commit, tag, push: `git add -A && git commit -m "vX.Y.Z: description" && git tag vX.Y.Z && git push origin main && git push origin --tags`
+4. Deploy if needed: `fly deploy --app byob-video`
+
+Extension manifests and mix.exs version are derived from the `VERSION` file automatically.
+
 ## Related repos
 
 - [byob-discord-bot](https://github.com/joegoldin/byob-discord-bot) — Discord bot using the REST API
