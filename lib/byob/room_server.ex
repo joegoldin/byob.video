@@ -558,22 +558,26 @@ defmodule Byob.RoomServer do
 
   defp advance_queue(state) do
     now = System.monotonic_time(:millisecond)
-    next_index = (state.current_index || -1) + 1
+    current_idx = state.current_index || -1
 
-    if next_index < length(state.queue) do
-      item = Enum.at(state.queue, next_index)
-      state = %{state | current_index: next_index, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
+    # Remove the just-played item from the queue
+    queue = if current_idx >= 0, do: List.delete_at(state.queue, current_idx), else: state.queue
+
+    if length(queue) > 0 do
+      # Next item is now at index 0 (since we removed the played one)
+      item = Enum.at(queue, 0)
+      state = %{state | queue: queue, current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
       state = add_to_history(state, item)
       state = schedule_sync_correction(state)
       fetch_sponsor_segments(item)
-      broadcast(state, {:video_changed, %{media_item: item, index: next_index}})
-      broadcast(state, {:queue_updated, %{queue: state.queue, current_index: next_index}})
+      broadcast(state, {:video_changed, %{media_item: item, index: 0}})
+      broadcast(state, {:queue_updated, %{queue: queue, current_index: 0}})
       state
     else
-      state = %{state | play_state: :ended, current_time: 0.0, last_sync_at: now, current_index: nil}
+      state = %{state | queue: queue, play_state: :ended, current_time: 0.0, last_sync_at: now, current_index: nil}
       state = cancel_sync_correction(state)
       broadcast(state, {:queue_ended, %{}})
-      broadcast(state, {:queue_updated, %{queue: state.queue, current_index: nil}})
+      broadcast(state, {:queue_updated, %{queue: queue, current_index: nil}})
       state
     end
   end
