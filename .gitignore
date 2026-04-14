@@ -48,3 +48,4 @@ result-firefox
 
 # Editor lock files
 *~lock~*
+.superpowers/
