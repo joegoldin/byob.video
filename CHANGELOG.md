@@ -2,6 +2,13 @@
 
 ---
 
+# v3.2.0
+
+- Per-browser toggle to show/hide YouTube comments (persisted in localStorage, configurable in settings)
+- Collapse/expand arrow on comments panel header (non-persistent, defaults to open)
+
+---
+
 # v3.1.3
 
 - Restore gap between video player and comments panel

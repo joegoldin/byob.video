@@ -38,7 +38,9 @@ defmodule ByobWeb.RoomLive do
         comments: nil,
         comments_next_page: nil,
         comments_video_id: nil,
-        comments_total: nil
+        comments_total: nil,
+        show_comments: true,
+        comments_collapsed: false
       )
 
     if connected?(socket) do
@@ -54,7 +56,8 @@ defmodule ByobWeb.RoomLive do
         end
       browser_id = get_connect_params(socket)["browser_id"] || socket.assigns.user_id
       has_extension = get_connect_params(socket)["has_extension"] == true
-      socket = assign(socket, user_id: user_id, browser_id: browser_id)
+      show_comments = get_connect_params(socket)["show_comments"] != false
+      socket = assign(socket, user_id: user_id, browser_id: browser_id, show_comments: show_comments)
       Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
       {:ok, state} = RoomServer.join(pid, user_id, username)
 
@@ -166,6 +169,18 @@ defmodule ByobWeb.RoomLive do
 
   def handle_event("comments:load_more", params, socket), do: Comments.handle_load_more(params, socket)
 
+  def handle_event("toggle_comments_collapse", _params, socket) do
+    {:noreply, assign(socket, comments_collapsed: !socket.assigns.comments_collapsed)}
+  end
+
+  def handle_event("toggle_comments", _params, socket) do
+    show = !socket.assigns.show_comments
+    socket = assign(socket, show_comments: show)
+    socket = push_event(socket, "store-show-comments", %{show: show})
+    socket = push_event(socket, "reopen-modal", %{id: "sb-settings-modal"})
+    {:noreply, socket}
+  end
+
   def handle_event("sync:ping", params, socket), do: Playback.handle_sync_ping(params, socket)
 
   # PubSub messages from RoomServer
@@ -207,7 +222,7 @@ defmodule ByobWeb.RoomLive do
   def render(assigns) do
     ~H"""
     <Components.room_nav room_id={@room_id} url_focused={@url_focused} url_preview_loading={@url_preview_loading} url_preview={@url_preview} preview_url={@preview_url} />
-    <Components.settings_modal sb_settings={@sb_settings} api_key={@api_key} />
+    <Components.settings_modal sb_settings={@sb_settings} api_key={@api_key} show_comments={@show_comments} />
 
     <div class="flex flex-col lg:flex-row gap-3 lg:h-[calc(100vh-3.5rem)]">
       <%!-- Main content --%>
@@ -229,8 +244,10 @@ defmodule ByobWeb.RoomLive do
         </div>
 
         <Comments.comments_panel
+          :if={@show_comments}
           comments={@comments}
           comments_next_page={@comments_next_page}
+          collapsed={@comments_collapsed}
         />
 
         <%!-- Extension mode banner --%>

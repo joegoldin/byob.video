@@ -219,6 +219,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     tab_id: sessionStorage.getItem("byob_tab_id"),
     browser_id: localStorage.getItem("byob_browser_id"),
     has_extension: document.documentElement.hasAttribute("data-byob-extension"),
+    show_comments: localStorage.getItem("byob_show_comments") !== "false",
   }),
   hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu, ScrollBottom},
 })
@@ -226,6 +227,17 @@ const liveSocket = new LiveSocket("/live", Socket, {
 // Listen for username changes to persist to localStorage
 window.addEventListener("phx:store-username", (e) => {
   localStorage.setItem("watchparty_username", e.detail.username)
+})
+
+// Listen for comments toggle to persist to localStorage
+window.addEventListener("phx:store-show-comments", (e) => {
+  localStorage.setItem("byob_show_comments", e.detail.show)
+})
+
+// Re-open a dialog modal after LiveView re-render
+window.addEventListener("phx:reopen-modal", (e) => {
+  const modal = document.getElementById(e.detail.id)
+  if (modal && !modal.open) modal.showModal()
 })
 
 // Show progress bar on live navigation and form submits

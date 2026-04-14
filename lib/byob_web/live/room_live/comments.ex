@@ -11,21 +11,25 @@ defmodule ByobWeb.RoomLive.Comments do
   """
   attr :comments, :list, default: nil
   attr :comments_next_page, :string, default: nil
+  attr :collapsed, :boolean, default: false
 
   def comments_panel(assigns) do
     ~H"""
-    <div :if={@comments && @comments != []} class="relative max-h-[300px] lg:flex-1 lg:max-h-none min-h-0 overflow-y-auto bg-base-200 rounded-lg">
+    <div :if={@comments && @comments != []} class={"relative bg-base-200 rounded-lg #{unless @collapsed, do: "max-h-[300px] lg:flex-1 lg:max-h-none min-h-0 overflow-y-auto"}"}>
       <%!-- Header --%>
-      <div class="sticky top-0 bg-base-200 px-3 py-2 border-b border-base-300 z-10">
+      <div class="sticky top-0 bg-base-200 px-3 py-2 border-b border-base-300 z-10 flex items-center justify-between rounded-t-lg">
         <span class="text-xs font-semibold text-base-content/60">Comments</span>
+        <button phx-click="toggle_comments_collapse" class="text-base-content/40 hover:text-base-content/60 transition-colors">
+          <svg class={"w-4 h-4 transition-transform #{if @collapsed, do: "rotate-180"}"} fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
       </div>
 
-      <%!-- Comment list --%>
-      <div class="divide-y divide-base-300/50">
+      <%!-- Comment list (hidden when collapsed) --%>
+      <div :if={!@collapsed} class="divide-y divide-base-300/50">
         <div :for={comment <- @comments} class="flex gap-2.5 px-3 py-2.5">
-          <%!-- Avatar --%>
           <img src={comment.author_avatar} class="w-7 h-7 rounded-full flex-shrink-0 mt-0.5" />
-          <%!-- Content --%>
           <div class="flex-1 min-w-0">
             <div class="flex items-baseline gap-1.5">
               <span class="text-xs font-semibold text-base-content/80">{comment.author}</span>
@@ -40,8 +44,8 @@ defmodule ByobWeb.RoomLive.Comments do
         </div>
       </div>
 
-      <%!-- Load more --%>
-      <div :if={@comments_next_page} class="px-3 py-2 text-center border-t border-base-300">
+      <%!-- Load more (hidden when collapsed) --%>
+      <div :if={!@collapsed && @comments_next_page} class="px-3 py-2 text-center border-t border-base-300">
         <button phx-click="comments:load_more" class="text-xs text-primary hover:underline">Load more comments</button>
       </div>
     </div>

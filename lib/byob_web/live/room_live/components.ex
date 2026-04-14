@@ -123,6 +123,7 @@ defmodule ByobWeb.RoomLive.Components do
 
   attr :sb_settings, :any, required: true
   attr :api_key, :any, default: nil
+  attr :show_comments, :boolean, default: true
 
   def settings_modal(assigns) do
     ~H"""
@@ -145,6 +146,20 @@ defmodule ByobWeb.RoomLive.Components do
             <span class="mx-1">&middot;</span>
             <a href="https://github.com/joegoldin/byob.video/blob/main/CHANGELOG.md" target="_blank" class="link link-primary">v{Application.spec(:byob, :vsn)}</a>
           </p>
+        </div>
+
+        <%!-- YouTube Comments toggle --%>
+        <div class="flex items-center justify-between mb-4 pb-4 border-b border-base-300">
+          <div>
+            <h4 class="font-semibold text-sm">YouTube Comments</h4>
+            <p class="text-xs text-base-content/50">Show comments below the video player</p>
+          </div>
+          <input
+            type="checkbox"
+            class="toggle toggle-sm toggle-primary"
+            checked={@show_comments}
+            phx-click="toggle_comments"
+          />
         </div>
 
         <%!-- SponsorBlock settings --%>
