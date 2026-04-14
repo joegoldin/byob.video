@@ -2,6 +2,16 @@
 
 ---
 
+# v1.4.2
+
+- Deduplicate user list by username (no more stale/disconnected dupes)
+- Prevent taking a username already in use by another user
+- Activity log entries wrap (line-clamp-2) instead of truncating
+- Activity log "added" entries update to show video title when metadata loads
+- Timestamps show seconds (e.g. "at 5:42:03 pm")
+
+---
+
 # v1.4.1
 
 - Fix Play Now / Queue buttons requiring multiple clicks (race condition between blur and form submit)
