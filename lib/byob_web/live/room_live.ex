@@ -835,7 +835,7 @@ defmodule ByobWeb.RoomLive do
                     >
                       {now_playing.title}
                     </span>
-                    <span title={now_playing.url} class="block text-xs text-base-content/50 line-clamp-2">
+                    <span :if={show_url?(now_playing)} title={now_playing.url} class="block text-xs text-base-content/50 line-clamp-2">
                       {now_playing.url}
                     </span>
                     <span :if={now_playing.added_by_name} class="block text-xs text-base-content/40 mt-0.5">
@@ -1101,6 +1101,12 @@ defmodule ByobWeb.RoomLive do
   defp format_log_entry(%{action: :skipped}), do: "Skipped to next"
   defp format_log_entry(%{action: :renamed, detail: detail}), do: "Renamed: #{detail}"
   defp format_log_entry(_), do: nil
+
+  defp show_url?(item) do
+    has_title = is_binary(item.title) and item.title != ""
+    is_youtube = is_binary(item.url) and (String.contains?(item.url, "youtube.com") or String.contains?(item.url, "youtu.be"))
+    not (has_title and is_youtube)
+  end
 
   defp dedup_users(users, my_user_id) do
     # Group by username, pick best representative per name:
