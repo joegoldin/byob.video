@@ -2,6 +2,14 @@
 
 ---
 
+# v3.1.1
+
+- Fix comments panel alignment with player
+- Cap comments at 300px on mobile, fill to window on desktop
+- URL input text no longer clears when clicking away
+
+---
+
 # v3.1.0
 
 - Comments panel fills to window height on desktop, capped at 40vh on mobile

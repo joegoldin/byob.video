@@ -15,6 +15,7 @@ defmodule ByobWeb.RoomLive.Components do
   attr :url_focused, :boolean, required: true
   attr :url_preview_loading, :boolean, required: true
   attr :url_preview, :any, default: nil
+  attr :preview_url, :string, default: nil
 
   def room_nav(assigns) do
     ~H"""
@@ -49,6 +50,7 @@ defmodule ByobWeb.RoomLive.Components do
             <input
               type="text"
               name="url"
+              value={@preview_url || ""}
               placeholder="Paste a video URL..."
               class="input input-bordered input-xs w-full"
               autocomplete="off"

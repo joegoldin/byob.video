@@ -14,7 +14,7 @@ defmodule ByobWeb.RoomLive.Comments do
 
   def comments_panel(assigns) do
     ~H"""
-    <div :if={@comments && @comments != []} class="relative max-h-[40vh] lg:flex-1 lg:max-h-none min-h-0 overflow-y-auto bg-base-200 rounded-lg mx-1 mb-2">
+    <div :if={@comments && @comments != []} class="relative max-h-[300px] lg:flex-1 lg:max-h-none min-h-0 overflow-y-auto bg-base-200 rounded-lg">
       <%!-- Header --%>
       <div class="sticky top-0 bg-base-200 px-3 py-2 border-b border-base-300 z-10">
         <span class="text-xs font-semibold text-base-content/60">Comments</span>
