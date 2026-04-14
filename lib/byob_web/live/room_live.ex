@@ -209,12 +209,12 @@ defmodule ByobWeb.RoomLive do
     <Components.room_nav room_id={@room_id} url_focused={@url_focused} url_preview_loading={@url_preview_loading} url_preview={@url_preview} />
     <Components.settings_modal sb_settings={@sb_settings} api_key={@api_key} />
 
-    <div class="flex flex-col lg:flex-row gap-3 lg:min-h-[calc(100vh-3.5rem)]">
+    <div class="flex flex-col lg:flex-row gap-3 lg:h-[calc(100vh-3.5rem)]">
       <%!-- Main content --%>
-      <div class="flex-1 min-w-0 flex flex-col">
+      <div class="flex-1 min-w-0 min-h-0 flex flex-col">
 
         <%!-- Player wrapper: sizes the player to fit viewport while maintaining 16:9 --%>
-        <div id="player-sizer" class="mb-3 flex justify-center" phx-update="ignore">
+        <div id="player-sizer" class="mb-3 flex justify-center flex-shrink-0" phx-update="ignore">
         <div
           id="player"
           phx-hook="VideoPlayer"
