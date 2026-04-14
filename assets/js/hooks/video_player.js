@@ -152,6 +152,7 @@ const VideoPlayer = {
       // Retry play if autoplay was blocked, then show click-to-play overlay
       const checkAndRetry = (attempt) => {
         setTimeout(() => {
+          if (this._embedBlocked) return; // Don't retry if embed was blocked
           let isPlaying = false;
           if (this.sourceType === "youtube") {
             const yt = this.player?.getPlayerState?.();
@@ -165,7 +166,7 @@ const VideoPlayer = {
               this.suppression.suppress("playing");
               this._play();
               checkAndRetry(attempt + 1);
-            } else {
+            } else if (!this._embedBlocked) {
               // Autoplay blocked — show click-to-play overlay
               this._showClickToPlay(position);
             }
@@ -193,6 +194,7 @@ const VideoPlayer = {
     this.sourceId = sourceId;
     this._lastTitle = mediaItem?.title || url;
     this._lastThumb = mediaItem?.thumbnail_url;
+    this._embedBlocked = false;
 
     if (sourceType === "youtube") {
       await this._loadYouTube(sourceId);
@@ -408,6 +410,7 @@ const VideoPlayer = {
     const code = event.data;
     // 100 = video not found, 101/150 = embedding restricted (age-restricted, etc.)
     if (code === 100 || code === 101 || code === 150) {
+      this._embedBlocked = true;
       const videoId = this.sourceId;
       const url = `https://www.youtube.com/watch?v=${videoId}`;
       const title = this._lastTitle || url;
@@ -419,32 +422,79 @@ const VideoPlayer = {
       }
       this.player = null;
 
-      // Show fallback UI like extension-required
-      const thumbHtml = thumb
-        ? `<img src="${thumb}" class="w-32 h-20 object-cover rounded opacity-80" />`
-        : "";
+      // Detect extension from page attribute (set by extension content script)
+      const hasExtension = document.documentElement.hasAttribute("data-byob-extension");
 
-      this.el.innerHTML = `
-        <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-base-content/60 bg-base-300">
-          ${thumbHtml}
-          <div class="flex items-center gap-2 text-warning">
-            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z"/>
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 15.75h.007v.008H12v-.008z"/>
-            </svg>
-            <span class="text-sm font-medium">This video can't be embedded</span>
-          </div>
-          <p class="text-xs text-base-content/40 max-w-sm text-center px-4 line-clamp-2">${title}</p>
-          <p class="text-xs text-base-content/30">Age-restricted or embedding disabled by uploader</p>
-          <div class="flex gap-2 mt-1">
-            <a href="${url}" target="_blank" class="btn btn-sm btn-primary gap-1">
-              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
-              Watch on YouTube
-            </a>
-          </div>
-          <p class="text-[10px] text-base-content/20 mt-1">Use the byob extension to sync playback</p>
-        </div>
-      `;
+      // Build fallback UI
+      const container = document.createElement("div");
+      container.className = "absolute inset-0 flex flex-col items-center justify-center gap-3 text-base-content/60 bg-base-300";
+
+      if (thumb) {
+        const img = document.createElement("img");
+        img.src = thumb;
+        img.className = "w-32 h-20 object-cover rounded opacity-80";
+        container.appendChild(img);
+      }
+
+      const warning = document.createElement("div");
+      warning.className = "flex items-center gap-2 text-warning";
+      warning.innerHTML = `<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 15.75h.007v.008H12v-.008z"/></svg>`;
+      const warningText = document.createElement("span");
+      warningText.className = "text-sm font-medium";
+      warningText.textContent = "This video can't be embedded";
+      warning.appendChild(warningText);
+      container.appendChild(warning);
+
+      const titleEl = document.createElement("p");
+      titleEl.className = "text-xs text-base-content/40 max-w-sm text-center px-4 line-clamp-2";
+      titleEl.textContent = title;
+      container.appendChild(titleEl);
+
+      const subtext = document.createElement("p");
+      subtext.className = "text-xs text-base-content/30";
+      subtext.textContent = "Age-restricted or embedding disabled by uploader";
+      container.appendChild(subtext);
+
+      const btnContainer = document.createElement("div");
+      btnContainer.className = "flex gap-2 mt-1";
+
+      if (hasExtension) {
+        // Has extension — show "Watch on YouTube" (extension will sync)
+        const ytBtn = document.createElement("a");
+        ytBtn.href = url;
+        ytBtn.target = "_blank";
+        ytBtn.className = "btn btn-sm btn-primary gap-1";
+        ytBtn.innerHTML = `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg> Watch on YouTube`;
+        btnContainer.appendChild(ytBtn);
+
+        const hint = document.createElement("p");
+        hint.className = "text-[10px] text-base-content/20 mt-1";
+        hint.textContent = "Extension will sync playback automatically";
+        container.appendChild(btnContainer);
+        container.appendChild(hint);
+      } else {
+        // No extension — show "Get Extension" with link
+        const extBtn = document.createElement("a");
+        extBtn.className = "btn btn-sm btn-primary gap-1";
+        extBtn.style.cursor = "pointer";
+        // Detect browser for correct store link
+        const isFirefox = /Firefox/.test(navigator.userAgent);
+        extBtn.href = isFirefox
+          ? "https://addons.mozilla.org/en-US/firefox/addon/byob-bring-your-own-binge/"
+          : "https://chromewebstore.google.com/detail/jlpogmjckejgpbbfhafgjgkbnocjfbmb";
+        extBtn.target = "_blank";
+        extBtn.innerHTML = `<svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/></svg> Get Extension`;
+        btnContainer.appendChild(extBtn);
+
+        const hint = document.createElement("p");
+        hint.className = "text-[10px] text-base-content/20 mt-1";
+        hint.textContent = "Install the byob extension to watch age-restricted videos in sync";
+        container.appendChild(btnContainer);
+        container.appendChild(hint);
+      }
+
+      this.el.innerHTML = "";
+      this.el.appendChild(container);
 
       // Notify server this is now extension-required
       this.pushEvent("video:embed_blocked", { video_id: videoId, url: url });

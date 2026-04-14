@@ -228,8 +228,11 @@ defmodule ByobWeb.RoomLive do
     {:noreply, socket}
   end
 
-  def handle_event("video:embed_blocked", %{"url" => url}, socket) do
-    # Log that this video can't be embedded
+  def handle_event("video:embed_blocked", _params, socket) do
+    Byob.Analytics.track("video_embed_blocked", socket.assigns[:browser_id] || socket.assigns.user_id, %{
+      room_id: socket.assigns.room_id,
+      source_type: "youtube_restricted"
+    })
     {:noreply, socket}
   end
 
