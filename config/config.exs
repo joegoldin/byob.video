@@ -47,6 +47,11 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]
 
+# PostHog analytics — disabled by default, enabled via env vars in prod
+config :posthog,
+  enable: false,
+  enable_error_tracking: false
+
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 

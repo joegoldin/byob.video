@@ -47,9 +47,14 @@ defmodule ByobWeb.RoomLive do
           "" -> socket.assigns.username
           stored -> stored
         end
-      socket = assign(socket, user_id: user_id)
+      browser_id = get_connect_params(socket)["browser_id"] || socket.assigns.user_id
+      has_extension = get_connect_params(socket)["has_extension"] == true
+      socket = assign(socket, user_id: user_id, browser_id: browser_id)
       Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
       {:ok, state} = RoomServer.join(pid, user_id, username)
+
+      # Analytics — use browser_id as distinct_id (same person across tabs)
+      Byob.Analytics.room_joined(browser_id, room_id, has_extension: has_extension)
 
       current_media =
         if state.current_index, do: Enum.at(state.queue, state.current_index), else: nil
@@ -187,6 +192,8 @@ defmodule ByobWeb.RoomLive do
 
   def handle_event("preview:play_now", _params, socket) do
     if url = socket.assigns.preview_url do
+      source_type = if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
+      Byob.Analytics.video_added(socket.assigns[:browser_id] || socket.assigns.user_id, socket.assigns.room_id, source_type)
       RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :now)
     end
     {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
@@ -194,9 +201,16 @@ defmodule ByobWeb.RoomLive do
 
   def handle_event("preview:queue", _params, socket) do
     if url = socket.assigns.preview_url do
+      source_type = if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
+      Byob.Analytics.video_added(socket.assigns[:browser_id] || socket.assigns.user_id, socket.assigns.room_id, source_type)
       RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :queue)
     end
     {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
+  end
+
+  def handle_event("analytics:has_extension", _params, socket) do
+    Byob.Analytics.identify(socket.assigns[:browser_id] || socket.assigns.user_id, %{has_extension: true})
+    {:noreply, socket}
   end
 
   def handle_event("video:play", %{"position" => position}, socket) do

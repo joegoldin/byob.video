@@ -2,6 +2,21 @@
 
 ---
 
+# v2.0.0
+
+## Analytics
+
+- PostHog analytics integration for anonymous usage tracking
+- Tracks: room creation/join, video source types, playback actions, extension detection
+- Does NOT track: video URLs/titles, usernames, browsing history, any extension data
+- Browser-level distinct_id (same person across tabs)
+- Extension detection from page JS (not extension code) — no extension privacy changes needed
+- Configurable via `POSTHOG_API_KEY` env var (disabled when not set)
+- Updated privacy policy with full analytics disclosure
+- Self-hosted instances have no analytics unless configured
+
+---
+
 # v1.4.3
 
 - Seek events in activity log with from/to timestamps (e.g. "joe seeked 1:23 → 4:56")

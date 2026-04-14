@@ -180,6 +180,10 @@ const LocalTime = {
 if (!sessionStorage.getItem("byob_tab_id")) {
   sessionStorage.setItem("byob_tab_id", crypto.randomUUID())
 }
+// Per-browser ID for analytics (all tabs = same person)
+if (!localStorage.getItem("byob_browser_id")) {
+  localStorage.setItem("byob_browser_id", crypto.randomUUID())
+}
 
 // Detect duplicate room tabs — show a small notice, don't block
 (() => {
@@ -213,6 +217,8 @@ const liveSocket = new LiveSocket("/live", Socket, {
     _csrf_token: csrfToken,
     stored_username: localStorage.getItem("watchparty_username"),
     tab_id: sessionStorage.getItem("byob_tab_id"),
+    browser_id: localStorage.getItem("byob_browser_id"),
+    has_extension: document.documentElement.hasAttribute("data-byob-extension"),
   }),
   hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu, ScrollBottom},
 })

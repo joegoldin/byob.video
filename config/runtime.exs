@@ -38,6 +38,16 @@ if config_env() == :prod do
 
   host = System.get_env("PHX_HOST") || "example.com"
 
+  # PostHog analytics
+  if posthog_key = System.get_env("POSTHOG_API_KEY") do
+    config :posthog,
+      enable: true,
+      enable_error_tracking: true,
+      api_host: System.get_env("POSTHOG_HOST", "https://us.i.posthog.com"),
+      api_key: posthog_key,
+      in_app_otp_apps: [:byob]
+  end
+
   config :byob, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :byob, ByobWeb.Endpoint,

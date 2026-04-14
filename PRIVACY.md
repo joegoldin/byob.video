@@ -1,6 +1,6 @@
 # Privacy Policy
 
-**byob** (bring your own binge) does not collect, store, or transmit any personal data.
+**byob** (bring your own binge) collects minimal, anonymous usage analytics to improve the service. No personal data is collected.
 
 ## What byob does
 
@@ -8,6 +8,25 @@
 - Room state (queue, history, playback position) is stored on the server in a local SQLite database
 - Usernames are randomly generated and stored only in your browser's localStorage and the server's in-memory room state
 - No cookies are used for tracking. The only cookie is the Phoenix session cookie required for CSRF protection
+
+## Analytics
+
+byob uses [PostHog](https://posthog.com) for anonymous usage analytics on the hosted instance (byob.video). We track:
+
+- Room creation and join events
+- Video source types used (youtube, direct URL, extension — NOT the actual video URLs or titles)
+- Playback actions (play, pause, seek, skip — NOT timestamps or content)
+- Whether the browser extension is installed (detected from the web page, NOT from extension code)
+
+We do NOT track:
+- Video URLs, titles, or any content information
+- Usernames or chat messages
+- Browsing history or page content
+- Any data from the browser extension itself
+
+Each browser is assigned a random anonymous ID (stored in localStorage). This is not linked to any personal identity.
+
+Self-hosted instances do not have analytics enabled unless you configure a PostHog API key.
 
 ## What the extension does
 

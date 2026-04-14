@@ -62,7 +62,8 @@ defmodule Byob.MixProject do
       {:bandit, "~> 1.5"},
       {:nanoid, "~> 2.1"},
       {:exqlite, "~> 0.27"},
-      {:req, "~> 0.5"}
+      {:req, "~> 0.5"},
+      {:posthog, "~> 2.0"}
     ]
   end
 

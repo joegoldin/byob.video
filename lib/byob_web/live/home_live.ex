@@ -16,6 +16,7 @@ defmodule ByobWeb.HomeLive do
     else
       case Byob.RoomManager.create_room() do
         {:ok, room_id, _api_key} ->
+          Byob.Analytics.room_created(socket.assigns.user_id, room_id)
           {:noreply, socket |> assign(room_creates: [now | recent]) |> push_navigate(to: ~p"/room/#{room_id}")}
 
         {:error, :max_capacity} ->
