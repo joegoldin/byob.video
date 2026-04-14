@@ -199,6 +199,11 @@ defmodule ByobWeb.RoomLive do
     {:noreply, socket}
   end
 
+  def handle_event("video:embed_blocked", %{"url" => url}, socket) do
+    # Log that this video can't be embedded
+    {:noreply, socket}
+  end
+
   def handle_event("video:ended", %{"index" => index}, socket) do
     RoomServer.video_ended(socket.assigns.room_pid, index)
     {:noreply, socket}

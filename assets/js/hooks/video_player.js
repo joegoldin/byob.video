@@ -286,6 +286,7 @@ const VideoPlayer = {
           this._retrySponsorBar();
         },
         onStateChange: (event) => this._onYTStateChange(event),
+        onError: (event) => this._onYTError(event),
       },
     });
   },
@@ -400,6 +401,53 @@ const VideoPlayer = {
           this.pushEvent("video:ended", { index: parseInt(currentIndex) });
         }
       }
+    }
+  },
+
+  _onYTError(event) {
+    const code = event.data;
+    // 100 = video not found, 101/150 = embedding restricted (age-restricted, etc.)
+    if (code === 100 || code === 101 || code === 150) {
+      const videoId = this.sourceId;
+      const url = `https://www.youtube.com/watch?v=${videoId}`;
+      const title = this._lastTitle || url;
+      const thumb = this._lastThumb;
+
+      // Destroy the broken player
+      if (this.player && this.player.destroy) {
+        try { this.player.destroy(); } catch (_) {}
+      }
+      this.player = null;
+
+      // Show fallback UI like extension-required
+      const thumbHtml = thumb
+        ? `<img src="${thumb}" class="w-32 h-20 object-cover rounded opacity-80" />`
+        : "";
+
+      this.el.innerHTML = `
+        <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-base-content/60 bg-base-300">
+          ${thumbHtml}
+          <div class="flex items-center gap-2 text-warning">
+            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z"/>
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 15.75h.007v.008H12v-.008z"/>
+            </svg>
+            <span class="text-sm font-medium">This video can't be embedded</span>
+          </div>
+          <p class="text-xs text-base-content/40 max-w-sm text-center px-4 line-clamp-2">${title}</p>
+          <p class="text-xs text-base-content/30">Age-restricted or embedding disabled by uploader</p>
+          <div class="flex gap-2 mt-1">
+            <a href="${url}" target="_blank" class="btn btn-sm btn-primary gap-1">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>
+              Watch on YouTube
+            </a>
+          </div>
+          <p class="text-[10px] text-base-content/20 mt-1">Use the byob extension to sync playback</p>
+        </div>
+      `;
+
+      // Notify server this is now extension-required
+      this.pushEvent("video:embed_blocked", { video_id: videoId, url: url });
     }
   },
 
