@@ -4,7 +4,7 @@
 
 # v3.1.0
 
-- Comments panel fills available space below video (responsive height)
+- Comments panel fills to window height on desktop, capped at 40vh on mobile
 - Comments persist across page reloads (re-fetched on mount)
 - URL preview dropdown hides on blur without clearing data
 - Extension required link detects browser and opens correct store page
