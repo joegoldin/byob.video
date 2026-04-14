@@ -2,7 +2,7 @@ defmodule ByobWeb.RoomLive do
   use ByobWeb, :live_view
 
   alias Byob.{RoomManager, RoomServer}
-  alias ByobWeb.RoomLive.{Playback, Queue, UrlPreview}
+  alias ByobWeb.RoomLive.{Playback, Queue, UrlPreview, Username}
 
   def mount(%{"id" => room_id}, _session, socket) do
     if not Regex.match?(~r/^[a-z0-9]{1,16}$/, room_id) do
@@ -144,42 +144,9 @@ defmodule ByobWeb.RoomLive do
   def handle_event("switch_tab", params, socket), do: Queue.handle_switch_tab(params, socket)
   def handle_event("sb:update", params, socket), do: Queue.handle_sb_update(params, socket)
 
-  def handle_event("username:edit", _params, socket) do
-    {:noreply, assign(socket, editing_username: true)}
-  end
-
-  def handle_event("username:cancel", _params, socket) do
-    {:noreply, assign(socket, editing_username: false)}
-  end
-
-  def handle_event("username:change", %{"username" => new_username}, socket) do
-    new_username = String.trim(new_username)
-
-    state = RoomServer.get_state(socket.assigns.room_pid)
-    name_taken = Enum.any?(state.users, fn {uid, u} ->
-      u.username == new_username && !is_self_user(uid, socket.assigns.user_id)
-    end)
-
-    if new_username != "" and String.length(new_username) <= 30 and not name_taken do
-      # Rename this tab's user
-      RoomServer.rename_user(socket.assigns.room_pid, socket.assigns.user_id, new_username)
-      # Also rename other tabs of the same user
-      [base | _] = String.split(socket.assigns.user_id, ":", parts: 2)
-      state = RoomServer.get_state(socket.assigns.room_pid)
-      for {uid, _} <- state.users, uid != socket.assigns.user_id, String.starts_with?(uid, base <> ":") do
-        RoomServer.rename_user(socket.assigns.room_pid, uid, new_username)
-      end
-
-      socket =
-        socket
-        |> assign(username: new_username, editing_username: false)
-        |> push_event("store-username", %{username: new_username})
-
-      {:noreply, socket}
-    else
-      {:noreply, assign(socket, editing_username: false)}
-    end
-  end
+  def handle_event("username:edit", params, socket), do: Username.handle_edit(params, socket)
+  def handle_event("username:cancel", params, socket), do: Username.handle_cancel(params, socket)
+  def handle_event("username:change", params, socket), do: Username.handle_change(params, socket)
 
   def handle_event("sync:ping", params, socket), do: Playback.handle_sync_ping(params, socket)
 
