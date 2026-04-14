@@ -2,6 +2,12 @@
 
 ---
 
+# v1.4.3
+
+- Seek events in activity log with from/to timestamps (e.g. "joe seeked 1:23 → 4:56")
+
+---
+
 # v1.4.2
 
 - Deduplicate user list by username (no more stale/disconnected dupes)
