@@ -1,15 +1,9 @@
-import { loadYouTubeAPI } from "../lib/youtube_loader";
 import { ClockSync } from "../sync/clock_sync";
 import { Suppression } from "../sync/suppression";
 import { Reconcile } from "../sync/reconcile";
-
-// YouTube player state constants
-const YT_UNSTARTED = -1;
-const YT_ENDED = 0;
-const YT_PLAYING = 1;
-const YT_PAUSED = 2;
-const YT_BUFFERING = 3;
-const YT_CUED = 5;
+import * as YouTubePlayer from "../players/youtube";
+import * as DirectPlayer from "../players/direct";
+import * as ExtensionPlayer from "../players/extension";
 
 const VideoPlayer = {
   mounted() {
@@ -159,10 +153,10 @@ const VideoPlayer = {
           if (this._embedBlocked) return; // Don't retry if embed was blocked
           let isPlaying = false;
           if (this.sourceType === "youtube") {
-            const yt = this.player?.getPlayerState?.();
-            isPlaying = yt === YT_PLAYING || yt === YT_BUFFERING;
+            isPlaying = this.player?.getState?.() === "playing" ||
+                        this.player?.getState?.() === "buffering";
           } else if (this.sourceType === "direct_url") {
-            isPlaying = this.player && !this.player.paused;
+            isPlaying = this.player?.getState?.() === "playing";
           }
 
           if (!isPlaying) {
@@ -202,101 +196,64 @@ const VideoPlayer = {
     this._embedBlocked = false;
     if (this._extPollInterval) { clearInterval(this._extPollInterval); this._extPollInterval = null; }
 
+    const shouldPlay = this._pendingState?.play_state === "playing";
+
     if (sourceType === "youtube") {
-      await this._loadYouTube(sourceId);
+      await this._loadYouTube(sourceId, shouldPlay);
     } else if (sourceType === "direct_url") {
       this._loadDirectUrl(url);
     } else {
-      // Extension-required: destroy YouTube player, show placeholder
-      if (this.player && this.player.destroy) {
-        try { this.player.destroy(); } catch (_) {}
-        this.player = null;
-      }
-      const title = mediaItem?.title || url;
-      const thumb = mediaItem?.thumbnail_url;
-      const thumbHtml = thumb
-        ? `<img src="${thumb}" class="w-32 h-20 object-cover rounded opacity-80" />`
-        : `<svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-          </svg>`;
-      this.el.innerHTML = `
-        <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-base-content/60" id="ext-placeholder">
-          ${thumbHtml}
-          <p class="text-sm font-medium text-base-content/70 max-w-md text-center px-4 line-clamp-2" title="${title}">${title}</p>
-          <p class="text-xs" id="ext-status">Waiting for external player...</p>
-          <div id="ext-progress-container" class="w-3/4 max-w-md" style="display:none">
-            <div class="relative h-1 rounded bg-base-content/10 overflow-hidden">
-              <div id="ext-progress-fill" class="absolute left-0 top-0 h-full bg-primary rounded transition-all" style="width:0%"></div>
-            </div>
-            <div class="flex justify-between mt-1">
-              <span id="ext-time-current" class="text-xs text-base-content/40 tabular-nums">0:00</span>
-              <span id="ext-time-duration" class="text-xs text-base-content/40 tabular-nums">0:00</span>
-            </div>
-          </div>
-        </div>
-      `;
+      this._loadExtension(mediaItem, url);
     }
   },
 
-  async _loadYouTube(videoId) {
-    const YT = await loadYouTubeAPI();
-    const shouldPlay = this._pendingState?.play_state === "playing";
+  async _loadYouTube(videoId, shouldPlay) {
+    // Can we reuse the existing YouTube player?
+    const canReuse = this.player && this.player.loadVideoById && this.sourceType === "youtube";
 
-    // Reuse existing player if possible — preserves user gesture context for autoplay
-    if (this.player && this.player.loadVideoById && this.sourceType === "youtube") {
-      this.isReady = false;
-      this._endedFired = false;
-      if (shouldPlay) {
-        this.player.loadVideoById(videoId);
-      } else {
-        this.player.cueVideoById(videoId);
+    const callbacks = {
+      onReady: () => {
+        this.isReady = true;
+        this._applyPendingState();
+        this._startSeekDetector();
+        this._retrySponsorBar();
+      },
+      onLoadStart: () => {
+        this.isReady = false;
+        this._endedFired = false;
+      },
+      onStateChange: (stateName) => {
+        this._onPlayerStateChange(stateName);
+      },
+      onBuffering: () => {
+        this.reconcile.pauseFor(2000);
+      },
+      onError: (event) => {
+        this._onYTError(event);
+      },
+    };
+
+    if (canReuse) {
+      // Reuse path: the raw YT player is inside our wrapper
+      const rawPlayer = this.player.raw;
+      this.player = await YouTubePlayer.create(this.el, callbacks, {
+        videoId,
+        shouldPlay,
+        reuse: rawPlayer,
+      });
+    } else {
+      // Fresh creation: destroy old player first
+      if (this.player && this.player.destroy) {
+        this.player.destroy();
       }
-      this.isReady = true;
-      this._applyPendingState();
-      this._startSeekDetector();
-      this._retrySponsorBar();
-      return;
+      this.isReady = false;
+
+      this.player = await YouTubePlayer.create(this.el, callbacks, {
+        videoId,
+        shouldPlay,
+        reuse: null,
+      });
     }
-
-    // First time — create player from scratch
-    if (this.player && this.player.destroy) {
-      this.player.destroy();
-    }
-
-    this.isReady = false;
-
-    this.el.innerHTML = "";
-    const container = document.createElement("div");
-    container.id = "yt-player";
-    this.el.appendChild(container);
-
-    this.player = new YT.Player("yt-player", {
-      videoId: videoId,
-      width: "100%",
-      height: "100%",
-      playerVars: {
-        autoplay: shouldPlay ? 1 : 0,
-        controls: 1,
-        modestbranding: 1,
-        rel: 0,
-      },
-      events: {
-        onReady: () => {
-          this.isReady = true;
-          const iframe = this.el.querySelector("iframe");
-          if (iframe) {
-            iframe.style.width = "100%";
-            iframe.style.height = "100%";
-            iframe.allow = "autoplay; encrypted-media; picture-in-picture";
-          }
-          this._applyPendingState();
-          this._startSeekDetector();
-          this._retrySponsorBar();
-        },
-        onStateChange: (event) => this._onYTStateChange(event),
-        onError: (event) => this._onYTError(event),
-      },
-    });
   },
 
   _loadDirectUrl(url) {
@@ -307,83 +264,79 @@ const VideoPlayer = {
     this.player = null;
     this.isReady = false;
 
-    this.el.innerHTML = "";
-    const video = document.createElement("video");
-    video.src = url;
-    video.controls = true;
-    video.style.width = "100%";
-    video.style.height = "100%";
-    video.style.backgroundColor = "#000";
-    video.preload = "auto";
-    video.crossOrigin = "anonymous";
+    const callbacks = {
+      onReady: () => {
+        this.isReady = true;
+        this._applyPendingState();
+        this._startSeekDetector();
+      },
+      onStateChange: (stateName) => {
+        if (stateName === "playing") {
+          if (this.suppression.shouldSuppress("playing")) return;
+          this.expectedPlayState = "playing";
+          const position = this.player.getCurrentTime();
+          this.pushEvent("video:play", { position });
+          const serverTime = this.clockSync.serverNow();
+          this.reconcile.setServerState(position, serverTime, this.clockSync);
+          this.reconcile.pauseFor(1000);
+          this.reconcile.start();
+        } else if (stateName === "paused") {
+          if (this.suppression.shouldSuppress("paused")) return;
+          this.expectedPlayState = "paused";
+          const position = this.player.getCurrentTime();
+          this.pushEvent("video:pause", { position });
+          this.reconcile.stop();
+        } else if (stateName === "ended") {
+          this.expectedPlayState = null;
+          this.reconcile.stop();
+          const currentIndex = this.el.dataset.currentIndex;
+          if (currentIndex != null) {
+            this.pushEvent("video:ended", { index: parseInt(currentIndex) });
+          }
+        }
+      },
+      onSeeked: (currentTime) => {
+        if (this.suppression.isActive()) return;
+        this.pushEvent("video:seek", { position: currentTime });
+        const serverTime = this.clockSync.serverNow();
+        this.reconcile.setServerState(currentTime, serverTime, this.clockSync);
+        this.reconcile.pauseFor(1000);
+      },
+    };
 
-    this.el.appendChild(video);
-    this.player = video;
+    this.player = DirectPlayer.create(this.el, callbacks, { url });
+  },
 
-    video.addEventListener("loadedmetadata", () => {
-      this.isReady = true;
-      this._applyPendingState();
-      this._startSeekDetector();
-    });
+  _loadExtension(mediaItem, url) {
+    // Destroy existing player
+    if (this.player && this.player.destroy) {
+      try { this.player.destroy(); } catch (_) {}
+      this.player = null;
+    }
 
-    video.addEventListener("play", () => {
-      if (this.suppression.shouldSuppress("playing")) return;
-      this.expectedPlayState = "playing";
-      const position = video.currentTime;
-      this.pushEvent("video:play", { position });
-      const serverTime = this.clockSync.serverNow();
-      this.reconcile.setServerState(position, serverTime, this.clockSync);
-      this.reconcile.pauseFor(1000);
-      this.reconcile.start();
-    });
+    const title = mediaItem?.title || url;
+    const thumb = mediaItem?.thumbnail_url;
 
-    video.addEventListener("pause", () => {
-      if (this.suppression.shouldSuppress("paused")) return;
-      this.expectedPlayState = "paused";
-      const position = video.currentTime;
-      this.pushEvent("video:pause", { position });
-      this.reconcile.stop();
-    });
+    const callbacks = {
+      onReady: () => {
+        this.isReady = true;
+        this._applyPendingState();
+      },
+    };
 
-    video.addEventListener("seeked", () => {
-      if (this.suppression.isActive()) return;
-      this.pushEvent("video:seek", { position: video.currentTime });
-      const serverTime = this.clockSync.serverNow();
-      this.reconcile.setServerState(video.currentTime, serverTime, this.clockSync);
-      this.reconcile.pauseFor(1000);
-    });
-
-    video.addEventListener("ended", () => {
-      this.expectedPlayState = null;
-      this.reconcile.stop();
-      const currentIndex = this.el.dataset.currentIndex;
-      if (currentIndex != null) {
-        this.pushEvent("video:ended", { index: parseInt(currentIndex) });
-      }
+    this.player = ExtensionPlayer.create(this.el, callbacks, {
+      title,
+      thumbnailUrl: thumb,
     });
   },
 
-  _onYTStateChange(event) {
-    const state = event.data;
-
-    // Map YT state to our state names for suppression
-    let stateName = null;
-    if (state === YT_PLAYING) stateName = "playing";
-    else if (state === YT_PAUSED) stateName = "paused";
-    else if (state === YT_ENDED) stateName = "ended";
-
-    // Buffering means a seek or rebuffer is happening — pause reconcile
-    // so it doesn't fight the position change before PLAYING fires
-    if (state === YT_BUFFERING) {
-      this.reconcile.pauseFor(2000);
-      return;
-    }
-
+  // Unified YouTube state change handler (called from YouTube player module)
+  _onPlayerStateChange(stateName) {
     if (stateName && this.suppression.shouldSuppress(stateName)) {
       return;
     }
 
-    if (state === YT_PLAYING) {
+    if (stateName === "playing") {
       this.expectedPlayState = "playing";
       const position = this.player.getCurrentTime();
       this.pushEvent("video:play", { position });
@@ -392,12 +345,12 @@ const VideoPlayer = {
       this.reconcile.setServerState(position, serverTime, this.clockSync);
       this.reconcile.pauseFor(1000); // let server catch up before correcting
       this.reconcile.start();
-    } else if (state === YT_PAUSED) {
+    } else if (stateName === "paused") {
       this.expectedPlayState = "paused";
       const position = this.player.getCurrentTime();
       this.pushEvent("video:pause", { position });
       this.reconcile.stop();
-    } else if (state === YT_ENDED) {
+    } else if (stateName === "ended") {
       // Stop heartbeat from force-replaying the video
       this.expectedPlayState = null;
       this.reconcile.stop();
@@ -779,11 +732,8 @@ const VideoPlayer = {
     this.seekDetectorInterval = setInterval(() => {
       if (!this.player) return;
       const pos = this._getCurrentTime();
-      const isPaused = this.sourceType === "youtube"
-        ? this.player.getPlayerState?.() === YT_PAUSED
-        : this.sourceType === "direct_url"
-          ? this.player.paused
-          : false;
+      const playerState = this.player.getState?.();
+      const isPaused = playerState === "paused";
       // Detect seeks: large position jumps (>3s while playing, >1s while paused)
       const jumpThreshold = isPaused ? 1 : 3;
       if (Math.abs(pos - this.lastKnownPosition) > jumpThreshold) {
@@ -797,11 +747,7 @@ const VideoPlayer = {
       this.lastKnownPosition = pos;
 
       // Detect video ended — YouTube embeds may not fire YT_ENDED reliably
-      const dur = this.sourceType === "youtube"
-        ? (this.player.getDuration?.() || 0)
-        : this.sourceType === "direct_url"
-          ? (this.player.duration || 0)
-          : 0;
+      const dur = this.player?.getDuration?.() || 0;
       if (dur > 0 && pos >= dur - 1) {
         if (!this._endedFired) {
           this._endedFired = true;
@@ -823,14 +769,8 @@ const VideoPlayer = {
     if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
     this.stateCheckInterval = setInterval(() => {
       if (!this.player || !this.expectedPlayState) return;
-      let localState = null;
-      if (this.sourceType === "youtube" && this.player.getPlayerState) {
-        const ytState = this.player.getPlayerState();
-        localState = ytState === YT_PLAYING ? "playing" : ytState === YT_PAUSED ? "paused" : null;
-      } else if (this.sourceType === "direct_url") {
-        localState = this.player.paused ? "paused" : "playing";
-      }
-      if (!localState) return;
+      const localState = this.player.getState?.();
+      if (!localState || localState === "buffering" || localState === "ended") return;
       if (localState !== this.expectedPlayState) {
         if (!this._mismatchSince) {
           this._mismatchSince = performance.now();
@@ -853,8 +793,8 @@ const VideoPlayer = {
     this._lastSkippedUUID = null;
     if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
     this.sponsorCheckInterval = setInterval(() => {
-      if (!this.player || !this.player.getCurrentTime || this.sponsorSegments.length === 0) return;
-      const pos = this.player.getCurrentTime();
+      if (!this.player || this.sponsorSegments.length === 0) return;
+      const pos = this._getCurrentTime();
       for (const seg of this.sponsorSegments) {
         if (pos >= seg.segment[0] && pos < seg.segment[1] - 0.5) {
           if (this._lastSkippedUUID !== seg.uuid) {
@@ -980,47 +920,25 @@ const VideoPlayer = {
     }, 2000);
   },
 
-  // Player abstraction
+  // Player abstraction — delegate to unified player interface
   _getCurrentTime() {
-    if (this.sourceType === "youtube" && this.player?.getCurrentTime) {
-      return this.player.getCurrentTime();
-    }
-    if (this.sourceType === "direct_url" && this.player) {
-      return this.player.currentTime || 0;
-    }
-    return 0;
+    return this.player?.getCurrentTime?.() || 0;
   },
 
   _seekTo(seconds) {
-    if (this.sourceType === "youtube" && this.player?.seekTo) {
-      this.player.seekTo(seconds, true);
-    } else if (this.sourceType === "direct_url" && this.player) {
-      this.player.currentTime = seconds;
-    }
+    this.player?.seek?.(seconds);
   },
 
   _play() {
-    if (this.sourceType === "youtube" && this.player?.playVideo) {
-      this.player.playVideo();
-    } else if (this.sourceType === "direct_url" && this.player) {
-      this.player.play().catch(() => {});
-    }
+    this.player?.play?.();
   },
 
   _pause() {
-    if (this.sourceType === "youtube" && this.player?.pauseVideo) {
-      this.player.pauseVideo();
-    } else if (this.sourceType === "direct_url" && this.player) {
-      this.player.pause();
-    }
+    this.player?.pause?.();
   },
 
   _setPlaybackRate(rate) {
-    if (this.sourceType === "youtube" && this.player?.setPlaybackRate) {
-      this.player.setPlaybackRate(rate);
-    } else if (this.sourceType === "direct_url" && this.player) {
-      this.player.playbackRate = rate;
-    }
+    this.player?.setPlaybackRate?.(rate);
   },
 
   _sizePlayer() {
