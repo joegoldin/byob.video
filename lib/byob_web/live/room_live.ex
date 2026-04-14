@@ -118,10 +118,7 @@ defmodule ByobWeb.RoomLive do
   end
 
   def handle_event("url:blur", _params, socket) do
-    # Only hide the "supported sites" hint, not the preview dropdown
-    # The preview stays until form submit or input cleared
-    Process.send_after(self(), :clear_url_focus, 200)
-    {:noreply, socket}
+    {:noreply, assign(socket, url_focused: false)}
   end
 
   def handle_event("preview_url", %{"url" => url}, socket) do
@@ -412,10 +409,6 @@ defmodule ByobWeb.RoomLive do
 
   def handle_info({:users_updated, users}, socket) do
     {:noreply, assign(socket, users: users)}
-  end
-
-  def handle_info(:clear_url_focus, socket) do
-    {:noreply, assign(socket, url_focused: false)}
   end
 
   def handle_info({:activity_log_entry, entry}, socket) do
