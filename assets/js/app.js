@@ -172,7 +172,7 @@ const LocalTime = {
     const dt = this.el.getAttribute("datetime");
     if (!dt) return;
     const d = new Date(dt);
-    this.el.textContent = " at " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).toLowerCase();
+    this.el.textContent = " at " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" }).toLowerCase();
   },
 }
 

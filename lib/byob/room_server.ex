@@ -424,8 +424,24 @@ defmodule Byob.RoomServer do
         %{entry | item: update_item.(entry.item)}
       end)
 
-    state = %{state | queue: queue, history: history}
+    # Update activity log: replace raw URLs with titles for this item
+    old_item = Enum.find(state.queue, &(&1.id == item_id))
+    old_url = if old_item, do: old_item.url
+    activity_log = if old_url && meta.title do
+      Enum.map(state.activity_log, fn entry ->
+        if entry.action == :added && entry.detail == old_url do
+          %{entry | detail: meta.title}
+        else
+          entry
+        end
+      end)
+    else
+      state.activity_log
+    end
+
+    state = %{state | queue: queue, history: history, activity_log: activity_log}
     broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
+    if old_url && meta.title, do: broadcast(state, {:activity_log_updated, activity_log})
     {:noreply, state}
   end
 

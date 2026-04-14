@@ -270,7 +270,12 @@ defmodule ByobWeb.RoomLive do
   def handle_event("username:change", %{"username" => new_username}, socket) do
     new_username = String.trim(new_username)
 
-    if new_username != "" and String.length(new_username) <= 30 do
+    state = RoomServer.get_state(socket.assigns.room_pid)
+    name_taken = Enum.any?(state.users, fn {uid, u} ->
+      u.username == new_username && !is_self_user(uid, socket.assigns.user_id)
+    end)
+
+    if new_username != "" and String.length(new_username) <= 30 and not name_taken do
       # Rename this tab's user
       RoomServer.rename_user(socket.assigns.room_pid, socket.assigns.user_id, new_username)
       # Also rename other tabs of the same user
@@ -429,6 +434,10 @@ defmodule ByobWeb.RoomLive do
 
   def handle_info({:users_updated, users}, socket) do
     {:noreply, assign(socket, users: users)}
+  end
+
+  def handle_info({:activity_log_updated, log}, socket) do
+    {:noreply, assign(socket, activity_log: Enum.take(log, 50))}
   end
 
   def handle_info({:activity_log_entry, entry}, socket) do
@@ -947,7 +956,7 @@ defmodule ByobWeb.RoomLive do
                 <span :if={entry.action == :added} class="text-primary/60 flex-shrink-0">+</span>
                 <span :if={entry.action == :skipped} class="text-base-content/40 flex-shrink-0">&#9197;</span>
                 <span :if={entry.action == :renamed} class="text-base-content/40 flex-shrink-0">&#9998;</span>
-                <span class="truncate flex-1">{format_log_entry(entry)}</span>
+                <span class="flex-1 line-clamp-2">{format_log_entry(entry)}</span>
                 <time
                   :if={entry.at}
                   datetime={DateTime.to_iso8601(entry.at)}
@@ -970,7 +979,7 @@ defmodule ByobWeb.RoomLive do
             </h3>
             <ul class="space-y-2 mt-1 max-h-48 overflow-y-auto">
               <li
-                :for={{uid, user} <- Enum.sort_by(@users, fn {id, u} -> {(if id == @user_id, do: 0, else: 1), (if u.connected, do: 0, else: 1)} end)}
+                :for={{uid, user} <- dedup_users(@users, @user_id)}
                 data-user-id={uid}
                 class="flex items-center gap-2 text-sm"
               >
@@ -1076,6 +1085,17 @@ defmodule ByobWeb.RoomLive do
   defp format_log_entry(%{action: :skipped}), do: "Skipped to next"
   defp format_log_entry(%{action: :renamed, detail: detail}), do: "Renamed: #{detail}"
   defp format_log_entry(_), do: nil
+
+  defp dedup_users(users, my_user_id) do
+    # Group by username, pick best representative per name:
+    # prefer self > connected > disconnected
+    users
+    |> Enum.sort_by(fn {id, u} ->
+      {(if is_self_user(id, my_user_id), do: 0, else: 1),
+       (if u.connected, do: 0, else: 1)}
+    end)
+    |> Enum.uniq_by(fn {_id, u} -> u.username end)
+  end
 
   defp is_self_user(uid, my_user_id) do
     # user_ids are "session_id:tab_id" — same session = same person
