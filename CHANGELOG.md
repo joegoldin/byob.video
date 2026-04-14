@@ -2,6 +2,25 @@
 
 ---
 
+# v1.3.5
+
+## Queue and sync improvements
+
+- Played items removed from queue (moved to history only)
+- Play Now removes the old now-playing from queue
+- Clicking a queue item to play removes the previous item
+- No more duplicate items in Now Playing and Up Next
+- Autoplay permissions: `Permissions-Policy: autoplay=*` header + iframe allow attribute
+- Click-to-play overlay when browser blocks autoplay on join
+- Per-tab user IDs restored for correct sync (no more feedback loops between tabs)
+- Multi-tab users show "(you)" and "(other tab)" labels
+- Username changes apply to all tabs of the same user
+- Activity log: newest at bottom, auto-scrolls, video titles on play/pause, local timestamps
+- Deterministic preview dropdown (no blur timing hack)
+- URL preview shows full title (up to 3 lines)
+
+---
+
 # v1.3.4
 
 - Fix stale room_pid after deploy/restart: auto-reconnect via attach_hook

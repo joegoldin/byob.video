@@ -334,13 +334,26 @@ defmodule Byob.RoomServer do
     now = System.monotonic_time(:millisecond)
     item = Enum.at(state.queue, index)
 
-    state = %{state | current_index: index, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
+    # Remove the old now-playing item from queue (if any)
+    queue = if state.current_index != nil and state.current_index != index do
+      old_idx = state.current_index
+      q = List.delete_at(state.queue, old_idx)
+      # Adjust index if removing before the target
+      if old_idx < index, do: {q, index - 1}, else: {q, index}
+    else
+      {state.queue, index}
+    end
+
+    {queue, new_index} = queue
+    item = Enum.at(queue, new_index)
+
+    state = %{state | queue: queue, current_index: new_index, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
     state = add_to_history(state, item)
     state = schedule_sync_correction(state)
     fetch_sponsor_segments(item)
 
-    broadcast(state, {:video_changed, %{media_item: item, index: index}})
-    broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
+    broadcast(state, {:video_changed, %{media_item: item, index: new_index}})
+    broadcast(state, {:queue_updated, %{queue: queue, current_index: new_index}})
     {:reply, :ok, state}
   end
 
@@ -545,13 +558,13 @@ defmodule Byob.RoomServer do
         state
 
       idx ->
-        insert_at = idx + 1
-        queue = List.insert_at(state.queue, insert_at, item)
-        state = %{state | queue: queue, current_index: insert_at, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
+        # Remove old now-playing, insert new item at front
+        queue = List.delete_at(state.queue, idx) |> List.insert_at(0, item)
+        state = %{state | queue: queue, current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
         state = add_to_history(state, item)
         state = schedule_sync_correction(state)
         fetch_sponsor_segments(item)
-        broadcast(state, {:video_changed, %{media_item: item, index: insert_at}})
+        broadcast(state, {:video_changed, %{media_item: item, index: 0}})
         state
     end
   end
