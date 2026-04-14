@@ -334,13 +334,22 @@ defmodule Byob.RoomServer do
     now = System.monotonic_time(:millisecond)
     item = Enum.at(state.queue, index)
 
-    state = %{state | current_index: index, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
+    # Remove old now-playing, pull clicked item to front, keep rest in order
+    queue = state.queue
+    queue = if state.current_index != nil, do: List.delete_at(queue, state.current_index), else: queue
+    # Adjust index after removal
+    adj_index = if state.current_index != nil and state.current_index < index, do: index - 1, else: index
+    # Remove the clicked item from its current position and put it at front
+    queue = List.delete_at(queue, adj_index)
+    queue = [item | queue]
+
+    state = %{state | queue: queue, current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
     state = add_to_history(state, item)
     state = schedule_sync_correction(state)
     fetch_sponsor_segments(item)
 
-    broadcast(state, {:video_changed, %{media_item: item, index: index}})
-    broadcast(state, {:queue_updated, %{queue: state.queue, current_index: index}})
+    broadcast(state, {:video_changed, %{media_item: item, index: 0}})
+    broadcast(state, {:queue_updated, %{queue: queue, current_index: 0}})
     {:reply, :ok, state}
   end
 
@@ -545,14 +554,14 @@ defmodule Byob.RoomServer do
         state
 
       idx ->
-        # Insert new item right after current, then play it
-        insert_at = idx + 1
-        queue = List.insert_at(state.queue, insert_at, item)
-        state = %{state | queue: queue, current_index: insert_at, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
+        # Remove old now-playing, put new item at front
+        queue = List.delete_at(state.queue, idx)
+        queue = [item | queue]
+        state = %{state | queue: queue, current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
         state = add_to_history(state, item)
         state = schedule_sync_correction(state)
         fetch_sponsor_segments(item)
-        broadcast(state, {:video_changed, %{media_item: item, index: insert_at}})
+        broadcast(state, {:video_changed, %{media_item: item, index: 0}})
         state
     end
   end
