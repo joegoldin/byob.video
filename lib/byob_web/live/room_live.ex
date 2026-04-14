@@ -142,6 +142,9 @@ defmodule ByobWeb.RoomLive do
   def handle_event("url:focus", params, socket), do: UrlPreview.handle_url_focus(params, socket)
   def handle_event("url:blur", params, socket), do: UrlPreview.handle_url_blur(params, socket)
   def handle_event("preview_url", params, socket), do: UrlPreview.handle_preview_url(params, socket)
+  def handle_event("clear_url", _params, socket) do
+    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
+  end
 
   def handle_event("history:play", params, socket), do: Queue.handle_history_play(params, socket)
 

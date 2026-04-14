@@ -2,6 +2,12 @@
 
 ---
 
+# v3.3.0
+
+- Clear button (x) on the right side of the URL input bar
+
+---
+
 # v3.2.0
 
 - Per-browser toggle to show/hide YouTube comments (persisted in localStorage, configurable in settings)
