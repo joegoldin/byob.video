@@ -48,6 +48,12 @@ defmodule ByobWeb.Endpoint do
 
   plug Plug.MethodOverride
   plug Plug.Head
+
+  # Allow autoplay for YouTube embeds
+  plug :permissions_policy
+  defp permissions_policy(conn, _opts) do
+    Plug.Conn.put_resp_header(conn, "permissions-policy", "autoplay=*, encrypted-media=*")
+  end
   plug Plug.Session, @session_options
   plug ByobWeb.Router
 end

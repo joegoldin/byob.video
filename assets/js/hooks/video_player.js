@@ -279,6 +279,7 @@ const VideoPlayer = {
           if (iframe) {
             iframe.style.width = "100%";
             iframe.style.height = "100%";
+            iframe.allow = "autoplay; encrypted-media; picture-in-picture";
           }
           this._applyPendingState();
           this._startSeekDetector();

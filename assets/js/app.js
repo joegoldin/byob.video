@@ -159,6 +159,12 @@ const QueueContextMenu = {
   },
 }
 
+const ScrollBottom = {
+  mounted() { this._scroll(); },
+  updated() { this._scroll(); },
+  _scroll() { this.el.scrollTop = this.el.scrollHeight; },
+}
+
 const LocalTime = {
   mounted() { this._format() },
   updated() { this._format() },
@@ -170,9 +176,9 @@ const LocalTime = {
   },
 }
 
-// Stable per-browser ID: all tabs in same browser share one identity
-if (!localStorage.getItem("byob_browser_id")) {
-  localStorage.setItem("byob_browser_id", crypto.randomUUID())
+// Per-tab ID: each tab is an independent user for sync purposes
+if (!sessionStorage.getItem("byob_tab_id")) {
+  sessionStorage.setItem("byob_tab_id", crypto.randomUUID())
 }
 
 // Detect duplicate room tabs — show a small notice, don't block
@@ -206,9 +212,9 @@ const liveSocket = new LiveSocket("/live", Socket, {
   params: () => ({
     _csrf_token: csrfToken,
     stored_username: localStorage.getItem("watchparty_username"),
-    tab_id: localStorage.getItem("byob_browser_id"),
+    tab_id: sessionStorage.getItem("byob_tab_id"),
   }),
-  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu},
+  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu, ScrollBottom},
 })
 
 // Listen for username changes to persist to localStorage

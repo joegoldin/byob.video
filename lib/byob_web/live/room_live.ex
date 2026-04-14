@@ -252,7 +252,14 @@ defmodule ByobWeb.RoomLive do
     new_username = String.trim(new_username)
 
     if new_username != "" and String.length(new_username) <= 30 do
+      # Rename this tab's user
       RoomServer.rename_user(socket.assigns.room_pid, socket.assigns.user_id, new_username)
+      # Also rename other tabs of the same user
+      [base | _] = String.split(socket.assigns.user_id, ":", parts: 2)
+      state = RoomServer.get_state(socket.assigns.room_pid)
+      for {uid, _} <- state.users, uid != socket.assigns.user_id, String.starts_with?(uid, base <> ":") do
+        RoomServer.rename_user(socket.assigns.room_pid, uid, new_username)
+      end
 
       socket =
         socket
@@ -912,8 +919,8 @@ defmodule ByobWeb.RoomLive do
         <div class="card bg-base-200 mt-2 flex-shrink-0">
           <div class="card-body p-3">
             <h3 class="card-title text-xs text-base-content/40">Activity</h3>
-            <ul class="space-y-0.5 mt-1 max-h-32 overflow-y-auto text-[11px] text-base-content/50 leading-relaxed">
-              <li :for={entry <- Enum.take(@activity_log, 30)} class="flex gap-1">
+            <ul id="activity-log" phx-hook="ScrollBottom" class="space-y-0.5 mt-1 max-h-32 overflow-y-auto text-[11px] text-base-content/50 leading-relaxed">
+              <li :for={entry <- Enum.reverse(Enum.take(@activity_log, 30))} class="flex gap-1">
                 <span :if={entry.action == :joined} class="text-success/60 flex-shrink-0">+</span>
                 <span :if={entry.action == :left} class="text-error/60 flex-shrink-0">-</span>
                 <span :if={entry.action == :play} class="text-success/60 flex-shrink-0">&#9654;</span>
@@ -940,7 +947,7 @@ defmodule ByobWeb.RoomLive do
           <div class="card-body p-4">
             <h3 class="card-title text-sm">
               Users
-              <span class="badge badge-sm">{map_size(@users)}</span>
+              <span class="badge badge-sm">{@users |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq() |> length()}</span>
             </h3>
             <ul class="space-y-2 mt-1 max-h-48 overflow-y-auto">
               <li
@@ -950,14 +957,15 @@ defmodule ByobWeb.RoomLive do
               >
                 <div class={"w-2 h-2 rounded-full flex-shrink-0 #{if user.connected, do: "bg-success", else: "bg-base-content/20"}"}  />
                 <%!-- Other users: just show name --%>
-                <span :if={uid != @user_id} class="truncate">{user.username}</span>
-                <%!-- Self: show name + edit, or edit form --%>
+                <span :if={!is_self_user(uid, @user_id)} class="truncate">{user.username}</span>
+                <%!-- Self: show name + tab indicator --%>
                 <span
-                  :if={uid == @user_id && !@editing_username}
+                  :if={is_self_user(uid, @user_id) && !@editing_username}
                   class="truncate flex-1"
                 >
                   <span class="font-bold">{user.username}</span>
-                  <span class="text-base-content/40 font-normal">(you)</span>
+                  <span :if={uid == @user_id} class="text-base-content/40 font-normal">(you)</span>
+                  <span :if={uid != @user_id} class="text-base-content/30 font-normal text-xs">(other tab)</span>
                 </span>
                 <button
                   :if={uid == @user_id && !@editing_username}
@@ -1049,6 +1057,12 @@ defmodule ByobWeb.RoomLive do
   defp format_log_entry(%{action: :skipped}), do: "Skipped to next"
   defp format_log_entry(%{action: :renamed, detail: detail}), do: "Renamed: #{detail}"
   defp format_log_entry(_), do: nil
+
+  defp is_self_user(uid, my_user_id) do
+    # user_ids are "session_id:tab_id" — same session = same person
+    [my_base | _] = String.split(my_user_id, ":", parts: 2)
+    String.starts_with?(uid, my_base <> ":")
+  end
 
   defp ensure_room_pid(socket) do
     pid = socket.assigns[:room_pid]
