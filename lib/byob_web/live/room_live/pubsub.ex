@@ -141,7 +141,7 @@ defmodule ByobWeb.RoomLive.PubSub do
     log = Enum.take([entry | socket.assigns.activity_log], 50)
     socket = assign(socket, activity_log: log)
     # Push toast to client
-    socket = push_event(socket, "toast", %{text: ByobWeb.RoomLive.format_log_entry(entry)})
+    socket = push_event(socket, "toast", %{text: ByobWeb.RoomLive.Components.format_log_entry(entry)})
     {:noreply, socket}
   end
 end
