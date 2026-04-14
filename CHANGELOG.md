@@ -2,6 +2,17 @@
 
 ---
 
+# v2.0.2
+
+- Detect seeks while playing (3s threshold) — no longer missed in activity log
+- Suppress duplicate play/pause log entries (only log actual state transitions)
+- Hide YouTube URLs in sidebar when title is available (cleaner queue display)
+- Non-YouTube sites and titleless items still show URL
+- Auto-suspend machine when idle, cap to 1 machine (cost savings)
+- Auto-reload page after 5s server disconnect (deploy/restart)
+
+---
+
 # v2.0.0
 
 ## Analytics
