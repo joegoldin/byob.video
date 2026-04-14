@@ -2,6 +2,18 @@
 
 ---
 
+# v1.4.0
+
+## Queue management and embed fallback
+
+- Clicking a queue item replaces now-playing (old item removed), all others stay as Up Next
+- Play Now replaces now-playing, puts new video at front of queue
+- Only auto-advance (video end) removes the finished item
+- Age-restricted / embed-blocked YouTube videos: fallback UI with "Watch on YouTube" button and extension sync hint
+- YouTube IFrame error codes 100, 101, 150 detected and handled
+
+---
+
 # v1.3.5
 
 ## Queue and sync improvements
