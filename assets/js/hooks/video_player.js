@@ -704,8 +704,9 @@ const VideoPlayer = {
         : this.sourceType === "direct_url"
           ? this.player.paused
           : false;
-      // Only detect seeks while paused
-      if (isPaused && Math.abs(pos - this.lastKnownPosition) > 1) {
+      // Detect seeks: large position jumps (>3s while playing, >1s while paused)
+      const jumpThreshold = isPaused ? 1 : 3;
+      if (Math.abs(pos - this.lastKnownPosition) > jumpThreshold) {
         if (!this.suppression.isActive()) {
           this.pushEvent("video:seek", { position: pos });
           const serverTime = this.clockSync.serverNow();

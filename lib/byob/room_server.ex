@@ -216,10 +216,15 @@ defmodule Byob.RoomServer do
 
       {:ok, state} ->
         now = System.monotonic_time(:millisecond)
+        was_paused = state.play_state != :playing
         state = %{state | play_state: :playing, current_time: position, last_sync_at: now}
         state = schedule_sync_correction(state)
-        current_title = current_media_title(state)
-        state = log_activity(state, :play, user_id, current_title)
+        # Only log play if actually transitioning from paused (not seek-resume)
+        state = if was_paused do
+          log_activity(state, :play, user_id, current_media_title(state))
+        else
+          state
+        end
         broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
         {:reply, :ok, state}
     end
@@ -232,10 +237,15 @@ defmodule Byob.RoomServer do
 
       {:ok, state} ->
         now = System.monotonic_time(:millisecond)
+        was_playing = state.play_state == :playing
         state = %{state | play_state: :paused, current_time: position, last_sync_at: now}
         state = cancel_sync_correction(state)
-        current_title = current_media_title(state)
-        state = log_activity(state, :pause, user_id, current_title)
+        # Only log pause if actually transitioning from playing
+        state = if was_playing do
+          log_activity(state, :pause, user_id, current_media_title(state))
+        else
+          state
+        end
         broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
         {:reply, :ok, state}
     end
