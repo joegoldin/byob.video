@@ -367,6 +367,17 @@ defmodule ByobWeb.RoomLive do
         socket
       end
 
+    # Push metadata to JS hook so it can update cached title/thumbnail
+    socket =
+      if current_media && (current_media.title || current_media.thumbnail_url) do
+        push_event(socket, "media:metadata", %{
+          title: current_media.title,
+          thumbnail_url: current_media.thumbnail_url
+        })
+      else
+        socket
+      end
+
     {:noreply, socket}
   end
 

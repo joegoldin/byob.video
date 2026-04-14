@@ -70,6 +70,10 @@ const VideoPlayer = {
     });
     this.handleEvent("video:change", (data) => this._onVideoChange(data));
     this.handleEvent("queue:ended", () => this._onQueueEnded());
+    this.handleEvent("media:metadata", (data) => {
+      if (data.title) this._lastTitle = data.title;
+      if (data.thumbnail_url) this._lastThumb = data.thumbnail_url;
+    });
     this.handleEvent("toast", (data) => this._showToast(data.text));
 
     // Size the player to fit viewport: cap height so aspect-ratio shrinks width
@@ -193,7 +197,8 @@ const VideoPlayer = {
     this.sourceType = sourceType;
     this.sourceId = sourceId;
     this._lastTitle = mediaItem?.title || url;
-    this._lastThumb = mediaItem?.thumbnail_url;
+    this._lastThumb = mediaItem?.thumbnail_url ||
+      (sourceType === "youtube" && sourceId ? `https://img.youtube.com/vi/${sourceId}/hqdefault.jpg` : null);
     this._embedBlocked = false;
     if (this._extPollInterval) { clearInterval(this._extPollInterval); this._extPollInterval = null; }
 
@@ -601,13 +606,6 @@ const VideoPlayer = {
     const container = document.createElement("div");
     container.className = "absolute inset-0 flex flex-col items-center justify-center gap-4 bg-base-300";
 
-    if (lastThumb) {
-      const img = document.createElement("img");
-      img.src = lastThumb;
-      img.className = "w-48 h-28 object-cover rounded-lg opacity-50";
-      container.appendChild(img);
-    }
-
     const icon = document.createElement("div");
     icon.className = "w-12 h-12 rounded-full bg-success/20 flex items-center justify-center";
     icon.innerHTML = '<svg class="w-6 h-6 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
@@ -618,10 +616,29 @@ const VideoPlayer = {
     heading.textContent = "Queue finished";
     container.appendChild(heading);
 
+    // Last played card with thumbnail + title
+    const card = document.createElement("div");
+    card.className = "flex items-center gap-3 bg-base-100/30 rounded-lg p-3 max-w-sm";
+
+    if (lastThumb) {
+      const img = document.createElement("img");
+      img.src = lastThumb;
+      img.className = "w-20 h-12 object-cover rounded flex-shrink-0";
+      card.appendChild(img);
+    }
+
+    const info = document.createElement("div");
+    info.className = "flex-1 min-w-0";
     const title = document.createElement("p");
-    title.className = "text-sm text-base-content/40 max-w-md text-center px-6 line-clamp-2";
-    title.textContent = `Last played: ${lastTitle}`;
-    container.appendChild(title);
+    title.className = "text-sm text-base-content/50 line-clamp-2";
+    title.textContent = lastTitle;
+    info.appendChild(title);
+    const sub = document.createElement("p");
+    sub.className = "text-xs text-base-content/30";
+    sub.textContent = "Last played";
+    info.appendChild(sub);
+    card.appendChild(info);
+    container.appendChild(card);
 
     const hint = document.createElement("p");
     hint.className = "text-xs text-base-content/25 mt-2";

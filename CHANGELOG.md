@@ -2,6 +2,14 @@
 
 ---
 
+# v2.0.7
+
+- Queue finished screen shows video title and thumbnail instead of raw URL
+- Default YouTube thumbnail at load time (no waiting for oembed)
+- Push metadata updates to JS hook when oembed results arrive
+
+---
+
 # v2.0.6
 
 - Activity log: "Now playing: TITLE (added by NAME)" for auto-play/queue start
