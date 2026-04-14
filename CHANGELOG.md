@@ -2,6 +2,13 @@
 
 ---
 
+# v3.3.2
+
+- Clear button stays visible while input is focused
+- Fix clear button vertical centering in URL input
+
+---
+
 # v3.3.1
 
 - Fix clear button vertical centering in URL input
