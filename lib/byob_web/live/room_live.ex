@@ -207,6 +207,12 @@ defmodule ByobWeb.RoomLive do
         </div>
         </div>
 
+        <Comments.comments_panel
+          comments={@comments}
+          comments_total={@comments_total}
+          comments_next_page={@comments_next_page}
+        />
+
         <%!-- Extension mode banner --%>
         <div
           :if={@current_media && @current_media.source_type == :extension_required}

@@ -1,9 +1,76 @@
 defmodule ByobWeb.RoomLive.Comments do
   @moduledoc """
-  Handles YouTube comments load-more pagination for RoomLive.
+  Handles YouTube comments load-more pagination for RoomLive,
+  and provides the comments panel function component.
   """
 
-  import Phoenix.Component, only: [assign: 2]
+  use Phoenix.Component
+
+  @doc """
+  Renders the YouTube comments panel below the video player.
+  """
+  attr :comments, :list, default: nil
+  attr :comments_total, :integer, default: nil
+  attr :comments_next_page, :string, default: nil
+
+  def comments_panel(assigns) do
+    ~H"""
+    <div :if={@comments && @comments != []} class="relative max-h-[200px] overflow-y-auto bg-base-200 rounded-lg mx-1 mb-2">
+      <%!-- Header --%>
+      <div class="sticky top-0 bg-base-200 px-3 py-2 border-b border-base-300 z-10">
+        <span class="text-xs font-semibold text-base-content/60">Comments</span>
+        <span :if={@comments_total} class="text-xs bg-base-300 px-1.5 py-0.5 rounded-full text-base-content/40 ml-1">{@comments_total}</span>
+      </div>
+
+      <%!-- Comment list --%>
+      <div class="divide-y divide-base-300/50">
+        <div :for={comment <- @comments} class="flex gap-2.5 px-3 py-2.5">
+          <%!-- Avatar --%>
+          <img src={comment.author_avatar} class="w-7 h-7 rounded-full flex-shrink-0 mt-0.5" />
+          <%!-- Content --%>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-baseline gap-1.5">
+              <span class="text-xs font-semibold text-base-content/80">{comment.author}</span>
+              <span class="text-[10px] text-base-content/30">{relative_time(comment.published_at)}</span>
+            </div>
+            <p class="text-xs text-base-content/60 mt-0.5 whitespace-pre-line break-words">{comment.text}</p>
+            <div class="flex gap-3 mt-1">
+              <span :if={comment.likes > 0} class="text-[10px] text-base-content/30">👍 {comment.likes}</span>
+              <span :if={comment.reply_count > 0} class="text-[10px] text-base-content/30">💬 {comment.reply_count}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <%!-- Load more --%>
+      <div :if={@comments_next_page} class="px-3 py-2 text-center border-t border-base-300">
+        <button phx-click="comments:load_more" class="text-xs text-primary hover:underline">Load more comments</button>
+      </div>
+    </div>
+    """
+  end
+
+  defp relative_time(iso_string) when is_binary(iso_string) do
+    case DateTime.from_iso8601(iso_string) do
+      {:ok, dt, _} ->
+        diff = DateTime.diff(DateTime.utc_now(), dt, :second)
+
+        cond do
+          diff < 60 -> "just now"
+          diff < 3600 -> "#{div(diff, 60)} min ago"
+          diff < 86_400 -> "#{div(diff, 3600)}h ago"
+          diff < 604_800 -> "#{div(diff, 86_400)}d ago"
+          diff < 2_592_000 -> "#{div(diff, 604_800)}w ago"
+          diff < 31_536_000 -> "#{div(diff, 2_592_000)}mo ago"
+          true -> "#{div(diff, 31_536_000)}y ago"
+        end
+
+      _ ->
+        ""
+    end
+  end
+
+  defp relative_time(_), do: ""
 
   def handle_load_more(_params, socket) do
     video_id = socket.assigns[:comments_video_id]
