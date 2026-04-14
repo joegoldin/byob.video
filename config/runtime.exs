@@ -48,6 +48,9 @@ if config_env() == :prod do
       in_app_otp_apps: [:byob]
   end
 
+  # YouTube API key (optional, enables YouTube comments panel)
+  config :byob, :youtube_api_key, System.get_env("YOUTUBE_API_KEY")
+
   config :byob, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
   config :byob, ByobWeb.Endpoint,

@@ -60,6 +60,7 @@ fly deploy --app byob-video # Deploy to production
 - `PHX_SERVER=true` — start HTTP server
 - `BYOB_DB_PATH` — SQLite path (default: `priv/byob.db`)
 - `POSTHOG_API_KEY` — optional, enables analytics
+- `YOUTUBE_API_KEY` — optional, enables YouTube comments panel
 - `PORT` — HTTP port (default: 4000)
 
 ## Gotchas
