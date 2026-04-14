@@ -47,7 +47,7 @@ defmodule ByobWeb.RoomLive.Components do
         </button>
         <div class="relative flex-1 min-w-0 max-w-[40vw]">
           <form phx-submit="add_url" phx-change="preview_url" id="url-form">
-            <div class="relative flex items-center">
+            <div class="relative flex items-center" id="url-input-wrapper">
               <input
                 type="text"
                 name="url"
@@ -58,12 +58,14 @@ defmodule ByobWeb.RoomLive.Components do
                 phx-debounce="300"
                 phx-focus="url:focus"
                 phx-blur="url:blur"
+                oninput="this.parentElement.querySelector('.url-clear-btn').classList.toggle('hidden', !this.value)"
               />
               <button
+                id="url-clear-btn"
                 type="button"
                 phx-click="clear_url"
                 onmousedown="event.preventDefault()"
-                class={"absolute inset-y-0 right-0 flex items-center pr-2 text-base-content/30 hover:text-base-content/60 transition-colors #{if !@preview_url || @preview_url == "", do: "hidden"}"}
+                class={"url-clear-btn absolute inset-y-0 right-0 flex items-center pr-2 text-base-content/30 hover:text-base-content/60 transition-colors #{if !@preview_url || @preview_url == "", do: "hidden"}"}
               >
                 <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />

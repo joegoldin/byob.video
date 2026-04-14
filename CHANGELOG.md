@@ -2,6 +2,12 @@
 
 ---
 
+# v3.3.4
+
+- Fix clear button visibility during focus/re-render (stable DOM id + client-side toggle)
+
+---
+
 # v3.3.3
 
 - Clear button visible while input is focused (no DOM churn on re-render)
