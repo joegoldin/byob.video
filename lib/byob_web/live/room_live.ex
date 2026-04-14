@@ -2,7 +2,7 @@ defmodule ByobWeb.RoomLive do
   use ByobWeb, :live_view
 
   alias Byob.{RoomManager, RoomServer}
-  alias ByobWeb.RoomLive.{Playback, Queue, UrlPreview, Username}
+  alias ByobWeb.RoomLive.{Playback, PubSub, Queue, UrlPreview, Username}
 
   def mount(%{"id" => room_id}, _session, socket) do
     if not Regex.match?(~r/^[a-z0-9]{1,16}$/, room_id) do
@@ -152,143 +152,22 @@ defmodule ByobWeb.RoomLive do
 
   # PubSub messages from RoomServer
 
-  def handle_info({:sync_play, data}, socket) do
-    {:noreply, push_event(socket, "sync:play", data)}
-  end
-
-  def handle_info({:sync_pause, data}, socket) do
-    {:noreply, push_event(socket, "sync:pause", data)}
-  end
-
-  def handle_info({:sync_seek, data}, socket) do
-    {:noreply, push_event(socket, "sync:seek", data)}
-  end
-
-  def handle_info({:sync_correction, data}, socket) do
-    {:noreply, push_event(socket, "sync:correction", data)}
-  end
-
-  def handle_info({:queue_updated, %{queue: queue, current_index: current_index}}, socket) do
-    current_media = if current_index, do: Enum.at(queue, current_index), else: nil
-
-    # Refresh history from RoomServer
-    history =
-      case RoomServer.get_state(socket.assigns.room_pid) do
-        %{history: h} -> h
-        _ -> socket.assigns.history
-      end
-
-    socket =
-      assign(socket,
-        queue: queue,
-        current_index: current_index,
-        current_media: current_media,
-        history: history
-      )
-
-    # Push updated media info to JS for extension placeholder
-    socket =
-      if current_media && current_media.source_type == :extension_required do
-        push_event(socket, "ext:media-info", %{
-          title: current_media.title,
-          thumbnail_url: current_media.thumbnail_url,
-          url: current_media.url
-        })
-      else
-        socket
-      end
-
-    # Push metadata to JS hook so it can update cached title/thumbnail
-    socket =
-      if current_media && (current_media.title || current_media.thumbnail_url) do
-        push_event(socket, "media:metadata", %{
-          title: current_media.title,
-          thumbnail_url: current_media.thumbnail_url
-        })
-      else
-        socket
-      end
-
-    {:noreply, socket}
-  end
-
-  def handle_info({:sponsor_segments, data}, socket) do
-    {:noreply, push_event(socket, "sponsor:segments", data)}
-  end
-
-  def handle_info({:queue_ended, _}, socket) do
-    history =
-      case RoomServer.get_state(socket.assigns.room_pid) do
-        %{history: h} -> h
-        _ -> socket.assigns.history
-      end
-
-    socket =
-      assign(socket,
-        play_state: :ended,
-        current_index: nil,
-        history: history
-      )
-
-    {:noreply, push_event(socket, "queue:ended", %{})}
-  end
-
-  def handle_info({:video_changed, data}, socket) do
-    socket = assign(socket, ext_player: nil)
-    history =
-      case RoomServer.get_state(socket.assigns.room_pid) do
-        %{history: h} -> h
-        _ -> socket.assigns.history
-      end
-
-    socket =
-      assign(socket,
-        current_media: data.media_item,
-        current_index: data.index,
-        play_state: :playing,
-        history: history
-      )
-
-    {:noreply, push_event(socket, "video:change", serialize_media_item(data))}
-  end
+  def handle_info({:sync_play, data}, socket), do: PubSub.handle_sync_play(data, socket)
+  def handle_info({:sync_pause, data}, socket), do: PubSub.handle_sync_pause(data, socket)
+  def handle_info({:sync_seek, data}, socket), do: PubSub.handle_sync_seek(data, socket)
+  def handle_info({:sync_correction, data}, socket), do: PubSub.handle_sync_correction(data, socket)
+  def handle_info({:queue_updated, data}, socket), do: PubSub.handle_queue_updated(data, socket)
+  def handle_info({:sponsor_segments, data}, socket), do: PubSub.handle_sponsor_segments(data, socket)
+  def handle_info({:queue_ended, data}, socket), do: PubSub.handle_queue_ended(data, socket)
+  def handle_info({:video_changed, data}, socket), do: PubSub.handle_video_changed(data, socket)
 
   def handle_info({:url_preview_result, result}, socket), do: UrlPreview.handle_preview_result(result, socket)
 
-  def handle_info({:sb_settings_updated, sb_settings}, socket) do
-    # Push updated settings to JS for the auto-skip logic
-    {:noreply, socket |> assign(sb_settings: sb_settings) |> push_event("sb:settings", sb_settings)}
-  end
-
-  def handle_info({:extension_player_state, state}, socket) do
-    current = socket.assigns.ext_player
-    # Only update if: no current state, same user, or new state is playing
-    should_update =
-      current == nil ||
-      state.playing ||
-      state[:user_id] == current[:user_id]
-
-    if should_update do
-      {:noreply, socket |> assign(ext_player: state) |> push_event("ext:player-state", state)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_info({:users_updated, users}, socket) do
-    {:noreply, assign(socket, users: users)}
-  end
-
-  def handle_info({:activity_log_updated, log}, socket) do
-    {:noreply, assign(socket, activity_log: Enum.take(log, 50))}
-  end
-
-  def handle_info({:activity_log_entry, entry}, socket) do
-    log = Enum.take([entry | socket.assigns.activity_log], 50)
-    socket = assign(socket, activity_log: log)
-    # Push toast to client
-    socket = push_event(socket, "toast", %{text: format_log_entry(entry)})
-    {:noreply, socket}
-  end
+  def handle_info({:sb_settings_updated, sb_settings}, socket), do: PubSub.handle_sb_settings_updated(sb_settings, socket)
+  def handle_info({:extension_player_state, state}, socket), do: PubSub.handle_extension_player_state(state, socket)
+  def handle_info({:users_updated, users}, socket), do: PubSub.handle_users_updated(users, socket)
+  def handle_info({:activity_log_updated, log}, socket), do: PubSub.handle_activity_log_updated(log, socket)
+  def handle_info({:activity_log_entry, entry}, socket), do: PubSub.handle_activity_log_entry(entry, socket)
 
   def handle_info(_msg, socket) do
     {:noreply, socket}
@@ -904,18 +783,18 @@ defmodule ByobWeb.RoomLive do
 
   # Private helpers
 
-  defp format_log_entry(%{action: :joined, user: user}), do: "#{user} joined"
-  defp format_log_entry(%{action: :left, user: user}), do: "#{user} left"
-  defp format_log_entry(%{action: :now_playing, detail: detail}), do: "Now playing: #{detail}"
-  defp format_log_entry(%{action: :play, user: user, detail: nil}), do: "#{user} resumed"
-  defp format_log_entry(%{action: :play, user: user, detail: title}), do: "#{user} resumed #{title}"
-  defp format_log_entry(%{action: :pause, user: user, detail: nil}), do: "#{user} paused"
-  defp format_log_entry(%{action: :pause, user: user, detail: title}), do: "#{user} paused #{title}"
-  defp format_log_entry(%{action: :added, user: user, detail: url}), do: "#{user} added #{url}"
-  defp format_log_entry(%{action: :seeked, user: user, detail: detail}), do: "#{user} seeked #{detail}"
-  defp format_log_entry(%{action: :skipped}), do: "Skipped to next"
-  defp format_log_entry(%{action: :renamed, detail: detail}), do: "Renamed: #{detail}"
-  defp format_log_entry(_), do: nil
+  def format_log_entry(%{action: :joined, user: user}), do: "#{user} joined"
+  def format_log_entry(%{action: :left, user: user}), do: "#{user} left"
+  def format_log_entry(%{action: :now_playing, detail: detail}), do: "Now playing: #{detail}"
+  def format_log_entry(%{action: :play, user: user, detail: nil}), do: "#{user} resumed"
+  def format_log_entry(%{action: :play, user: user, detail: title}), do: "#{user} resumed #{title}"
+  def format_log_entry(%{action: :pause, user: user, detail: nil}), do: "#{user} paused"
+  def format_log_entry(%{action: :pause, user: user, detail: title}), do: "#{user} paused #{title}"
+  def format_log_entry(%{action: :added, user: user, detail: url}), do: "#{user} added #{url}"
+  def format_log_entry(%{action: :seeked, user: user, detail: detail}), do: "#{user} seeked #{detail}"
+  def format_log_entry(%{action: :skipped}), do: "Skipped to next"
+  def format_log_entry(%{action: :renamed, detail: detail}), do: "Renamed: #{detail}"
+  def format_log_entry(_), do: nil
 
   defp show_url?(item) do
     has_title = is_binary(item.title) and item.title != ""
@@ -972,11 +851,11 @@ defmodule ByobWeb.RoomLive do
     }
   end
 
-  defp serialize_media_item(%{media_item: item, index: index}) do
+  def serialize_media_item(%{media_item: item, index: index}) do
     %{media_item: serialize_item(item), index: index}
   end
 
-  defp serialize_item(%Byob.MediaItem{} = item) do
+  def serialize_item(%Byob.MediaItem{} = item) do
     %{
       id: item.id,
       url: item.url,
@@ -987,7 +866,7 @@ defmodule ByobWeb.RoomLive do
     }
   end
 
-  defp serialize_item(item) when is_map(item) do
+  def serialize_item(item) when is_map(item) do
     %{
       id: item[:id] || item["id"],
       url: item[:url] || item["url"],
