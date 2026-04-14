@@ -31,7 +31,7 @@ defmodule ByobWeb.RoomLiveTest do
     end
 
     test "submitting a YouTube URL adds it to the queue", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/room/testroom_queue")
+      {:ok, view, _html} = live(conn, "/room/testroomqueue")
 
       view
       |> render_submit("add_url", %{"url" => "https://youtube.com/watch?v=dQw4w9WgXcQ", "mode" => "queue"})

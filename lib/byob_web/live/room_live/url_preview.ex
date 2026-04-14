@@ -15,6 +15,9 @@ defmodule ByobWeb.RoomLive.UrlPreview do
   end
 
   def handle_url_blur(_params, socket) do
+    # Delay clearing the preview so that clicks on "Play Now"/"Queue" buttons
+    # in the dropdown can fire before the preview disappears
+    Process.send_after(self(), :clear_url_preview, 200)
     {:noreply, assign(socket, url_focused: false)}
   end
 
@@ -91,6 +94,10 @@ defmodule ByobWeb.RoomLive.UrlPreview do
       Byob.Analytics.video_added(socket.assigns[:browser_id] || socket.assigns.user_id, socket.assigns.room_id, source_type)
       RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :queue)
     end
+    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
+  end
+
+  def handle_clear_preview(socket) do
     {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
   end
 

@@ -105,15 +105,20 @@ defmodule Byob.RoomServerTest do
       assert state.play_state == :playing
     end
 
-    test "play now with existing queue inserts after current and jumps", %{pid: pid} do
+    test "play now with existing queue removes old now-playing and puts new at front", %{pid: pid} do
       {:ok, _} = RoomServer.join(pid, "user1", "Test")
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=first", :now)
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=queued", :queue)
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=playnow", :now)
 
       state = RoomServer.get_state(pid)
-      assert state.current_index == 1
-      assert Enum.at(state.queue, 1).source_id == "playnow"
+      # :now always puts the new item at index 0, removing the old now-playing
+      assert state.current_index == 0
+      assert Enum.at(state.queue, 0).source_id == "playnow"
+      # "queued" is still in the queue after the new item
+      assert Enum.at(state.queue, 1).source_id == "queued"
+      # "first" was removed (it was the old now-playing)
+      assert length(state.queue) == 2
     end
   end
 
@@ -131,19 +136,19 @@ defmodule Byob.RoomServerTest do
       assert length(state.queue) == 1
     end
 
-    test "adjusts current_index when removing before current", %{pid: pid} do
+    test "removing now-playing item sets current_index to nil", %{pid: pid} do
       {:ok, _} = RoomServer.join(pid, "user1", "Test")
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=a", :queue)
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=b", :queue)
-      :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=c", :queue)
-      RoomServer.play_index(pid, 2)
 
       state = RoomServer.get_state(pid)
-      first_id = Enum.at(state.queue, 0).id
-      :ok = RoomServer.remove_from_queue(pid, first_id)
+      assert state.current_index == 0
+      now_playing_id = Enum.at(state.queue, 0).id
+      :ok = RoomServer.remove_from_queue(pid, now_playing_id)
 
       state = RoomServer.get_state(pid)
-      assert state.current_index == 1
+      assert state.current_index == nil
+      assert length(state.queue) == 1
     end
   end
 
@@ -155,8 +160,11 @@ defmodule Byob.RoomServerTest do
 
       :ok = RoomServer.skip(pid)
       state = RoomServer.get_state(pid)
-      assert state.current_index == 1
+      # advance_queue removes the played item, next becomes index 0
+      assert state.current_index == 0
       assert state.play_state == :playing
+      assert length(state.queue) == 1
+      assert hd(state.queue).source_id == "b"
     end
 
     test "sets ended at end of queue", %{pid: pid} do
@@ -177,19 +185,25 @@ defmodule Byob.RoomServerTest do
 
       :ok = RoomServer.video_ended(pid, 0)
       state = RoomServer.get_state(pid)
-      assert state.current_index == 1
+      # advance_queue removes played item, next becomes index 0
+      assert state.current_index == 0
+      assert length(state.queue) == 1
+      assert hd(state.queue).source_id == "b"
     end
 
     test "no-ops when index is stale", %{pid: pid} do
       {:ok, _} = RoomServer.join(pid, "user1", "Test")
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=a", :now)
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=b", :queue)
+      :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=c", :queue)
       RoomServer.skip(pid)
 
-      # Stale: send ended for index 0 when we're already on 1
-      :ok = RoomServer.video_ended(pid, 0)
+      # After skip: "a" removed, queue=["b","c"], current_index=0
+      # Stale: send ended for index 5 (doesn't match current_index 0)
+      :stale = RoomServer.video_ended(pid, 5)
       state = RoomServer.get_state(pid)
-      assert state.current_index == 1
+      assert state.current_index == 0
+      assert hd(state.queue).source_id == "b"
     end
   end
 
@@ -202,9 +216,12 @@ defmodule Byob.RoomServerTest do
 
       :ok = RoomServer.play_index(pid, 2)
       state = RoomServer.get_state(pid)
-      assert state.current_index == 2
+      # play_index moves the target item to front, removes old now-playing
+      assert state.current_index == 0
       assert state.play_state == :playing
       assert state.current_time == 0.0
+      assert hd(state.queue).source_id == "c"
+      assert length(state.queue) == 2
     end
   end
 

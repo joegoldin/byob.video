@@ -168,6 +168,7 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:video_changed, data}, socket), do: PubSub.handle_video_changed(data, socket)
 
   def handle_info({:url_preview_result, result}, socket), do: UrlPreview.handle_preview_result(result, socket)
+  def handle_info(:clear_url_preview, socket), do: UrlPreview.handle_clear_preview(socket)
 
   def handle_info({:sb_settings_updated, sb_settings}, socket), do: PubSub.handle_sb_settings_updated(sb_settings, socket)
   def handle_info({:extension_player_state, state}, socket), do: PubSub.handle_extension_player_state(state, socket)

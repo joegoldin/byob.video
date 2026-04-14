@@ -5,7 +5,7 @@ defmodule ByobWeb.ExtensionChannelTest do
   alias Byob.RoomServer
 
   setup do
-    room_id = "ext_test_#{:erlang.unique_integer([:positive])}"
+    room_id = "exttest#{:erlang.unique_integer([:positive])}"
     {:ok, _pid} = Byob.RoomManager.ensure_room(room_id)
 
     {:ok, socket} =
