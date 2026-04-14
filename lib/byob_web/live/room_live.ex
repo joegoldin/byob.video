@@ -2,7 +2,7 @@ defmodule ByobWeb.RoomLive do
   use ByobWeb, :live_view
 
   alias Byob.{RoomManager, RoomServer}
-  alias ByobWeb.RoomLive.{Components, Playback, PubSub, Queue, UrlPreview, Username}
+  alias ByobWeb.RoomLive.{Comments, Components, Playback, PubSub, Queue, UrlPreview, Username}
 
   def mount(%{"id" => room_id}, _session, socket) do
     if not Regex.match?(~r/^[a-z0-9]{1,16}$/, room_id) do
@@ -34,7 +34,11 @@ defmodule ByobWeb.RoomLive do
         url_focused: false,
         api_key: nil,
         activity_log: [],
-        sb_settings: Byob.RoomServer.default_sb_settings()
+        sb_settings: Byob.RoomServer.default_sb_settings(),
+        comments: nil,
+        comments_next_page: nil,
+        comments_video_id: nil,
+        comments_total: nil
       )
 
     if connected?(socket) do
@@ -148,6 +152,8 @@ defmodule ByobWeb.RoomLive do
   def handle_event("username:cancel", params, socket), do: Username.handle_cancel(params, socket)
   def handle_event("username:change", params, socket), do: Username.handle_change(params, socket)
 
+  def handle_event("comments:load_more", params, socket), do: Comments.handle_load_more(params, socket)
+
   def handle_event("sync:ping", params, socket), do: Playback.handle_sync_ping(params, socket)
 
   # PubSub messages from RoomServer
@@ -168,6 +174,8 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:users_updated, users}, socket), do: PubSub.handle_users_updated(users, socket)
   def handle_info({:activity_log_updated, log}, socket), do: PubSub.handle_activity_log_updated(log, socket)
   def handle_info({:activity_log_entry, entry}, socket), do: PubSub.handle_activity_log_entry(entry, socket)
+  def handle_info({:comments_updated, data}, socket), do: PubSub.handle_comments_updated(data, socket)
+  def handle_info({:comments_page_result, _, _} = msg, socket), do: Comments.handle_page_result(msg, socket)
 
   def handle_info(_msg, socket) do
     {:noreply, socket}

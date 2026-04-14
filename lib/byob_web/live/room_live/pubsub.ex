@@ -103,7 +103,11 @@ defmodule ByobWeb.RoomLive.PubSub do
         current_media: data.media_item,
         current_index: data.index,
         play_state: :playing,
-        history: history
+        history: history,
+        comments: nil,
+        comments_video_id: nil,
+        comments_next_page: nil,
+        comments_total: nil
       )
 
     {:noreply, push_event(socket, "video:change", ByobWeb.RoomLive.serialize_media_item(data))}
@@ -143,5 +147,15 @@ defmodule ByobWeb.RoomLive.PubSub do
     # Push toast to client
     socket = push_event(socket, "toast", %{text: ByobWeb.RoomLive.Components.format_log_entry(entry)})
     {:noreply, socket}
+  end
+
+  def handle_comments_updated(data, socket) do
+    {:noreply,
+     assign(socket,
+       comments: data.comments,
+       comments_next_page: data.next_page_token,
+       comments_video_id: data.video_id,
+       comments_total: data.total_count
+     )}
   end
 end

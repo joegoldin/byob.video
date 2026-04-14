@@ -374,6 +374,7 @@ defmodule Byob.RoomServer do
     state = add_to_history(state, item)
     state = schedule_sync_correction(state)
     fetch_sponsor_segments(item)
+    state = fetch_comments_for_current(state)
 
     broadcast(state, {:video_changed, %{media_item: item, index: 0}})
     broadcast(state, {:queue_updated, %{queue: queue, current_index: 0}})
@@ -508,6 +509,21 @@ defmodule Byob.RoomServer do
     {:noreply, state}
   end
 
+  def handle_info({:comments_result, video_id, result}, state) do
+    current_item = if state.current_index, do: Enum.at(state.queue, state.current_index)
+
+    if current_item && current_item.source_id == video_id do
+      broadcast(state, {:comments_updated, %{
+        video_id: video_id,
+        comments: result.comments,
+        next_page_token: result.next_page_token,
+        total_count: result.total_count
+      }})
+    end
+
+    {:noreply, state}
+  end
+
   # Private helpers
 
   defp current_position(%{play_state: :playing} = state) do
@@ -580,6 +596,7 @@ defmodule Byob.RoomServer do
         state = log_activity(state, :now_playing, nil, detail)
         state = schedule_sync_correction(state)
         fetch_sponsor_segments(item)
+        state = fetch_comments_for_current(state)
         broadcast(state, {:video_changed, %{media_item: item, index: 0}})
         state
       else
@@ -597,6 +614,7 @@ defmodule Byob.RoomServer do
         state = add_to_history(state, item)
         state = schedule_sync_correction(state)
         fetch_sponsor_segments(item)
+        state = fetch_comments_for_current(state)
         broadcast(state, {:video_changed, %{media_item: item, index: 0}})
         state
 
@@ -608,6 +626,7 @@ defmodule Byob.RoomServer do
         state = add_to_history(state, item)
         state = schedule_sync_correction(state)
         fetch_sponsor_segments(item)
+        state = fetch_comments_for_current(state)
         broadcast(state, {:video_changed, %{media_item: item, index: 0}})
         state
     end
@@ -627,6 +646,7 @@ defmodule Byob.RoomServer do
       state = add_to_history(state, item)
       state = schedule_sync_correction(state)
       fetch_sponsor_segments(item)
+      state = fetch_comments_for_current(state)
       broadcast(state, {:video_changed, %{media_item: item, index: 0}})
       broadcast(state, {:queue_updated, %{queue: queue, current_index: 0}})
       state
@@ -733,5 +753,23 @@ defmodule Byob.RoomServer do
         end
       end)
     end
+  end
+
+  defp fetch_comments_for_current(state) do
+    current = Enum.at(state.queue, state.current_index)
+
+    if current && current.source_type == :youtube && current.source_id do
+      video_id = current.source_id
+      pid = self()
+
+      Task.start(fn ->
+        case Byob.YouTube.Comments.fetch(video_id) do
+          {:ok, result} -> send(pid, {:comments_result, video_id, result})
+          _ -> :ok
+        end
+      end)
+    end
+
+    state
   end
 end
