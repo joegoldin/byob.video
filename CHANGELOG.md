@@ -2,6 +2,13 @@
 
 ---
 
+# v2.0.5
+
+- CLAUDE.md project context for AI assistants with release workflow docs
+- Concise README with extension store links
+
+---
+
 # v2.0.4
 
 - Only log seeks >3s that don't start from 0:00 (filters video load, SponsorBlock skips, initial sync)
