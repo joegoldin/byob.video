@@ -2,6 +2,14 @@
 
 ---
 
+# v2.0.4
+
+- Only log seeks >3s that don't start from 0:00 (filters video load, SponsorBlock skips, initial sync)
+- Auto-detect extension install on embed-blocked page (polls, updates UI without refresh)
+- Privacy policy clarifies server-side analytics only (no tracking cookies/pixels)
+
+---
+
 # v2.0.3
 
 - Embed-blocked UI: detects extension, shows "Watch on YouTube" or "Get Extension" with correct store link
