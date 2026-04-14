@@ -2,6 +2,15 @@
 
 ---
 
+# v2.0.6
+
+- Activity log: "Now playing: TITLE (added by NAME)" for auto-play/queue start
+- "resumed" instead of "played" for manual unpause
+- No more "joe played" noise on auto-play
+- Auto-play from empty queue logs "Now playing" properly
+
+---
+
 # v2.0.5
 
 - CLAUDE.md project context for AI assistants with release workflow docs
