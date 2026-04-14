@@ -2,6 +2,31 @@
 
 ---
 
+# v3.0.0
+
+### Architecture refactor
+- Split `room_live.ex` (1200 → 336 lines) into 7 focused modules: UrlPreview, Playback, Queue, Username, PubSub, Components, Comments
+- Split `video_player.js` (1050 → 712 lines) into player modules (YouTube, Direct, Extension), SponsorBlock, toasts, queue finished screen
+- Sync engine classes (ClockSync, Suppression, Reconcile) in separate ES modules
+- Common player interface: create/play/pause/seek/destroy across all player types
+- SQLite schema versioning with migration runner framework
+- Scaling constraints documented in docs/scaling.md
+
+### YouTube comments panel
+- Always-visible scrollable comments section below the video player
+- Fetched server-side via YouTube Data API v3 (requires YOUTUBE_API_KEY)
+- ETS cache with 15-minute TTL per video
+- Graceful quota degradation — panel silently hidden when daily quota exhausted
+- "Load more" pagination
+- Relative time formatting (2h ago, 3d ago, etc.)
+
+### Fixes
+- URL preview dropdown hides on blur (click away to dismiss)
+- Fixed stale tests for queue behavior and room ID validation
+- All 76 tests passing
+
+---
+
 # v2.0.7
 
 - Queue finished screen shows video title and thumbnail instead of raw URL
