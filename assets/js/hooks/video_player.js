@@ -4,6 +4,9 @@ import { Reconcile } from "../sync/reconcile";
 import * as YouTubePlayer from "../players/youtube";
 import * as DirectPlayer from "../players/direct";
 import * as ExtensionPlayer from "../players/extension";
+import * as SponsorBlock from "../sponsor_block";
+import { showToast, showSkipToast } from "../ui/toasts";
+import { showQueueFinished } from "../ui/queue_finished";
 
 const VideoPlayer = {
   mounted() {
@@ -60,7 +63,7 @@ const VideoPlayer = {
     this.handleEvent("ext:media-info", (data) => this._onExtMediaInfo(data));
     this.handleEvent("sb:settings", (data) => {
       this.sbSettings = data;
-      this._applySponsorSettings();
+      this._applySponsorSettingsFull();
     });
     this.handleEvent("video:change", (data) => this._onVideoChange(data));
     this.handleEvent("queue:ended", () => this._onQueueEnded());
@@ -551,55 +554,11 @@ const VideoPlayer = {
     this.player = null;
     this.sourceType = null;
 
-    // Get last played item info from the current player element's last known state
-    const lastTitle = this._lastTitle || "the queue";
-    const lastThumb = this._lastThumb;
-
-    // Build finished screen with DOM APIs (no innerHTML)
-    const container = document.createElement("div");
-    container.className = "absolute inset-0 flex flex-col items-center justify-center gap-4 bg-base-300";
-
-    const icon = document.createElement("div");
-    icon.className = "w-12 h-12 rounded-full bg-success/20 flex items-center justify-center";
-    icon.innerHTML = '<svg class="w-6 h-6 text-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>';
-    container.appendChild(icon);
-
-    const heading = document.createElement("p");
-    heading.className = "text-base font-semibold text-base-content/60";
-    heading.textContent = "Queue finished";
-    container.appendChild(heading);
-
-    // Last played card with thumbnail + title
-    const card = document.createElement("div");
-    card.className = "flex items-center gap-3 bg-base-100/30 rounded-lg p-3 max-w-sm";
-
-    if (lastThumb) {
-      const img = document.createElement("img");
-      img.src = lastThumb;
-      img.className = "w-20 h-12 object-cover rounded flex-shrink-0";
-      card.appendChild(img);
-    }
-
-    const info = document.createElement("div");
-    info.className = "flex-1 min-w-0";
-    const title = document.createElement("p");
-    title.className = "text-sm text-base-content/50 line-clamp-2";
-    title.textContent = lastTitle;
-    info.appendChild(title);
-    const sub = document.createElement("p");
-    sub.className = "text-xs text-base-content/30";
-    sub.textContent = "Last played";
-    info.appendChild(sub);
-    card.appendChild(info);
-    container.appendChild(card);
-
-    const hint = document.createElement("p");
-    hint.className = "text-xs text-base-content/25 mt-2";
-    hint.textContent = "Paste a URL above to keep watching";
-    container.appendChild(hint);
-
-    this.el.innerHTML = "";
-    this.el.appendChild(container);
+    showQueueFinished(
+      this.el,
+      this._lastTitle || "the queue",
+      this._lastThumb
+    );
   },
 
   _onExtPlayerState(data) {
@@ -652,62 +611,37 @@ const VideoPlayer = {
   },
 
   _sendSegmentsToEmbed() {
-    if (!this._sponsorBarSegments || !this._sponsorBarDuration) return;
-    const iframe = this.el.querySelector("iframe");
-    if (iframe) {
-      iframe.contentWindow.postMessage({
-        type: "byob:sponsor-segments",
-        segments: this._sponsorBarSegments,
-        duration: this._sponsorBarDuration,
-      }, "*");
-    }
+    SponsorBlock.sendSegmentsToEmbed(
+      this.el,
+      this._sponsorBarSegments,
+      this._sponsorBarDuration
+    );
   },
 
   _retrySponsorBar(attempt = 0) {
-    if (!this._lastSponsorData || attempt > 4) return;
-    const dur = this.player?.getDuration?.() || 0;
-    if (dur > 0) {
-      this._applySponsorSettings();
-    } else {
-      setTimeout(() => this._retrySponsorBar(attempt + 1), 250);
-    }
+    SponsorBlock.retrySponsorBar(this, attempt);
   },
 
   _onSponsorSegments(data) {
     this._lastSponsorData = data;
-    this._applySponsorSettings();
+    this._applySponsorSettingsFull();
   },
 
-  _applySponsorSettings() {
+  _applySponsorSettingsFull() {
     const data = this._lastSponsorData;
     if (!data) return;
-    const allSegments = data.segments || [];
 
-    const getSetting = (cat) => {
-      if (this.sbSettings && this.sbSettings[cat]) return this.sbSettings[cat];
-      // Defaults matching server defaults
-      const defaults = {
-        sponsor: "auto_skip", selfpromo: "show_bar", interaction: "show_bar",
-        intro: "show_bar", outro: "show_bar", preview: "show_bar",
-        music_offtopic: "disabled", filler: "show_bar",
-      };
-      return defaults[cat] || "disabled";
-    };
+    const { sponsorSegments, barSegments, duration } =
+      SponsorBlock.applySponsorSettings(
+        data,
+        this.sbSettings,
+        () => this.player?.getDuration?.() || 0
+      );
 
-    this.sponsorSegments = allSegments.filter((s) => getSetting(s.category) === "auto_skip");
-    const barSegments = allSegments.filter((s) => getSetting(s.category) !== "disabled");
-
-    // Try multiple sources for duration
-    const playerDur = this.player?.getDuration?.() || 0;
-    const apiDur = data.duration || 0;
-    // Fallback: max segment end time
-    const segDur = allSegments.reduce((max, s) => Math.max(max, s.segment?.[1] || 0), 0);
-    const duration = playerDur > 0 ? playerDur : apiDur > 0 ? apiDur : segDur;
-
+    this.sponsorSegments = sponsorSegments;
     this._sponsorBarSegments = barSegments;
     this._sponsorBarDuration = duration;
 
-    // Send segments to YouTube embed iframe for in-player rendering (requires extension)
     if (barSegments.length > 0) {
       this._sendSegmentsToEmbed();
     }
@@ -795,16 +729,13 @@ const VideoPlayer = {
     this.sponsorCheckInterval = setInterval(() => {
       if (!this.player || this.sponsorSegments.length === 0) return;
       const pos = this._getCurrentTime();
-      for (const seg of this.sponsorSegments) {
-        if (pos >= seg.segment[0] && pos < seg.segment[1] - 0.5) {
-          if (this._lastSkippedUUID !== seg.uuid) {
-            this._lastSkippedUUID = seg.uuid;
-            this._seekTo(seg.segment[1]);
-            this._showSkipToast(seg.category);
-          }
-          break;
-        }
-      }
+      this._lastSkippedUUID = SponsorBlock.checkSponsorSkip(
+        pos,
+        this.sponsorSegments,
+        this._lastSkippedUUID,
+        (t) => this._seekTo(t),
+        (cat) => this._showSkipToast(cat)
+      );
     }, 250);
   },
 
@@ -838,86 +769,11 @@ const VideoPlayer = {
   },
 
   _showToast(text) {
-    if (!text) return;
-    const existing = document.querySelector(".byob-action-toast");
-    if (existing) existing.remove();
-
-    const toast = document.createElement("div");
-    toast.className = "byob-action-toast";
-    toast.style.cssText = `
-      position:fixed;bottom:16px;left:50%;transform:translateX(-50%);
-      padding:6px 16px;border-radius:8px;
-      background:rgba(0,0,0,0.8);color:rgba(255,255,255,0.8);
-      font-size:12px;z-index:9998;pointer-events:none;
-      animation:sb-toast-in 0.2s ease-out;
-      max-width:400px;text-align:center;
-    `;
-    toast.textContent = text;
-    document.body.appendChild(toast);
-    setTimeout(() => {
-      toast.style.animation = "sb-toast-out 0.3s ease-in forwards";
-      setTimeout(() => toast.remove(), 300);
-    }, 2500);
+    showToast(text);
   },
 
   _showSkipToast(category) {
-    const labels = {
-      sponsor: "Sponsor",
-      selfpromo: "Self Promotion",
-      interaction: "Interaction",
-      intro: "Intro",
-      outro: "Outro",
-      preview: "Preview",
-      music_offtopic: "Non-Music",
-      filler: "Filler",
-    };
-    const colors = {
-      sponsor: "#00d400",
-      selfpromo: "#ffff00",
-      interaction: "#cc00ff",
-      intro: "#00ffff",
-      outro: "#0202ed",
-      preview: "#008fd6",
-      music_offtopic: "#ff9900",
-      filler: "#7300FF",
-    };
-    const label = labels[category] || category;
-    const color = colors[category] || "#00d400";
-
-    // Remove existing toast
-    document.querySelector(".sb-skip-toast")?.remove();
-
-    const toast = document.createElement("div");
-    toast.className = "sb-skip-toast";
-    toast.style.cssText = `
-      position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
-      padding:8px 16px;border-radius:8px;
-      background:rgba(0,0,0,0.85);color:white;
-      font-size:13px;z-index:9999;
-      display:flex;align-items:center;gap:8px;
-      animation:sb-toast-in 0.2s ease-out;
-    `;
-    toast.innerHTML = `
-      <span style="width:10px;height:10px;border-radius:2px;background:${color};flex-shrink:0;"></span>
-      Skipped ${label}
-    `;
-
-    // Add animation keyframes if not present
-    if (!document.getElementById("sb-toast-style")) {
-      const style = document.createElement("style");
-      style.id = "sb-toast-style";
-      style.textContent = `
-        @keyframes sb-toast-in { from { opacity:0; transform:translateX(-50%) translateY(10px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
-        @keyframes sb-toast-out { from { opacity:1; } to { opacity:0; } }
-      `;
-      document.head.appendChild(style);
-    }
-
-    document.body.appendChild(toast);
-    setTimeout(() => {
-      toast.style.animation = "sb-toast-out 0.3s ease-in forwards";
-      setTimeout(() => toast.remove(), 300);
-    }, 2000);
+    showSkipToast(category);
   },
 
   // Player abstraction — delegate to unified player interface
