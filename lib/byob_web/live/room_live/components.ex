@@ -472,7 +472,7 @@ defmodule ByobWeb.RoomLive.Components do
 
   def activity_log(assigns) do
     ~H"""
-    <div class="card bg-base-200 mt-2 flex-shrink-0">
+    <div class="card bg-base-200 flex-shrink-0">
       <div class="card-body p-3">
         <h3 class="card-title text-xs text-base-content/40">Activity</h3>
         <ul id="activity-log" phx-hook="ScrollBottom" class="space-y-0.5 mt-1 max-h-32 overflow-y-auto text-[11px] text-base-content/50 leading-relaxed">
@@ -510,7 +510,7 @@ defmodule ByobWeb.RoomLive.Components do
 
   def users_card(assigns) do
     ~H"""
-    <div class="card bg-base-200 mt-4 mb-4 flex-shrink-0">
+    <div class="card bg-base-200 flex-shrink-0">
       <div class="card-body p-4">
         <h3 class="card-title text-sm">
           Users

@@ -211,10 +211,10 @@ defmodule ByobWeb.RoomLive do
 
     <div class="flex flex-col lg:flex-row gap-3 lg:h-[calc(100vh-3.5rem)]">
       <%!-- Main content --%>
-      <div class="flex-1 min-w-0 min-h-0 flex flex-col pb-4">
+      <div class="flex-1 min-w-0 min-h-0 flex flex-col">
 
         <%!-- Player wrapper: sizes the player to fit viewport while maintaining 16:9 --%>
-        <div id="player-sizer" class="flex justify-center flex-shrink-0" phx-update="ignore">
+        <div id="player-sizer" class="mb-2 flex justify-center flex-shrink-0" phx-update="ignore">
         <div
           id="player"
           phx-hook="VideoPlayer"
@@ -260,7 +260,7 @@ defmodule ByobWeb.RoomLive do
       </div>
 
       <%!-- Sidebar: queue/history at top, users pinned at bottom --%>
-      <div class="lg:w-72 flex flex-col min-h-0 flex-shrink-0">
+      <div class="lg:w-72 flex flex-col gap-2 min-h-0 flex-shrink-0">
         <%!-- Queue/History card — fills available space --%>
         <div class="card bg-base-200 flex-1 min-h-0 overflow-hidden">
           <div class="card-body p-4 flex flex-col overflow-hidden">

@@ -2,9 +2,16 @@
 
 ---
 
+# v3.1.3
+
+- Restore gap between video player and comments panel
+- Fix bottom padding alignment between comments and sidebar
+
+---
+
 # v3.1.2
 
-- Fix sidebar clipping at bottom (Users card no longer cut off)
+- Fix sidebar bottom padding alignment with comments panel
 
 ---
 
