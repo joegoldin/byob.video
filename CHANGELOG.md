@@ -2,6 +2,12 @@
 
 ---
 
+# v3.3.5
+
+- Keep Fly.io machine always running (disable auto-suspend, min 1 machine) — no cold-start delay on first visit
+
+---
+
 # v3.3.4
 
 - Fix clear button visibility during focus/re-render (stable DOM id + client-side toggle)
