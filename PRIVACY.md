@@ -20,6 +20,7 @@ byob uses [PostHog](https://posthog.com) for anonymous usage analytics on the ho
 - Whether the browser extension is installed (detected from the web page, NOT from extension code)
 
 We do NOT track:
+
 - Video URLs, titles, or any content information
 - Usernames or chat messages
 - Browsing history or page content

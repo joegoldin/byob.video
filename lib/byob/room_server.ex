@@ -260,7 +260,13 @@ defmodule Byob.RoomServer do
     else
       old_pos = current_position(state)
       state = %{state | current_time: position, last_sync_at: now, last_seek_at: Map.put(state.last_seek_at, user_id, now)}
-      state = log_activity(state, :seeked, user_id, "#{format_seconds(old_pos)} → #{format_seconds(position)}")
+      # Only log meaningful seeks (>5s jump, not from 0:00)
+      diff = abs(position - old_pos)
+      state = if diff > 5 and old_pos > 1 do
+        log_activity(state, :seeked, user_id, "#{format_seconds(old_pos)} → #{format_seconds(position)}")
+      else
+        state
+      end
       broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
       {:reply, :ok, state}
     end
