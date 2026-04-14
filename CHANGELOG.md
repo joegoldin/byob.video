@@ -2,6 +2,12 @@
 
 ---
 
+# v3.3.1
+
+- Fix clear button vertical centering in URL input
+
+---
+
 # v3.3.0
 
 - Clear button (x) on the right side of the URL input bar

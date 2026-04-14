@@ -46,28 +46,30 @@ defmodule ByobWeb.RoomLive.Components do
           <span class="hidden sm:inline">Copy Room Link</span>
         </button>
         <div class="relative flex-1 min-w-0 max-w-[40vw]">
-          <form phx-submit="add_url" phx-change="preview_url" id="url-form" class="relative">
-            <input
-              type="text"
-              name="url"
-              value={@preview_url || ""}
-              placeholder="Paste a video URL..."
-              class="input input-bordered input-xs w-full pr-6"
-              autocomplete="off"
-              phx-debounce="300"
-              phx-focus="url:focus"
-              phx-blur="url:blur"
-            />
-            <button
-              :if={@preview_url && @preview_url != ""}
-              type="button"
-              phx-click="clear_url"
-              class="absolute right-1.5 top-1/2 -translate-y-1/2 text-base-content/30 hover:text-base-content/60 transition-colors"
-            >
-              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
+          <form phx-submit="add_url" phx-change="preview_url" id="url-form">
+            <div class="relative flex items-center">
+              <input
+                type="text"
+                name="url"
+                value={@preview_url || ""}
+                placeholder="Paste a video URL..."
+                class="input input-bordered input-xs w-full pr-6"
+                autocomplete="off"
+                phx-debounce="300"
+                phx-focus="url:focus"
+                phx-blur="url:blur"
+              />
+              <button
+                :if={@preview_url && @preview_url != ""}
+                type="button"
+                phx-click="clear_url"
+                class="absolute right-1.5 text-base-content/30 hover:text-base-content/60 transition-colors"
+              >
+                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </form>
           <%!-- Supported sites hint (shown on focus with empty input) --%>
           <div
