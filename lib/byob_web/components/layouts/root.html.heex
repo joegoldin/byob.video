@@ -68,8 +68,7 @@
       (() => {
         const theme = localStorage.getItem("phx:theme") ||
           (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
-        const cb = document.getElementById("theme-toggle");
-        if (cb) cb.checked = (theme === "dark");
+        document.querySelectorAll("#theme-toggle, #theme-toggle-room").forEach(cb => cb.checked = (theme === "dark"));
       })();
     </script>
   </body>

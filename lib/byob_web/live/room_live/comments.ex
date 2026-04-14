@@ -10,16 +10,14 @@ defmodule ByobWeb.RoomLive.Comments do
   Renders the YouTube comments panel below the video player.
   """
   attr :comments, :list, default: nil
-  attr :comments_total, :integer, default: nil
   attr :comments_next_page, :string, default: nil
 
   def comments_panel(assigns) do
     ~H"""
-    <div :if={@comments && @comments != []} class="relative max-h-[200px] overflow-y-auto bg-base-200 rounded-lg mx-1 mb-2">
+    <div :if={@comments && @comments != []} class="relative flex-1 min-h-0 overflow-y-auto bg-base-200 rounded-lg mx-1 mb-2">
       <%!-- Header --%>
       <div class="sticky top-0 bg-base-200 px-3 py-2 border-b border-base-300 z-10">
         <span class="text-xs font-semibold text-base-content/60">Comments</span>
-        <span :if={@comments_total} class="text-xs bg-base-300 px-1.5 py-0.5 rounded-full text-base-content/40 ml-1">{@comments_total}</span>
       </div>
 
       <%!-- Comment list --%>

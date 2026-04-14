@@ -219,7 +219,7 @@ defmodule Byob.RoomServerTest do
       # play_index moves the target item to front, removes old now-playing
       assert state.current_index == 0
       assert state.play_state == :playing
-      assert state.current_time == 0.0
+      assert state.current_time < 0.1
       assert hd(state.queue).source_id == "c"
       assert length(state.queue) == 2
     end

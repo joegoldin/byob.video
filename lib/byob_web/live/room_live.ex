@@ -94,6 +94,18 @@ defmodule ByobWeb.RoomLive do
           socket
         end
 
+      # Fetch YouTube comments for current video
+      if current_media && current_media.source_type == :youtube && current_media.source_id do
+        me = self()
+        video_id = current_media.source_id
+        Task.start(fn ->
+          case Byob.YouTube.Comments.fetch(video_id) do
+            {:ok, result} -> send(me, {:comments_result_direct, video_id, result})
+            _ -> :ok
+          end
+        end)
+      end
+
       # Push media info for extension placeholder
       socket =
         if current_media && current_media.source_type == :extension_required do
@@ -168,7 +180,6 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:video_changed, data}, socket), do: PubSub.handle_video_changed(data, socket)
 
   def handle_info({:url_preview_result, result}, socket), do: UrlPreview.handle_preview_result(result, socket)
-  def handle_info(:clear_url_preview, socket), do: UrlPreview.handle_clear_preview(socket)
 
   def handle_info({:sb_settings_updated, sb_settings}, socket), do: PubSub.handle_sb_settings_updated(sb_settings, socket)
   def handle_info({:extension_player_state, state}, socket), do: PubSub.handle_extension_player_state(state, socket)
@@ -177,6 +188,15 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:activity_log_entry, entry}, socket), do: PubSub.handle_activity_log_entry(entry, socket)
   def handle_info({:comments_updated, data}, socket), do: PubSub.handle_comments_updated(data, socket)
   def handle_info({:comments_page_result, _, _} = msg, socket), do: Comments.handle_page_result(msg, socket)
+
+  def handle_info({:comments_result_direct, video_id, result}, socket) do
+    {:noreply, assign(socket,
+      comments: result.comments,
+      comments_next_page: result.next_page_token,
+      comments_video_id: video_id,
+      comments_total: result.total_count
+    )}
+  end
 
   def handle_info(_msg, socket) do
     {:noreply, socket}
@@ -210,7 +230,6 @@ defmodule ByobWeb.RoomLive do
 
         <Comments.comments_panel
           comments={@comments}
-          comments_total={@comments_total}
           comments_next_page={@comments_next_page}
         />
 

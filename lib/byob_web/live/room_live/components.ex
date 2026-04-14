@@ -86,7 +86,7 @@ defmodule ByobWeb.RoomLive.Components do
             </div>
           </div>
           <%!-- Preview dropdown --%>
-          <.url_preview_dropdown url_preview_loading={@url_preview_loading} url_preview={@url_preview} />
+          <.url_preview_dropdown url_focused={@url_focused} url_preview_loading={@url_preview_loading} url_preview={@url_preview} />
         </div>
       </div>
       <div class="flex-none flex items-center gap-1">
@@ -192,13 +192,15 @@ defmodule ByobWeb.RoomLive.Components do
 
   # ── URL Preview Dropdown ──────────────────────────────────────────
 
+  attr :url_focused, :boolean, required: true
   attr :url_preview_loading, :boolean, required: true
   attr :url_preview, :any, default: nil
 
   def url_preview_dropdown(assigns) do
     ~H"""
     <div
-      :if={@url_preview_loading || @url_preview}
+      :if={@url_focused && (@url_preview_loading || @url_preview)}
+      onmousedown="event.preventDefault()"
       class="absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-50"
     >
       <div :if={@url_preview_loading} class="flex items-center gap-3 p-3 animate-pulse">
@@ -277,7 +279,7 @@ defmodule ByobWeb.RoomLive.Components do
           <p :if={@url_preview.title} class="text-sm font-medium line-clamp-3">{@url_preview.title}</p>
           <p :if={!@url_preview.title} class="text-sm font-medium">External site</p>
           <p class="text-xs text-warning byob-no-ext">
-            <a href="https://github.com/joegoldin/byob.video" target="_blank" class="underline">
+            <a href="#" onclick={"#{Byob.Links.extension_js()}; return false;"} class="underline">
               Extension required
             </a>
             to sync this site
