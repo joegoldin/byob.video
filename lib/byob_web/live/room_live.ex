@@ -2,7 +2,7 @@ defmodule ByobWeb.RoomLive do
   use ByobWeb, :live_view
 
   alias Byob.{RoomManager, RoomServer}
-  alias ByobWeb.RoomLive.UrlPreview
+  alias ByobWeb.RoomLive.{Playback, UrlPreview}
 
   def mount(%{"id" => room_id}, _session, socket) do
     if not Regex.match?(~r/^[a-z0-9]{1,16}$/, room_id) do
@@ -133,44 +133,12 @@ defmodule ByobWeb.RoomLive do
   def handle_event("preview:play_now", params, socket), do: UrlPreview.handle_play_now(params, socket)
   def handle_event("preview:queue", params, socket), do: UrlPreview.handle_queue(params, socket)
 
-  def handle_event("analytics:has_extension", _params, socket) do
-    Byob.Analytics.identify(socket.assigns[:browser_id] || socket.assigns.user_id, %{has_extension: true})
-    {:noreply, socket}
-  end
-
-  def handle_event("video:play", %{"position" => position}, socket) do
-    RoomServer.play(socket.assigns.room_pid, socket.assigns.user_id, position)
-    {:noreply, socket}
-  end
-
-  def handle_event("video:pause", %{"position" => position}, socket) do
-    RoomServer.pause(socket.assigns.room_pid, socket.assigns.user_id, position)
-    {:noreply, socket}
-  end
-
-  def handle_event("video:seek", %{"position" => position}, socket) do
-    RoomServer.seek(socket.assigns.room_pid, socket.assigns.user_id, position)
-    {:noreply, socket}
-  end
-
-  def handle_event("video:embed_blocked", _params, socket) do
-    Byob.Analytics.track("video_embed_blocked", socket.assigns[:browser_id] || socket.assigns.user_id, %{
-      room_id: socket.assigns.room_id,
-      source_type: "youtube_restricted"
-    })
-    {:noreply, socket}
-  end
-
-  def handle_event("video:ended", %{"index" => index}, socket) do
-    RoomServer.video_ended(socket.assigns.room_pid, index)
-    {:noreply, socket}
-  end
-
-  def handle_event("video:ended", _params, socket) do
-    # Fallback without index — use skip but only once
-    RoomServer.skip(socket.assigns.room_pid)
-    {:noreply, socket}
-  end
+  def handle_event("analytics:has_extension", params, socket), do: Playback.handle_has_extension(params, socket)
+  def handle_event("video:play", params, socket), do: Playback.handle_play(params, socket)
+  def handle_event("video:pause", params, socket), do: Playback.handle_pause(params, socket)
+  def handle_event("video:seek", params, socket), do: Playback.handle_seek(params, socket)
+  def handle_event("video:embed_blocked", params, socket), do: Playback.handle_embed_blocked(params, socket)
+  def handle_event("video:ended", params, socket), do: Playback.handle_ended(params, socket)
 
   def handle_event("queue:skip", _params, socket) do
     RoomServer.skip(socket.assigns.room_pid)
@@ -238,11 +206,7 @@ defmodule ByobWeb.RoomLive do
     end
   end
 
-  def handle_event("sync:ping", %{"t1" => t1}, socket) do
-    t2 = System.monotonic_time(:millisecond)
-    t3 = System.monotonic_time(:millisecond)
-    {:noreply, push_event(socket, "sync:pong", %{t1: t1, t2: t2, t3: t3})}
-  end
+  def handle_event("sync:ping", params, socket), do: Playback.handle_sync_ping(params, socket)
 
   # PubSub messages from RoomServer
 
