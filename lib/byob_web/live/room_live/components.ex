@@ -18,7 +18,9 @@ defmodule ByobWeb.RoomLive.Components do
   attr :room_id, :string, required: true
   attr :url_preview_loading, :boolean, required: true
   attr :url_preview, :any, default: nil
+  attr :url_preview_error, :any, default: nil
   attr :preview_url, :string, default: nil
+  attr :resolved_url, :string, default: nil
 
   def room_nav(assigns) do
     ~H"""
@@ -151,10 +153,23 @@ defmodule ByobWeb.RoomLive.Components do
               </div>
             </div>
           </div>
+          <%!-- Instant CSS-driven skeleton: fills the 300ms debounce gap --%>
+          <div
+            :if={!@url_preview && !@url_preview_error && !@url_preview_loading}
+            class="hidden group-[:has(input:not(:placeholder-shown))]:flex absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-40 items-center gap-3 p-3 animate-pulse pointer-events-none"
+            aria-hidden="true"
+          >
+            <div class="w-16 h-10 bg-base-300 rounded flex-shrink-0" />
+            <div class="flex-1 space-y-2">
+              <div class="h-3 bg-base-300 rounded w-3/4" />
+              <div class="h-2 bg-base-300 rounded w-1/2" />
+            </div>
+          </div>
           <%!-- Preview dropdown --%>
           <.url_preview_dropdown
             url_preview_loading={@url_preview_loading}
             url_preview={@url_preview}
+            url_preview_error={@url_preview_error}
           />
         </div>
       </div>
@@ -336,11 +351,12 @@ defmodule ByobWeb.RoomLive.Components do
 
   attr :url_preview_loading, :boolean, required: true
   attr :url_preview, :any, default: nil
+  attr :url_preview_error, :any, default: nil
 
   def url_preview_dropdown(assigns) do
     ~H"""
     <div
-      :if={@url_preview_loading || @url_preview}
+      :if={@url_preview_loading || @url_preview || @url_preview_error}
       onmousedown="event.preventDefault()"
       class="hidden group-focus-within:block absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-50"
     >
@@ -456,9 +472,39 @@ defmodule ByobWeb.RoomLive.Components do
           </button>
         </div>
       </div>
+      <%!-- Error card --%>
+      <div :if={@url_preview_error} class="flex items-center gap-2 p-3">
+        <svg
+          class={"w-5 h-5 flex-shrink-0 " <> error_icon_color(@url_preview_error)}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          stroke-width="2"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+          />
+        </svg>
+        <p class="text-sm text-base-content/80">{error_message(@url_preview_error)}</p>
+      </div>
     </div>
     """
   end
+
+  defp error_message(:self_reference),
+    do: "That's a byob room link — paste a video URL instead."
+
+  defp error_message({:drm_site, service}),
+    do: "#{service} uses DRM and can't be synced."
+
+  defp error_message(:invalid_url), do: "Doesn't look like a video URL."
+  defp error_message(_), do: "Doesn't look like a video URL."
+
+  defp error_icon_color(:self_reference), do: "text-warning"
+  defp error_icon_color({:drm_site, _}), do: "text-warning"
+  defp error_icon_color(_), do: "text-base-content/50"
 
   # ── Queue Panel ───────────────────────────────────────────────────
 
