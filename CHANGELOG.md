@@ -2,6 +2,16 @@
 
 ---
 
+# v3.4.19
+
+- Server persistence now snapshots the **computed current position** (not the stale `current_time` field from the last event) plus a wallclock timestamp. On restart, the load path advances the position by elapsed wallclock for videos that were playing — so a fresh process picks up within seconds of where it actually was, not where it was at the last play/seek event.
+- `play_state` from the persisted state is **preserved** on load (was previously always reset to `:paused`). If the room was playing when the deploy happened, it resumes playing from the advanced position.
+- Persist interval **30s → 5s** for fresher disk state in the worst-case "deploy right before a scheduled persist" window.
+- `schedule_sync_correction` is started on restore when the loaded state is `:playing`, so drift-correction broadcasts resume immediately on restart.
+- Defensive: load path uses `Map.merge` so older persisted struct shapes (missing newer fields like `:pending_advance_ref`) load cleanly instead of `KeyError`-ing on init.
+
+---
+
 # v3.4.18
 
 - On LiveView reconnect (e.g. after a server deploy), the client now pushes its current local play state and position back to the server via `video:play` / `video:pause`. Rationale: after a deploy the server reloads from SQLite with `play_state: :paused` and a possibly stale `current_time` (up to 30s old, or 0 if the video started recently). Without this echo, no one ever told the server the real position — so a fresh-joining tab would `sync:state` down the stale value. Combined with v3.4.17's is-a-real-transition guard on `:play`, the echo is safe: it's accepted when the server needs updating, ignored when it's already in sync.

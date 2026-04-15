@@ -129,20 +129,40 @@ defmodule Byob.RoomServer do
     state =
       case loaded do
         {:ok, saved} ->
-          # Restore from saved state, reset transient fields
-          %{
-            saved
-            | empty_timeout: empty_timeout,
-              last_sync_at: System.monotonic_time(:millisecond),
-              cleanup_ref: nil,
-              sync_correction_ref: nil,
-              rate_limit_ref: nil,
-              last_seek_at: %{},
-              event_counts: %{},
-              play_state: :paused,
-              sponsor_segments: [],
-              users: Enum.into(saved.users, %{}, fn {k, v} -> {k, %{v | connected: false}} end)
-          }
+          # Advance current_time by wallclock elapsed since persist so the
+          # new process picks up roughly where the old one left off — the
+          # deploy gap (typically 5–30 s) doesn't get "undone" in the
+          # timeline. We keep the persisted play_state: if the room was
+          # playing when we persisted, we resume playing from the advanced
+          # position.
+          now_wall = System.system_time(:second)
+          persisted_wall = Map.get(saved, :persisted_wallclock) || now_wall
+          elapsed_sec = max(0, now_wall - persisted_wall)
+
+          advanced_time =
+            if saved.play_state == :playing do
+              (saved.current_time || 0) + elapsed_sec
+            else
+              saved.current_time || 0
+            end
+
+          # Use Map.merge so this also works when `saved` comes from an
+          # older version of the struct that's missing newer fields (e.g.
+          # `:pending_advance_ref`). Map update syntax would KeyError there.
+          Map.merge(%__MODULE__{}, saved)
+          |> Map.merge(%{
+            empty_timeout: empty_timeout,
+            current_time: advanced_time,
+            last_sync_at: System.monotonic_time(:millisecond),
+            cleanup_ref: nil,
+            sync_correction_ref: nil,
+            rate_limit_ref: nil,
+            last_seek_at: %{},
+            event_counts: %{},
+            sponsor_segments: [],
+            pending_advance_ref: nil,
+            users: Enum.into(saved.users, %{}, fn {k, v} -> {k, %{v | connected: false}} end)
+          })
 
         :not_found ->
           %__MODULE__{
@@ -164,6 +184,7 @@ defmodule Byob.RoomServer do
     # Start timers
     state = schedule_rate_limit_reset(state)
     state = schedule_persist(state)
+    state = if state.play_state == :playing, do: schedule_sync_correction(state), else: state
     Process.send_after(self(), :state_heartbeat, 5_000)
     {:ok, schedule_cleanup(state)}
   end
@@ -989,8 +1010,20 @@ defmodule Byob.RoomServer do
   end
 
   defp persist(state) do
+    # Snapshot the computed current position and a wallclock timestamp so a
+    # fresh process on restart can advance the position by elapsed wallclock.
+    # We store these alongside the struct via ephemeral fields — they're only
+    # used at load time.
+    snapshot_state = %{
+      state
+      | current_time: current_position(state),
+        last_sync_at: System.monotonic_time(:millisecond)
+    }
+
+    snapshot_state = Map.put(snapshot_state, :persisted_wallclock, System.system_time(:second))
+
     try do
-      Byob.Persistence.save_room(state.room_id, state)
+      Byob.Persistence.save_room(state.room_id, snapshot_state)
     rescue
       _ -> :ok
     catch
@@ -999,7 +1032,7 @@ defmodule Byob.RoomServer do
   end
 
   defp schedule_persist(state) do
-    Process.send_after(self(), :persist, 30_000)
+    Process.send_after(self(), :persist, 5_000)
     state
   end
 
