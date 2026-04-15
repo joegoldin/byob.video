@@ -12,12 +12,22 @@ defmodule ByobWeb.RoomLive.Comments do
   attr :comments, :list, default: nil
   attr :comments_next_page, :string, default: nil
   attr :collapsed, :boolean, default: false
+  attr :expanded, :boolean, default: false
 
   def comments_panel(assigns) do
     ~H"""
     <div
       :if={@comments && @comments != []}
-      class={"relative bg-base-200 rounded-lg #{unless @collapsed, do: "max-h-[300px] lg:flex-1 lg:max-h-none min-h-0 overflow-y-auto"}"}
+      class={[
+        "relative bg-base-200 rounded-lg",
+        unless @collapsed do
+          if @expanded do
+            "lg:min-h-[500px] overflow-y-auto"
+          else
+            "max-h-[300px] lg:flex-1 lg:max-h-none min-h-0 overflow-y-auto"
+          end
+        end
+      ]}
     >
       <%!-- Header --%>
       <div class="sticky top-0 bg-base-200 px-3 py-2 border-b border-base-300 z-10 flex items-center justify-between rounded-t-lg">
@@ -71,6 +81,31 @@ defmodule ByobWeb.RoomLive.Comments do
       >
         <button phx-click="comments:load_more" class="text-xs text-primary hover:underline">
           Load more comments
+        </button>
+      </div>
+
+      <%!-- Expand button (shown only when comments space is cramped, or when already expanded) --%>
+      <div
+        :if={!@collapsed}
+        class="sticky bottom-0 flex justify-end px-2 pb-2 pt-1 pointer-events-none z-10"
+      >
+        <button
+          phx-click="toggle_comments_expand"
+          title={if @expanded, do: "Collapse comments", else: "Expand comments"}
+          class={[
+            "pointer-events-auto btn btn-circle btn-xs bg-base-200/95 border border-base-300 shadow-md hover:bg-base-300",
+            if(@expanded, do: "", else: "hidden [@media(max-height:800px)]:flex")
+          ]}
+        >
+          <svg
+            class={"w-3 h-3 transition-transform " <> if(@expanded, do: "rotate-45", else: "")}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2.5"
+          >
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
+          </svg>
         </button>
       </div>
     </div>

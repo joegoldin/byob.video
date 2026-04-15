@@ -2,6 +2,15 @@
 
 ---
 
+# v3.4.2
+
+- Play Now / Queue now blur the input so dropdowns close cleanly
+- Loading skeleton no longer pulses transparent (only the gray shapes animate)
+- Expand (+) button in bottom-right of comments on short viewports: click to make the comments panel taller and allow the page to scroll; click again (rotated to x) to collapse back
+- The button only shows when the viewport height is under 800px, or when comments are already expanded
+
+---
+
 # v3.4.1
 
 - Fix Play Now / Queue using stale URL when clicked before the 300ms debounce (form now submits with the current input value — no more "first URL wins when you paste a second")

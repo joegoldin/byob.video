@@ -157,13 +157,13 @@ defmodule ByobWeb.RoomLive.Components do
           <%!-- Instant CSS-driven skeleton: fills the 300ms debounce gap --%>
           <div
             :if={!@url_preview && !@url_preview_error && !@url_preview_loading}
-            class="hidden group-[&:focus-within:has(input[name=url]:not(:placeholder-shown))]:flex absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-40 items-center gap-3 p-3 animate-pulse pointer-events-none"
+            class="hidden group-[&:focus-within:has(input[name=url]:not(:placeholder-shown))]:flex absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-40 items-center gap-3 p-3 pointer-events-none"
             aria-hidden="true"
           >
-            <div class="w-16 h-10 bg-base-300 rounded flex-shrink-0" />
+            <div class="w-16 h-10 bg-base-300 rounded flex-shrink-0 animate-pulse" />
             <div class="flex-1 space-y-2">
-              <div class="h-3 bg-base-300 rounded w-3/4" />
-              <div class="h-2 bg-base-300 rounded w-1/2" />
+              <div class="h-3 bg-base-300 rounded w-3/4 animate-pulse" />
+              <div class="h-2 bg-base-300 rounded w-1/2 animate-pulse" />
             </div>
           </div>
           <%!-- Preview dropdown --%>
@@ -361,11 +361,11 @@ defmodule ByobWeb.RoomLive.Components do
       onmousedown="event.preventDefault()"
       class="hidden group-focus-within:block absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-50"
     >
-      <div :if={@url_preview_loading} class="flex items-center gap-3 p-3 animate-pulse">
-        <div class="w-16 h-10 bg-base-300 rounded flex-shrink-0" />
+      <div :if={@url_preview_loading} class="flex items-center gap-3 p-3">
+        <div class="w-16 h-10 bg-base-300 rounded flex-shrink-0 animate-pulse" />
         <div class="flex-1 space-y-2">
-          <div class="h-3 bg-base-300 rounded w-3/4" />
-          <div class="h-2 bg-base-300 rounded w-1/2" />
+          <div class="h-3 bg-base-300 rounded w-3/4 animate-pulse" />
+          <div class="h-2 bg-base-300 rounded w-1/2 animate-pulse" />
         </div>
       </div>
       <div
@@ -388,7 +388,7 @@ defmodule ByobWeb.RoomLive.Components do
             type="submit"
             form="url-form"
             onmousedown="event.preventDefault()"
-            onclick="document.getElementById('url-form-mode').value='now'"
+            onclick="document.getElementById('url-form-mode').value='now'; document.querySelector('input[name=url]').blur();"
             class="btn btn-primary btn-xs"
           >
             Play Now
@@ -397,7 +397,7 @@ defmodule ByobWeb.RoomLive.Components do
             type="submit"
             form="url-form"
             onmousedown="event.preventDefault()"
-            onclick="document.getElementById('url-form-mode').value='queue'"
+            onclick="document.getElementById('url-form-mode').value='queue'; document.querySelector('input[name=url]').blur();"
             class="btn btn-outline btn-xs"
           >
             Queue
@@ -444,7 +444,7 @@ defmodule ByobWeb.RoomLive.Components do
             type="submit"
             form="url-form"
             onmousedown="event.preventDefault()"
-            onclick="document.getElementById('url-form-mode').value='now'"
+            onclick="document.getElementById('url-form-mode').value='now'; document.querySelector('input[name=url]').blur();"
             class="btn btn-primary btn-xs"
           >
             Play Now
@@ -453,7 +453,7 @@ defmodule ByobWeb.RoomLive.Components do
             type="submit"
             form="url-form"
             onmousedown="event.preventDefault()"
-            onclick="document.getElementById('url-form-mode').value='queue'"
+            onclick="document.getElementById('url-form-mode').value='queue'; document.querySelector('input[name=url]').blur();"
             class="btn btn-outline btn-xs"
           >
             Queue
@@ -493,7 +493,7 @@ defmodule ByobWeb.RoomLive.Components do
             type="submit"
             form="url-form"
             onmousedown="event.preventDefault()"
-            onclick="document.getElementById('url-form-mode').value='now'"
+            onclick="document.getElementById('url-form-mode').value='now'; document.querySelector('input[name=url]').blur();"
             class="btn btn-primary btn-xs"
           >
             Play Now
@@ -502,7 +502,7 @@ defmodule ByobWeb.RoomLive.Components do
             type="submit"
             form="url-form"
             onmousedown="event.preventDefault()"
-            onclick="document.getElementById('url-form-mode').value='queue'"
+            onclick="document.getElementById('url-form-mode').value='queue'; document.querySelector('input[name=url]').blur();"
             class="btn btn-outline btn-xs"
           >
             Queue

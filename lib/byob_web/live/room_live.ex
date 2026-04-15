@@ -41,7 +41,8 @@ defmodule ByobWeb.RoomLive do
         comments_video_id: nil,
         comments_total: nil,
         show_comments: true,
-        comments_collapsed: false
+        comments_collapsed: false,
+        comments_expanded: false
       )
 
     if connected?(socket) do
@@ -197,6 +198,10 @@ defmodule ByobWeb.RoomLive do
     {:noreply, assign(socket, comments_collapsed: !socket.assigns.comments_collapsed)}
   end
 
+  def handle_event("toggle_comments_expand", _params, socket) do
+    {:noreply, assign(socket, comments_expanded: !socket.assigns.comments_expanded)}
+  end
+
   def handle_event("toggle_comments", _params, socket) do
     show = !socket.assigns.show_comments
     socket = assign(socket, show_comments: show)
@@ -279,7 +284,7 @@ defmodule ByobWeb.RoomLive do
       show_comments={@show_comments}
     />
 
-    <div class="flex flex-col lg:flex-row gap-3 lg:h-[calc(100vh-3.5rem)]">
+    <div class={"flex flex-col lg:flex-row gap-3 #{unless @comments_expanded, do: "lg:h-[calc(100vh-3.5rem)]"}"}>
       <%!-- Main content --%>
       <div class="flex-1 min-w-0 min-h-0 flex flex-col">
         <%!-- Player wrapper: sizes the player to fit viewport while maintaining 16:9 --%>
@@ -302,6 +307,7 @@ defmodule ByobWeb.RoomLive do
           comments={@comments}
           comments_next_page={@comments_next_page}
           collapsed={@comments_collapsed}
+          expanded={@comments_expanded}
         />
 
         <%!-- Extension mode banner --%>
