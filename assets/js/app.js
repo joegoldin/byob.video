@@ -115,47 +115,53 @@ const DragSort = {
 }
 
 const QueueContextMenu = {
-  mounted() { this._bind(); },
-  updated() { this._bind(); },
-  _bind() {
-    this.el.oncontextmenu = (e) => {
-      e.preventDefault();
-      // Remove any existing menu
-      document.querySelector(".byob-ctx-menu")?.remove();
+  mounted() {
+    this._handler = (e) => this._onContextMenu(e);
+    this.el.addEventListener("contextmenu", this._handler);
+  },
+  destroyed() {
+    if (this._handler) {
+      this.el.removeEventListener("contextmenu", this._handler);
+      this._handler = null;
+    }
+  },
+  _onContextMenu(e) {
+    e.preventDefault();
+    // Remove any existing menu
+    document.querySelector(".byob-ctx-menu")?.remove();
 
-      const url = this.el.dataset.url;
-      if (!url) return;
+    const url = this.el.dataset.url;
+    if (!url) return;
 
-      const menu = document.createElement("div");
-      menu.className = "byob-ctx-menu";
-      menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:99999;background:var(--b2,#1f2937);border:1px solid var(--b3,#374151);border-radius:6px;padding:4px 0;min-width:200px;font-size:12px;font-family:system-ui;box-shadow:0 4px 12px rgba(0,0,0,0.3);`;
+    const menu = document.createElement("div");
+    menu.className = "byob-ctx-menu";
+    menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:99999;background:var(--b2,#1f2937);border:1px solid var(--b3,#374151);border-radius:6px;padding:4px 0;min-width:200px;font-size:12px;font-family:system-ui;box-shadow:0 4px 12px rgba(0,0,0,0.3);`;
 
-      // URL display (grayed, not clickable)
-      const urlItem = document.createElement("div");
-      urlItem.style.cssText = "padding:6px 12px;color:rgba(255,255,255,0.3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px;cursor:default;";
-      urlItem.textContent = url;
-      menu.appendChild(urlItem);
+    // URL display (grayed, not clickable)
+    const urlItem = document.createElement("div");
+    urlItem.style.cssText = "padding:6px 12px;color:rgba(255,255,255,0.3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:300px;cursor:default;";
+    urlItem.textContent = url;
+    menu.appendChild(urlItem);
 
-      // Divider
-      const divider = document.createElement("div");
-      divider.style.cssText = "height:1px;background:rgba(255,255,255,0.1);margin:2px 0;";
-      menu.appendChild(divider);
+    // Divider
+    const divider = document.createElement("div");
+    divider.style.cssText = "height:1px;background:rgba(255,255,255,0.1);margin:2px 0;";
+    menu.appendChild(divider);
 
-      // Copy URL option
-      const copyItem = document.createElement("div");
-      copyItem.style.cssText = "padding:6px 12px;color:rgba(255,255,255,0.8);cursor:pointer;";
-      copyItem.textContent = "Copy URL";
-      copyItem.onmouseenter = () => copyItem.style.background = "rgba(255,255,255,0.1)";
-      copyItem.onmouseleave = () => copyItem.style.background = "none";
-      copyItem.onclick = () => { navigator.clipboard.writeText(url); menu.remove(); };
-      menu.appendChild(copyItem);
+    // Copy URL option
+    const copyItem = document.createElement("div");
+    copyItem.style.cssText = "padding:6px 12px;color:rgba(255,255,255,0.8);cursor:pointer;";
+    copyItem.textContent = "Copy URL";
+    copyItem.onmouseenter = () => copyItem.style.background = "rgba(255,255,255,0.1)";
+    copyItem.onmouseleave = () => copyItem.style.background = "none";
+    copyItem.onclick = () => { navigator.clipboard.writeText(url); menu.remove(); };
+    menu.appendChild(copyItem);
 
-      document.body.appendChild(menu);
+    document.body.appendChild(menu);
 
-      // Close on click outside
-      const close = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener("click", close); } };
-      setTimeout(() => document.addEventListener("click", close), 0);
-    };
+    // Close on click outside
+    const close = (ev) => { if (!menu.contains(ev.target)) { menu.remove(); document.removeEventListener("click", close); } };
+    setTimeout(() => document.addEventListener("click", close), 0);
   },
 }
 

@@ -2,6 +2,18 @@
 
 ---
 
+# v3.4.3
+
+- Sync: NTP maintenance every 10s (down from 30s) so drift is caught faster
+- Sync: 3-probe mini-burst on `visibilitychange` — catching up to a backgrounded tab no longer needs a hard snap
+- Sync: 3-probe mini-burst before any hard seek confirms "this is real drift, not clock skew" before yanking the playhead
+- Sync: proportional `playbackRate` correction (scaled to drift size) replaces fixed 0.95/1.05 — smoother approach to zero, no overshoot
+- Sync: rolling median over the last 5 drift samples kills instantaneous jitter, lower dead zone (50ms) for faster reaction
+- Sync: direction-stability gate prevents rate-correction rubber-banding when drift crosses zero
+- Fix custom right-click menu on queue items: switched hook from `oncontextmenu` property to `addEventListener` with proper teardown
+
+---
+
 # v3.4.2
 
 - Play Now / Queue now blur the input so dropdowns close cleanly
