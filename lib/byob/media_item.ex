@@ -14,18 +14,37 @@ defmodule Byob.MediaItem do
 
   @youtube_hosts ~w(youtube.com www.youtube.com m.youtube.com youtu.be)
 
+  @drm_hosts [
+    {"netflix.com", "Netflix"},
+    {"disneyplus.com", "Disney+"},
+    {"max.com", "Max"},
+    {"hbomax.com", "Max"},
+    {"hulu.com", "Hulu"},
+    {"primevideo.com", "Prime Video"},
+    {"tv.apple.com", "Apple TV+"},
+    {"peacocktv.com", "Peacock"},
+    {"paramountplus.com", "Paramount+"}
+  ]
+
   def parse_url(url) when is_binary(url) and url != "" do
     case URI.parse(url) do
-      %URI{scheme: scheme, host: host} when scheme in ["http", "https"] and is_binary(host) ->
-        {source_type, source_id} = classify(host, URI.parse(url))
+      %URI{scheme: scheme, host: host} = uri
+      when scheme in ["http", "https"] and is_binary(host) ->
+        cond do
+          service = drm_service(host) ->
+            {:error, :drm_site, service}
 
-        {:ok,
-         %__MODULE__{
-           id: generate_id(),
-           url: url,
-           source_type: source_type,
-           source_id: source_id
-         }}
+          true ->
+            {source_type, source_id} = classify(host, uri)
+
+            {:ok,
+             %__MODULE__{
+               id: generate_id(),
+               url: url,
+               source_type: source_type,
+               source_id: source_id
+             }}
+        end
 
       _ ->
         {:error, :invalid_url}
@@ -33,6 +52,14 @@ defmodule Byob.MediaItem do
   end
 
   def parse_url(_), do: {:error, :invalid_url}
+
+  defp drm_service(host) when is_binary(host) do
+    Enum.find_value(@drm_hosts, fn {domain, name} ->
+      if host == domain or String.ends_with?(host, "." <> domain), do: name
+    end)
+  end
+
+  defp drm_service(_), do: nil
 
   @doc """
   Extracts the last `http(s)://` URL from a string, trimming trailing punctuation.

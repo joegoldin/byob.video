@@ -49,11 +49,6 @@ defmodule Byob.MediaItemTest do
                MediaItem.parse_url("https://crunchyroll.com/watch/some-episode")
     end
 
-    test "another non-youtube URL" do
-      assert {:ok, %MediaItem{source_type: :extension_required, source_id: nil}} =
-               MediaItem.parse_url("https://www.netflix.com/watch/12345")
-    end
-
     test "invalid URL returns error" do
       assert {:error, :invalid_url} = MediaItem.parse_url("not a url")
     end
@@ -72,6 +67,53 @@ defmodule Byob.MediaItemTest do
       url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
       {:ok, item} = MediaItem.parse_url(url)
       assert item.url == url
+    end
+  end
+
+  describe "parse_url/1 DRM sites" do
+    test "netflix returns drm_site" do
+      assert {:error, :drm_site, "Netflix"} =
+               MediaItem.parse_url("https://www.netflix.com/watch/12345")
+    end
+
+    test "disney+ returns drm_site" do
+      assert {:error, :drm_site, "Disney+"} =
+               MediaItem.parse_url("https://www.disneyplus.com/video/xyz")
+    end
+
+    test "max returns drm_site" do
+      assert {:error, :drm_site, "Max"} = MediaItem.parse_url("https://www.max.com/show/abc")
+    end
+
+    test "old hbomax domain returns drm_site" do
+      assert {:error, :drm_site, "Max"} = MediaItem.parse_url("https://play.hbomax.com/feature/x")
+
+      assert {:error, :drm_site, "Max"} =
+               MediaItem.parse_url("https://hbomax.com/feature/x")
+    end
+
+    test "hulu returns drm_site" do
+      assert {:error, :drm_site, "Hulu"} = MediaItem.parse_url("https://www.hulu.com/watch/1")
+    end
+
+    test "prime video returns drm_site" do
+      assert {:error, :drm_site, "Prime Video"} =
+               MediaItem.parse_url("https://www.primevideo.com/detail/x")
+    end
+
+    test "apple tv+ returns drm_site" do
+      assert {:error, :drm_site, "Apple TV+"} =
+               MediaItem.parse_url("https://tv.apple.com/show/x")
+    end
+
+    test "peacock returns drm_site" do
+      assert {:error, :drm_site, "Peacock"} =
+               MediaItem.parse_url("https://www.peacocktv.com/watch/x")
+    end
+
+    test "paramount+ returns drm_site" do
+      assert {:error, :drm_site, "Paramount+"} =
+               MediaItem.parse_url("https://www.paramountplus.com/shows/x")
     end
   end
 
