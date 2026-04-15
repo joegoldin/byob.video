@@ -2,6 +2,12 @@
 
 ---
 
+# v3.4.17
+
+- Server resilience: `:play` / `:pause` handlers now only update `current_time` on a real state transition (paused → playing, playing → paused). A client that's already seeing the video as playing and echoes `video:play` again can no longer overwrite the room's position. This is why the v3.4.16 refresh fix only worked once **everyone** refreshed — pre-v3.4.16 clients were sending position=0 back to the server during normal playback, and the server happily accepted it, poisoning state for fresh joiners. Seek events still update position explicitly.
+
+---
+
 # v3.4.16
 
 - Fix: YouTube `onReady` callback now receives the wrapped player so the hook can assign `this.player` BEFORE `_applyPendingState` runs. Previously the onReady fired synchronously inside the `YT.Player` event — while the hook was still blocked on the `await YouTubePlayer.create(...)` — so `this.player` was still the old/null value and the initial `_seekTo` / `_play` in `_applyPendingState` were no-ops. This was the root cause of refresh-starts-at-0 and refresh-doesn't-autoplay.

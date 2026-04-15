@@ -229,7 +229,19 @@ defmodule Byob.RoomServer do
       {:ok, state} ->
         now = System.monotonic_time(:millisecond)
         was_paused = state.play_state != :playing
-        state = %{state | play_state: :playing, current_time: position, last_sync_at: now}
+
+        # Only accept the client's position when this is a real state
+        # transition (paused → playing). A client that's already seeing the
+        # video as playing and echoes `video:play` again must NOT be allowed
+        # to rewrite `current_time` — otherwise a buggy client stuck at 0
+        # can poison the room state for everyone.
+        state =
+          if was_paused do
+            %{state | play_state: :playing, current_time: position, last_sync_at: now}
+          else
+            state
+          end
+
         state = schedule_sync_correction(state)
         # Only log play if actually transitioning from paused (not seek-resume)
         state =
@@ -262,7 +274,16 @@ defmodule Byob.RoomServer do
       {:ok, state} ->
         now = System.monotonic_time(:millisecond)
         was_playing = state.play_state == :playing
-        state = %{state | play_state: :paused, current_time: position, last_sync_at: now}
+
+        # Only accept the position on a real playing → paused transition,
+        # for the same poisoning-resistance reason as :play above.
+        state =
+          if was_playing do
+            %{state | play_state: :paused, current_time: position, last_sync_at: now}
+          else
+            state
+          end
+
         state = cancel_sync_correction(state)
         # Only log pause if actually transitioning from playing
         state =
