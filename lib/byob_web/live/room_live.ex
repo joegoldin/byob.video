@@ -223,6 +223,9 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:sync_correction, data}, socket),
     do: PubSub.handle_sync_correction(data, socket)
 
+  def handle_info({:state_heartbeat, data}, socket),
+    do: PubSub.handle_state_heartbeat(data, socket)
+
   def handle_info({:queue_updated, data}, socket), do: PubSub.handle_queue_updated(data, socket)
 
   def handle_info({:sponsor_segments, data}, socket),

@@ -2,6 +2,12 @@
 
 ---
 
+# v3.4.8
+
+- Sync: RoomServer broadcasts a lightweight state heartbeat every 5s. Clients adopt the server's `play_state` if theirs disagrees, and refresh the reconcile loop's reference point so drift extrapolation stays accurate between natural state changes. Any client that missed a broadcast (reconnect, transient drop, backgrounded tab) now self-heals within 5s — no need to wait for the next play/pause/seek event.
+
+---
+
 # v3.4.7
 
 - Fix: "click play on next video" required after deploy — the auto-reload on disconnect was triggering after just 5s, destroying the YouTube iframe and losing the autoplay permission granted by earlier user gesture. Bumped the threshold: **30s when idle**, **120s while a video is actively playing**. LiveView normally reconnects in seconds after a deploy, so in the common case no reload happens and playback continues uninterrupted — the VideoPlayer hook's `reconnected()` callback handles resync on top of the existing iframe.

@@ -24,6 +24,10 @@ defmodule ByobWeb.RoomLive.PubSub do
     {:noreply, push_event(socket, "sync:correction", data)}
   end
 
+  def handle_state_heartbeat(data, socket) do
+    {:noreply, push_event(socket, "sync:heartbeat", data)}
+  end
+
   def handle_queue_updated(%{queue: queue, current_index: current_index}, socket) do
     current_media = if current_index, do: Enum.at(queue, current_index), else: nil
 

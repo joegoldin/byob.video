@@ -59,6 +59,7 @@ const VideoPlayer = {
     this.handleEvent("sync:seek", (data) => this._onSyncSeek(data));
     this.handleEvent("sync:pong", (data) => this.clockSync.handlePong(data));
     this.handleEvent("sync:correction", (data) => this._onSyncCorrection(data));
+    this.handleEvent("sync:heartbeat", (data) => this._onSyncHeartbeat(data));
     this.handleEvent("sponsor:segments", (data) => this._onSponsorSegments(data));
     this.handleEvent("ext:player-state", (data) => this._onExtPlayerState(data));
     this.handleEvent("ext:media-info", (data) => this._onExtMediaInfo(data));
@@ -421,6 +422,33 @@ const VideoPlayer = {
       data.server_time,
       this.clockSync
     );
+  },
+
+  // Lightweight periodic heartbeat from server. Two jobs:
+  //   1. Confirm play_state matches (catches missed sync:play / sync:pause
+  //      broadcasts after transient disconnects).
+  //   2. Refresh the reconcile loop's reference point so drift extrapolation
+  //      doesn't accumulate error between natural state changes.
+  // Deliberately NOT a full re-init (no clock-sync burst, no video reload).
+  _onSyncHeartbeat(data) {
+    if (!this.player) return;
+    // Skip while we're in the middle of joining / applying initial state —
+    // _applyBufferedState / _applyPendingState owns reconcile setup during
+    // those windows.
+    if (this.bufferedState || this._pendingState) return;
+
+    const expected = data.play_state; // "playing" | "paused"
+
+    // If server disagrees with what we expected, adopt server's view. The
+    // existing stateCheckInterval will then drive the YouTube player to match.
+    if (expected && this.expectedPlayState !== expected) {
+      this.expectedPlayState = expected;
+    }
+
+    // Always refresh the drift-correction reference point.
+    if (typeof data.current_time === "number" && typeof data.server_time === "number") {
+      this.reconcile.setServerState(data.current_time, data.server_time, this.clockSync);
+    }
   },
 
   _onVideoChange(data) {

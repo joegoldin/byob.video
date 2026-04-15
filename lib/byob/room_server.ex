@@ -161,6 +161,7 @@ defmodule Byob.RoomServer do
     # Start timers
     state = schedule_rate_limit_reset(state)
     state = schedule_persist(state)
+    Process.send_after(self(), :state_heartbeat, 5_000)
     {:ok, schedule_cleanup(state)}
   end
 
@@ -553,6 +554,27 @@ defmodule Byob.RoomServer do
   def handle_info(:persist, state) do
     persist(state)
     state = schedule_persist(state)
+    {:noreply, state}
+  end
+
+  # Periodic state heartbeat: re-broadcasts play_state + current_time so
+  # clients that missed an earlier broadcast (reconnect, transient drop) can
+  # reconcile without waiting for the next natural state change.
+  def handle_info(:state_heartbeat, state) do
+    now = System.monotonic_time(:millisecond)
+    position = current_position(state)
+
+    broadcast(
+      state,
+      {:state_heartbeat,
+       %{
+         play_state: state.play_state,
+         current_time: position,
+         server_time: now
+       }}
+    )
+
+    Process.send_after(self(), :state_heartbeat, 5_000)
     {:noreply, state}
   end
 
