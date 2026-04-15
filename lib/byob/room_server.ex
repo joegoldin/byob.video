@@ -800,6 +800,13 @@ defmodule Byob.RoomServer do
       }
 
       state = add_to_history(state, item)
+
+      # Log the auto-advance so the activity feed reflects the transition
+      added_by = item.added_by_name
+      title = item.title || item.url
+      detail = if added_by, do: "#{title} (added by #{added_by})", else: title
+      state = log_activity(state, :now_playing, nil, detail)
+
       state = schedule_sync_correction(state)
       fetch_sponsor_segments(item)
       state = fetch_comments_for_current(state)

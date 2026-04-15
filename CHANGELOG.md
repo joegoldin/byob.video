@@ -2,6 +2,12 @@
 
 ---
 
+# v3.4.11
+
+- Fix: activity log now records the auto-advance to the next queue item when a video ends naturally ("Now playing: <title>"). Previously `advance_queue` was silent — only the very first auto-start (empty queue → first item) logged it.
+
+---
+
 # v3.4.10
 
 - Tooltip on the comments expand button: "Expand comments viewer" / "Hide comments viewer" — uses daisyUI `tooltip tooltip-left` so it appears on hover without the 1–2s native `title` delay
