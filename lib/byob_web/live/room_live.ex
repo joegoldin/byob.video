@@ -162,6 +162,8 @@ defmodule ByobWeb.RoomLive do
   end
 
   def handle_event("history:play", params, socket), do: Queue.handle_history_play(params, socket)
+  def handle_event("queue:readd", params, socket), do: Queue.handle_readd(params, socket)
+  def handle_event("video:restart", params, socket), do: Queue.handle_restart(params, socket)
 
   def handle_event("add_url", params, socket), do: UrlPreview.handle_add_url(params, socket)
 

@@ -87,7 +87,10 @@ defmodule Byob.MediaItem do
   Returns the URL or `nil`.
   """
   def extract_url(text) when is_binary(text) do
-    case Regex.scan(~r{https?://\S+}, text) do
+    # Non-greedy match with a lookahead so adjacent URLs with no separator
+    # (e.g. `https://a.comhttps://b.com`) still split into two candidates and
+    # the last one wins.
+    case Regex.scan(~r{https?://\S+?(?=https?://|\s|$)}, text) do
       [] ->
         nil
 

@@ -2,8 +2,8 @@ defmodule ByobWeb.RoomLive.Queue do
   @moduledoc """
   Handles queue/history/tab/SponsorBlock event handlers extracted from RoomLive.
 
-  Covers: history:play, queue:skip, queue:remove, queue:play_index,
-  queue:reorder, switch_tab, and sb:update.
+  Covers: history:play, queue:readd, queue:skip, queue:remove, queue:play_index,
+  queue:reorder, video:restart, switch_tab, and sb:update.
   """
 
   import Phoenix.Component, only: [assign: 2]
@@ -12,6 +12,16 @@ defmodule ByobWeb.RoomLive.Queue do
 
   def handle_history_play(%{"url" => url}, socket) do
     RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :now)
+    {:noreply, socket}
+  end
+
+  def handle_readd(%{"url" => url}, socket) do
+    RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :queue)
+    {:noreply, socket}
+  end
+
+  def handle_restart(_params, socket) do
+    RoomServer.seek(socket.assigns.room_pid, socket.assigns.user_id, 0.0)
     {:noreply, socket}
   end
 

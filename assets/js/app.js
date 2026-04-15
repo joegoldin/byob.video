@@ -156,6 +156,9 @@ const QueueContextMenu = {
     const url = this.el.dataset.url;
     if (!url) return;
 
+    const menuType = this.el.dataset.ctxMenu || ""; // e.g. "play-now-queue,remove,copy"
+    const actionIds = menuType.split(",").map((s) => s.trim()).filter(Boolean);
+
     const menu = document.createElement("div");
     menu.className = "byob-ctx-menu";
     menu.style.cssText = `position:fixed;left:${e.clientX}px;top:${e.clientY}px;z-index:99999;background:var(--b2,#1f2937);border:1px solid var(--b3,#374151);border-radius:6px;padding:4px 0;min-width:200px;font-size:12px;font-family:system-ui;box-shadow:0 4px 12px rgba(0,0,0,0.3);`;
@@ -167,18 +170,52 @@ const QueueContextMenu = {
     menu.appendChild(urlItem);
 
     // Divider
-    const divider = document.createElement("div");
-    divider.style.cssText = "height:1px;background:rgba(255,255,255,0.1);margin:2px 0;";
-    menu.appendChild(divider);
+    const divider = () => {
+      const d = document.createElement("div");
+      d.style.cssText = "height:1px;background:rgba(255,255,255,0.1);margin:2px 0;";
+      return d;
+    };
+    menu.appendChild(divider());
 
-    // Copy URL option
-    const copyItem = document.createElement("div");
-    copyItem.style.cssText = "padding:6px 12px;color:rgba(255,255,255,0.8);cursor:pointer;";
-    copyItem.textContent = "Copy URL";
-    copyItem.onmouseenter = () => copyItem.style.background = "rgba(255,255,255,0.1)";
-    copyItem.onmouseleave = () => copyItem.style.background = "none";
-    copyItem.onclick = () => { navigator.clipboard.writeText(url); menu.remove(); };
-    menu.appendChild(copyItem);
+    const addItem = (label, onclick) => {
+      const item = document.createElement("div");
+      item.style.cssText = "padding:6px 12px;color:rgba(255,255,255,0.85);cursor:pointer;";
+      item.textContent = label;
+      item.onmouseenter = () => item.style.background = "rgba(255,255,255,0.1)";
+      item.onmouseleave = () => item.style.background = "none";
+      item.onclick = () => { try { onclick(); } finally { menu.remove(); } };
+      menu.appendChild(item);
+    };
+
+    const ds = this.el.dataset;
+
+    for (const id of actionIds) {
+      switch (id) {
+        case "play-now-queue":
+          if (ds.queueIndex != null) {
+            addItem("Play Now", () => this.pushEvent("queue:play_index", { index: ds.queueIndex }));
+          }
+          break;
+        case "play-now-history":
+          addItem("Play Now", () => this.pushEvent("history:play", { url }));
+          break;
+        case "requeue":
+          addItem("Re-add to Queue", () => this.pushEvent("queue:readd", { url }));
+          break;
+        case "remove":
+          if (ds.itemId != null) {
+            addItem("Remove from Queue", () => this.pushEvent("queue:remove", { item_id: ds.itemId }));
+          }
+          break;
+        case "restart":
+          addItem("Restart", () => this.pushEvent("video:restart", {}));
+          break;
+        case "copy":
+          // Always add Copy URL at the end; falls through to the default handler below.
+          addItem("Copy URL", () => navigator.clipboard.writeText(url));
+          break;
+      }
+    }
 
     document.body.appendChild(menu);
 

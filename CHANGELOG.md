@@ -2,6 +2,16 @@
 
 ---
 
+# v3.4.5
+
+- Richer right-click context menu per item type:
+  - Now Playing: Restart, Copy URL
+  - Up Next: Play Now, Remove from Queue, Copy URL
+  - History: Play Now, Re-add to Queue, Copy URL
+- Fix URL extraction when two URLs are concatenated with no separator (e.g. pasting `https://youtu.be/ahttps://youtu.be/b`) — the last URL now wins instead of the whole string being treated as one garbage URL
+
+---
+
 # v3.4.4
 
 - Video duration badge overlaid on thumbnails in the URL preview card, Now Playing, Up Next, and History (YouTube-style, bottom-right)

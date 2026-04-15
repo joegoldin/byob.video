@@ -169,6 +169,15 @@ defmodule Byob.MediaItemTest do
                "https://youtu.be/abc"
     end
 
+    test "concatenated URLs with no separator still split on https://" do
+      assert MediaItem.extract_url("https://youtu.be/b4QqU-RQZ4whttps://youtu.be/OTbDMSfhNmE") ==
+               "https://youtu.be/OTbDMSfhNmE"
+    end
+
+    test "concatenated URLs mixing http and https" do
+      assert MediaItem.extract_url("http://a.comhttps://b.com") == "https://b.com"
+    end
+
     test "trailing comma is stripped" do
       assert MediaItem.extract_url("see https://youtu.be/abc, thanks") ==
                "https://youtu.be/abc"

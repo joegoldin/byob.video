@@ -390,7 +390,7 @@ defmodule ByobWeb.RoomLive.Components do
             {@url_preview.author_name}
             <%= if format_relative_date(@url_preview[:published_at]) do %>
               <span class="text-base-content/30">
-                 ·  {format_relative_date(@url_preview[:published_at])}
+                · {format_relative_date(@url_preview[:published_at])}
               </span>
             <% end %>
           </p>
@@ -581,6 +581,7 @@ defmodule ByobWeb.RoomLive.Components do
         <div
           class="flex items-center gap-2 p-2 rounded-lg bg-primary/10 ring-1 ring-primary/30 text-sm"
           data-url={now_playing.url}
+          data-ctx-menu="restart,copy"
           phx-hook="QueueContextMenu"
           id={"now-playing-#{now_playing.id}"}
         >
@@ -645,7 +646,10 @@ defmodule ByobWeb.RoomLive.Components do
             :for={{item, idx} <- up_next}
             draggable="true"
             data-queue-idx={idx}
+            data-queue-index={idx}
+            data-item-id={item.id}
             data-url={item.url}
+            data-ctx-menu="play-now-queue,remove,copy"
             phx-hook="QueueContextMenu"
             id={"queue-item-#{item.id}"}
             class="flex items-center gap-2 p-2 rounded-lg text-sm hover:bg-base-300 transition-colors cursor-grab active:cursor-grabbing"
@@ -726,6 +730,7 @@ defmodule ByobWeb.RoomLive.Components do
         phx-click="history:play"
         phx-value-url={entry.item.url}
         data-url={entry.item.url}
+        data-ctx-menu="play-now-history,requeue,copy"
         phx-hook="QueueContextMenu"
         id={"history-item-#{entry.item.id}-#{DateTime.to_unix(entry.played_at, :millisecond)}"}
         class="flex items-center gap-2 p-2 rounded-lg text-sm hover:bg-base-300 transition-colors cursor-pointer"
