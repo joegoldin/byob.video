@@ -178,14 +178,22 @@ defmodule Byob.RoomServerTest do
   end
 
   describe "video_ended/2" do
-    test "advances when index matches current", %{pid: pid} do
+    test "schedules autoplay countdown then advances", %{pid: pid} do
       {:ok, _} = RoomServer.join(pid, "user1", "Test")
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=a", :now)
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=b", :queue)
 
+      # video_ended no longer advances synchronously — it schedules a 5 s
+      # countdown. Queue stays put until :advance_pending fires.
       :ok = RoomServer.video_ended(pid, 0)
+      immediate = RoomServer.get_state(pid)
+      assert immediate.current_index == 0
+      assert length(immediate.queue) == 2
+      assert immediate.play_state == :paused
+
+      # Trigger the deferred advance directly (instead of sleeping 5 s).
+      send(pid, :advance_pending)
       state = RoomServer.get_state(pid)
-      # advance_queue removes played item, next becomes index 0
       assert state.current_index == 0
       assert length(state.queue) == 1
       assert hd(state.queue).source_id == "b"

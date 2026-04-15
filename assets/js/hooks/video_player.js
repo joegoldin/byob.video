@@ -60,6 +60,8 @@ const VideoPlayer = {
     this.handleEvent("sync:pong", (data) => this.clockSync.handlePong(data));
     this.handleEvent("sync:correction", (data) => this._onSyncCorrection(data));
     this.handleEvent("sync:heartbeat", (data) => this._onSyncHeartbeat(data));
+    this.handleEvent("sync:autoplay_countdown", (data) => this._onAutoplayCountdown(data));
+    this.handleEvent("sync:autoplay_cancelled", () => this._hideAutoplayCountdown());
     this.handleEvent("sponsor:segments", (data) => this._onSponsorSegments(data));
     this.handleEvent("ext:player-state", (data) => this._onExtPlayerState(data));
     this.handleEvent("ext:media-info", (data) => this._onExtMediaInfo(data));
@@ -92,6 +94,7 @@ const VideoPlayer = {
 
   destroyed() {
     window.__byobPlaying = false;
+    this._hideAutoplayCountdown();
     this.reconcile.stop();
     this.suppression.destroy();
     this.clockSync.stop();
@@ -124,10 +127,12 @@ const VideoPlayer = {
     if (state.queue && state.queue.length > 0 && state.current_index != null) {
       const item = state.queue[state.current_index];
       if (item) {
-        this._loadVideo(item.source_type, item.source_id, item.url, item);
-
-        // After player is ready, seek to correct position
+        // Set _pendingState BEFORE _loadVideo so the shouldPlay check inside
+        // _loadVideo sees the correct play_state ("playing"). Otherwise the
+        // YouTube embed URL ends up with autoplay=0 on a fresh mount, which
+        // can leave the player paused at 0 after the subsequent seek.
         this._pendingState = state;
+        this._loadVideo(item.source_type, item.source_id, item.url, item);
       }
     }
   },
@@ -451,7 +456,77 @@ const VideoPlayer = {
     }
   },
 
+  _onAutoplayCountdown(data) {
+    const duration = data?.duration_ms || 5000;
+    this._showAutoplayCountdown(duration);
+  },
+
+  _showAutoplayCountdown(duration) {
+    this._hideAutoplayCountdown();
+
+    const overlay = document.createElement("div");
+    overlay.id = "byob-autoplay-countdown";
+    overlay.setAttribute("aria-label", "Up next in " + Math.round(duration / 1000) + " seconds");
+    overlay.style.cssText = [
+      "position:absolute",
+      "bottom:16px",
+      "right:16px",
+      "width:64px",
+      "height:64px",
+      "z-index:30",
+      "pointer-events:none",
+      "display:flex",
+      "align-items:center",
+      "justify-content:center",
+      "color:white",
+      "font:600 18px/1 system-ui",
+      "text-shadow:0 1px 2px rgba(0,0,0,0.5)",
+      // Pie-slice: conic-gradient filling clockwise from 12 o'clock
+      "background:conic-gradient(var(--byob-pie-color,#0094ff) var(--byob-pie-angle,0deg), rgba(0,0,0,0.5) 0)",
+      "border-radius:50%",
+      "box-shadow:0 2px 12px rgba(0,0,0,0.4)",
+      "--byob-pie-angle:0deg",
+    ].join(";");
+
+    const label = document.createElement("span");
+    label.style.cssText = "position:relative;z-index:1;";
+    label.textContent = Math.ceil(duration / 1000);
+    overlay.appendChild(label);
+
+    // Mount inside the player element so it's positioned relative to it
+    const anchor = this.el;
+    if (anchor) anchor.appendChild(overlay);
+
+    // Animate the pie angle with requestAnimationFrame
+    const start = performance.now();
+    const tick = () => {
+      const elapsed = performance.now() - start;
+      const ratio = Math.min(1, elapsed / duration);
+      const angle = ratio * 360;
+      overlay.style.setProperty("--byob-pie-angle", angle + "deg");
+      const remaining = Math.max(0, Math.ceil((duration - elapsed) / 1000));
+      label.textContent = remaining;
+      if (ratio < 1) {
+        this._autoplayFrame = requestAnimationFrame(tick);
+      }
+    };
+    this._autoplayFrame = requestAnimationFrame(tick);
+    this._autoplayOverlay = overlay;
+  },
+
+  _hideAutoplayCountdown() {
+    if (this._autoplayFrame) {
+      cancelAnimationFrame(this._autoplayFrame);
+      this._autoplayFrame = null;
+    }
+    if (this._autoplayOverlay && this._autoplayOverlay.parentElement) {
+      this._autoplayOverlay.parentElement.removeChild(this._autoplayOverlay);
+    }
+    this._autoplayOverlay = null;
+  },
+
   _onVideoChange(data) {
+    this._hideAutoplayCountdown();
     const item = data.media_item;
     this.el.dataset.currentIndex = data.index;
     this.reconcile.stop();

@@ -32,8 +32,11 @@ defmodule Byob.RoomServer do
     last_seek_at: %{},
     event_counts: %{},
     rate_limit_ref: nil,
-    activity_log: []
+    activity_log: [],
+    pending_advance_ref: nil
   ]
+
+  @autoplay_countdown_ms 5_000
 
   @max_log_entries 200
 
@@ -359,8 +362,15 @@ defmodule Byob.RoomServer do
     end
   end
 
-  def handle_call({:video_ended, index}, _from, %{current_index: index} = state) do
-    # Log the just-finished video before advancing (skip path already has its own log)
+  # First client to report video_ended for the current index wins.
+  # Logs :finished, kicks off a 5 s autoplay countdown, and schedules the
+  # actual advance. Subsequent :video_ended events for the same index are
+  # silently ignored because pending_advance_ref is already set.
+  def handle_call(
+        {:video_ended, index},
+        _from,
+        %{current_index: index, pending_advance_ref: nil} = state
+      ) do
     state =
       case Enum.at(state.queue, index) do
         %{} = finished ->
@@ -371,7 +381,15 @@ defmodule Byob.RoomServer do
           state
       end
 
-    state = advance_queue(state)
+    now = System.monotonic_time(:millisecond)
+    ref = Process.send_after(self(), :advance_pending, @autoplay_countdown_ms)
+    state = %{state | pending_advance_ref: ref, play_state: :paused}
+
+    broadcast(
+      state,
+      {:autoplay_countdown, %{duration_ms: @autoplay_countdown_ms, server_time: now}}
+    )
+
     {:reply, :ok, state}
   end
 
@@ -380,7 +398,9 @@ defmodule Byob.RoomServer do
   end
 
   def handle_call(:skip, _from, state) do
+    state = cancel_pending_advance(state)
     state = log_activity(state, :skipped)
+    broadcast(state, {:autoplay_countdown_cancelled, %{}})
     state = advance_queue(state)
     {:reply, :ok, state}
   end
@@ -414,6 +434,16 @@ defmodule Byob.RoomServer do
 
   def handle_call({:play_index, index, user_id}, _from, state)
       when index >= 0 and index < length(state.queue) do
+    # Jumping to a queue item during an autoplay countdown cancels the countdown.
+    state =
+      if state.pending_advance_ref do
+        state = cancel_pending_advance(state)
+        broadcast(state, {:autoplay_countdown_cancelled, %{}})
+        state
+      else
+        state
+      end
+
     now = System.monotonic_time(:millisecond)
     item = Enum.at(state.queue, index)
 
@@ -568,6 +598,12 @@ defmodule Byob.RoomServer do
     {:noreply, state}
   end
 
+  def handle_info(:advance_pending, state) do
+    state = %{state | pending_advance_ref: nil}
+    state = advance_queue(state)
+    {:noreply, state}
+  end
+
   # Periodic state heartbeat: re-broadcasts play_state + current_time so
   # clients that missed an earlier broadcast (reconnect, transient drop) can
   # reconcile without waiting for the next natural state change.
@@ -681,6 +717,13 @@ defmodule Byob.RoomServer do
   defp schedule_cleanup(state) do
     ref = Process.send_after(self(), :check_empty, state.empty_timeout)
     %{state | cleanup_ref: ref}
+  end
+
+  defp cancel_pending_advance(%{pending_advance_ref: nil} = state), do: state
+
+  defp cancel_pending_advance(%{pending_advance_ref: ref} = state) do
+    Process.cancel_timer(ref)
+    %{state | pending_advance_ref: nil}
   end
 
   defp cancel_cleanup(%{cleanup_ref: nil} = state), do: state

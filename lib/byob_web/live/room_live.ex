@@ -226,6 +226,12 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:state_heartbeat, data}, socket),
     do: PubSub.handle_state_heartbeat(data, socket)
 
+  def handle_info({:autoplay_countdown, data}, socket),
+    do: PubSub.handle_autoplay_countdown(data, socket)
+
+  def handle_info({:autoplay_countdown_cancelled, _}, socket),
+    do: PubSub.handle_autoplay_cancelled(socket)
+
   def handle_info({:queue_updated, data}, socket), do: PubSub.handle_queue_updated(data, socket)
 
   def handle_info({:sponsor_segments, data}, socket),
@@ -340,8 +346,11 @@ defmodule ByobWeb.RoomLive do
         </div>
       </div>
 
-      <%!-- Sidebar: queue/history at top, users pinned at bottom --%>
-      <div class="lg:w-72 flex flex-col gap-2 min-h-0 flex-shrink-0">
+      <%!-- Sidebar: queue/history at top, users pinned at bottom.
+           When comments are expanded the outer container loses its fixed height
+           and the main column grows — sticky/clamped height keeps this sidebar
+           from stretching with it. --%>
+      <div class="lg:w-72 flex flex-col gap-2 min-h-0 flex-shrink-0 lg:h-[calc(100vh-3.5rem)] lg:sticky lg:top-0 lg:self-start">
         <%!-- Queue/History card — fills available space --%>
         <div class="card bg-base-200 flex-1 min-h-0 overflow-hidden">
           <div class="card-body p-4 flex flex-col overflow-hidden">

@@ -2,6 +2,15 @@
 
 ---
 
+# v3.4.13
+
+- **Server-driven autoplay countdown**: when a video ends, the server waits 5s before advancing to the next item. Clients render a bottom-right pie-slice overlay that fills clockwise over 5s, with the remaining seconds in the middle. All clients see the same countdown — no client-side timers, no race conditions, no duplicate log entries if multiple clients report `video_ended` for the same index.
+- Fix: skip / play-index during an active countdown cancel it and advance immediately (or jump to the clicked item)
+- Fix: refresh-during-playback starting from 0 instead of syncing to the current position — `_applyBufferedState` now sets `_pendingState` BEFORE calling `_loadVideo`, so the YouTube embed URL is generated with autoplay=1 when the server says the video is playing
+- Fix: right sidebar stretches the whole page when comments are expanded — constrained to `lg:h-[calc(100vh-3.5rem)]` + `lg:sticky top-0 self-start` so it stays viewport-height regardless of main column height
+
+---
+
 # v3.4.12
 
 - Activity log: new `:finished` event recorded whenever a video naturally ends ("Finished: <title>"), rendered with a ✓ icon. Skipping is unchanged — it continues to log `:skipped`.
