@@ -40,12 +40,12 @@ defmodule Byob.OEmbed do
       {:ok, %{status: 200, body: body}} when is_binary(body) ->
         title =
           extract_meta(body, "og:title") ||
-          extract_meta(body, "twitter:title") ||
-          extract_tag(body, "title")
+            extract_meta(body, "twitter:title") ||
+            extract_tag(body, "title")
 
         thumbnail =
           extract_meta(body, "og:image") ||
-          extract_meta(body, "twitter:image")
+            extract_meta(body, "twitter:image")
 
         if title || thumbnail do
           {:ok, %{title: title, thumbnail_url: thumbnail, author_name: nil}}
@@ -70,17 +70,27 @@ defmodule Byob.OEmbed do
           {:ok, {0, _, _, _}} -> true
           _ -> false
         end
-      _ -> true
+
+      _ ->
+        true
     end
   end
 
   defp extract_meta(html, property) do
     # Match <meta property="og:title" content="..."> or <meta name="twitter:title" content="...">
-    case Regex.run(~r/<meta[^>]*(?:property|name)="#{Regex.escape(property)}"[^>]*content="([^"]*)"/, html) do
-      [_, value] -> value
+    case Regex.run(
+           ~r/<meta[^>]*(?:property|name)="#{Regex.escape(property)}"[^>]*content="([^"]*)"/,
+           html
+         ) do
+      [_, value] ->
+        value
+
       _ ->
         # Try reversed attribute order
-        case Regex.run(~r/<meta[^>]*content="([^"]*)"[^>]*(?:property|name)="#{Regex.escape(property)}"/, html) do
+        case Regex.run(
+               ~r/<meta[^>]*content="([^"]*)"[^>]*(?:property|name)="#{Regex.escape(property)}"/,
+               html
+             ) do
           [_, value] -> value
           _ -> nil
         end

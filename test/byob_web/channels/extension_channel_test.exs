@@ -20,13 +20,17 @@ defmodule ByobWeb.ExtensionChannelTest do
   end
 
   defp connect(module, params, connect_info) do
-    module.connect(params, %Phoenix.Socket{
-      endpoint: ByobWeb.Endpoint,
-      handler: module,
-      transport: :websocket,
-      serializer: Phoenix.Socket.V2.JSONSerializer,
-      transport_pid: self()
-    }, connect_info)
+    module.connect(
+      params,
+      %Phoenix.Socket{
+        endpoint: ByobWeb.Endpoint,
+        handler: module,
+        transport: :websocket,
+        serializer: Phoenix.Socket.V2.JSONSerializer,
+        transport_pid: self()
+      },
+      connect_info
+    )
   end
 
   defp subscribe_and_join(socket, channel, topic, payload) do
@@ -64,7 +68,13 @@ defmodule ByobWeb.ExtensionChannelTest do
     test "video:pause broadcasts sync_pause", %{socket: socket, room_id: room_id} do
       # Need a video in queue first
       pid = GenServer.whereis({:via, Registry, {Byob.RoomRegistry, room_id}})
-      RoomServer.add_to_queue(pid, socket.assigns.user_id, "https://youtube.com/watch?v=test", :now)
+
+      RoomServer.add_to_queue(
+        pid,
+        socket.assigns.user_id,
+        "https://youtube.com/watch?v=test",
+        :now
+      )
 
       Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
 

@@ -114,7 +114,8 @@ defmodule ByobWeb.RoomLive.PubSub do
   end
 
   def handle_sb_settings_updated(sb_settings, socket) do
-    {:noreply, socket |> assign(sb_settings: sb_settings) |> push_event("sb:settings", sb_settings)}
+    {:noreply,
+     socket |> assign(sb_settings: sb_settings) |> push_event("sb:settings", sb_settings)}
   end
 
   def handle_extension_player_state(state, socket) do
@@ -145,7 +146,9 @@ defmodule ByobWeb.RoomLive.PubSub do
     log = Enum.take([entry | socket.assigns.activity_log], 50)
     socket = assign(socket, activity_log: log)
     # Push toast to client
-    socket = push_event(socket, "toast", %{text: ByobWeb.RoomLive.Components.format_log_entry(entry)})
+    socket =
+      push_event(socket, "toast", %{text: ByobWeb.RoomLive.Components.format_log_entry(entry)})
+
     {:noreply, socket}
   end
 

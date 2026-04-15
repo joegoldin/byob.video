@@ -99,7 +99,9 @@ defmodule ByobWeb.ApiController do
     user_id = ensure_api_user(conn, pid)
 
     case RoomServer.play(pid, user_id, pos / 1) do
-      :ok -> json(conn, %{ok: true, data: %{message: "Playing."}})
+      :ok ->
+        json(conn, %{ok: true, data: %{message: "Playing."}})
+
       {:error, :rate_limited} ->
         conn |> put_status(429) |> json(%{error: "Rate limited. Slow down."})
     end
@@ -110,7 +112,9 @@ defmodule ByobWeb.ApiController do
     user_id = ensure_api_user(conn, pid)
 
     case RoomServer.pause(pid, user_id, pos / 1) do
-      :ok -> json(conn, %{ok: true, data: %{message: "Paused."}})
+      :ok ->
+        json(conn, %{ok: true, data: %{message: "Paused."}})
+
       {:error, :rate_limited} ->
         conn |> put_status(429) |> json(%{error: "Rate limited. Slow down."})
     end

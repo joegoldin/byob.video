@@ -22,9 +22,11 @@ defmodule ByobWeb.RoomLive.Username do
     new_username = String.trim(new_username)
 
     state = RoomServer.get_state(socket.assigns.room_pid)
-    name_taken = Enum.any?(state.users, fn {uid, u} ->
-      u.username == new_username && !is_self_user(uid, socket.assigns.user_id)
-    end)
+
+    name_taken =
+      Enum.any?(state.users, fn {uid, u} ->
+        u.username == new_username && !is_self_user(uid, socket.assigns.user_id)
+      end)
 
     if new_username != "" and String.length(new_username) <= 30 and not name_taken do
       # Rename this tab's user
@@ -32,7 +34,10 @@ defmodule ByobWeb.RoomLive.Username do
       # Also rename other tabs of the same user
       [base | _] = String.split(socket.assigns.user_id, ":", parts: 2)
       state = RoomServer.get_state(socket.assigns.room_pid)
-      for {uid, _} <- state.users, uid != socket.assigns.user_id, String.starts_with?(uid, base <> ":") do
+
+      for {uid, _} <- state.users,
+          uid != socket.assigns.user_id,
+          String.starts_with?(uid, base <> ":") do
         RoomServer.rename_user(socket.assigns.room_pid, uid, new_username)
       end
 

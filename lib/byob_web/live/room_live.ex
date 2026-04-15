@@ -31,7 +31,6 @@ defmodule ByobWeb.RoomLive do
         url_preview: nil,
         url_preview_loading: false,
         preview_url: nil,
-        url_focused: false,
         api_key: nil,
         activity_log: [],
         sb_settings: Byob.RoomServer.default_sb_settings(),
@@ -54,10 +53,14 @@ defmodule ByobWeb.RoomLive do
           "" -> socket.assigns.username
           stored -> stored
         end
+
       browser_id = get_connect_params(socket)["browser_id"] || socket.assigns.user_id
       has_extension = get_connect_params(socket)["has_extension"] == true
       show_comments = get_connect_params(socket)["show_comments"] != false
-      socket = assign(socket, user_id: user_id, browser_id: browser_id, show_comments: show_comments)
+
+      socket =
+        assign(socket, user_id: user_id, browser_id: browser_id, show_comments: show_comments)
+
       Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
       {:ok, state} = RoomServer.join(pid, user_id, username)
 
@@ -101,6 +104,7 @@ defmodule ByobWeb.RoomLive do
       if current_media && current_media.source_type == :youtube && current_media.source_id do
         me = self()
         video_id = current_media.source_id
+
         Task.start(fn ->
           case Byob.YouTube.Comments.fetch(video_id) do
             {:ok, result} -> send(me, {:comments_result_direct, video_id, result})
@@ -121,9 +125,10 @@ defmodule ByobWeb.RoomLive do
           socket
         end
 
-      {:ok, attach_hook(socket, :ensure_pid, :handle_event, fn _event, _params, socket ->
-        {:cont, ensure_room_pid(socket)}
-      end)}
+      {:ok,
+       attach_hook(socket, :ensure_pid, :handle_event, fn _event, _params, socket ->
+         {:cont, ensure_room_pid(socket)}
+       end)}
     else
       {:ok, socket}
     end
@@ -139,9 +144,9 @@ defmodule ByobWeb.RoomLive do
 
   # Client events
 
-  def handle_event("url:focus", params, socket), do: UrlPreview.handle_url_focus(params, socket)
-  def handle_event("url:blur", params, socket), do: UrlPreview.handle_url_blur(params, socket)
-  def handle_event("preview_url", params, socket), do: UrlPreview.handle_preview_url(params, socket)
+  def handle_event("preview_url", params, socket),
+    do: UrlPreview.handle_preview_url(params, socket)
+
   def handle_event("clear_url", _params, socket) do
     {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
   end
@@ -149,19 +154,30 @@ defmodule ByobWeb.RoomLive do
   def handle_event("history:play", params, socket), do: Queue.handle_history_play(params, socket)
 
   def handle_event("add_url", params, socket), do: UrlPreview.handle_add_url(params, socket)
-  def handle_event("preview:play_now", params, socket), do: UrlPreview.handle_play_now(params, socket)
+
+  def handle_event("preview:play_now", params, socket),
+    do: UrlPreview.handle_play_now(params, socket)
+
   def handle_event("preview:queue", params, socket), do: UrlPreview.handle_queue(params, socket)
 
-  def handle_event("analytics:has_extension", params, socket), do: Playback.handle_has_extension(params, socket)
+  def handle_event("analytics:has_extension", params, socket),
+    do: Playback.handle_has_extension(params, socket)
+
   def handle_event("video:play", params, socket), do: Playback.handle_play(params, socket)
   def handle_event("video:pause", params, socket), do: Playback.handle_pause(params, socket)
   def handle_event("video:seek", params, socket), do: Playback.handle_seek(params, socket)
-  def handle_event("video:embed_blocked", params, socket), do: Playback.handle_embed_blocked(params, socket)
+
+  def handle_event("video:embed_blocked", params, socket),
+    do: Playback.handle_embed_blocked(params, socket)
+
   def handle_event("video:ended", params, socket), do: Playback.handle_ended(params, socket)
 
   def handle_event("queue:skip", params, socket), do: Queue.handle_skip(params, socket)
   def handle_event("queue:remove", params, socket), do: Queue.handle_remove(params, socket)
-  def handle_event("queue:play_index", params, socket), do: Queue.handle_play_index(params, socket)
+
+  def handle_event("queue:play_index", params, socket),
+    do: Queue.handle_play_index(params, socket)
+
   def handle_event("queue:reorder", params, socket), do: Queue.handle_reorder(params, socket)
   def handle_event("switch_tab", params, socket), do: Queue.handle_switch_tab(params, socket)
   def handle_event("sb:update", params, socket), do: Queue.handle_sb_update(params, socket)
@@ -170,7 +186,8 @@ defmodule ByobWeb.RoomLive do
   def handle_event("username:cancel", params, socket), do: Username.handle_cancel(params, socket)
   def handle_event("username:change", params, socket), do: Username.handle_change(params, socket)
 
-  def handle_event("comments:load_more", params, socket), do: Comments.handle_load_more(params, socket)
+  def handle_event("comments:load_more", params, socket),
+    do: Comments.handle_load_more(params, socket)
 
   def handle_event("toggle_comments_collapse", _params, socket) do
     {:noreply, assign(socket, comments_collapsed: !socket.assigns.comments_collapsed)}
@@ -191,29 +208,49 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:sync_play, data}, socket), do: PubSub.handle_sync_play(data, socket)
   def handle_info({:sync_pause, data}, socket), do: PubSub.handle_sync_pause(data, socket)
   def handle_info({:sync_seek, data}, socket), do: PubSub.handle_sync_seek(data, socket)
-  def handle_info({:sync_correction, data}, socket), do: PubSub.handle_sync_correction(data, socket)
+
+  def handle_info({:sync_correction, data}, socket),
+    do: PubSub.handle_sync_correction(data, socket)
+
   def handle_info({:queue_updated, data}, socket), do: PubSub.handle_queue_updated(data, socket)
-  def handle_info({:sponsor_segments, data}, socket), do: PubSub.handle_sponsor_segments(data, socket)
+
+  def handle_info({:sponsor_segments, data}, socket),
+    do: PubSub.handle_sponsor_segments(data, socket)
+
   def handle_info({:queue_ended, data}, socket), do: PubSub.handle_queue_ended(data, socket)
   def handle_info({:video_changed, data}, socket), do: PubSub.handle_video_changed(data, socket)
 
-  def handle_info({:url_preview_result, result}, socket), do: UrlPreview.handle_preview_result(result, socket)
+  def handle_info({:url_preview_result, result}, socket),
+    do: UrlPreview.handle_preview_result(result, socket)
 
-  def handle_info({:sb_settings_updated, sb_settings}, socket), do: PubSub.handle_sb_settings_updated(sb_settings, socket)
-  def handle_info({:extension_player_state, state}, socket), do: PubSub.handle_extension_player_state(state, socket)
+  def handle_info({:sb_settings_updated, sb_settings}, socket),
+    do: PubSub.handle_sb_settings_updated(sb_settings, socket)
+
+  def handle_info({:extension_player_state, state}, socket),
+    do: PubSub.handle_extension_player_state(state, socket)
+
   def handle_info({:users_updated, users}, socket), do: PubSub.handle_users_updated(users, socket)
-  def handle_info({:activity_log_updated, log}, socket), do: PubSub.handle_activity_log_updated(log, socket)
-  def handle_info({:activity_log_entry, entry}, socket), do: PubSub.handle_activity_log_entry(entry, socket)
-  def handle_info({:comments_updated, data}, socket), do: PubSub.handle_comments_updated(data, socket)
-  def handle_info({:comments_page_result, _, _} = msg, socket), do: Comments.handle_page_result(msg, socket)
+
+  def handle_info({:activity_log_updated, log}, socket),
+    do: PubSub.handle_activity_log_updated(log, socket)
+
+  def handle_info({:activity_log_entry, entry}, socket),
+    do: PubSub.handle_activity_log_entry(entry, socket)
+
+  def handle_info({:comments_updated, data}, socket),
+    do: PubSub.handle_comments_updated(data, socket)
+
+  def handle_info({:comments_page_result, _, _} = msg, socket),
+    do: Comments.handle_page_result(msg, socket)
 
   def handle_info({:comments_result_direct, video_id, result}, socket) do
-    {:noreply, assign(socket,
-      comments: result.comments,
-      comments_next_page: result.next_page_token,
-      comments_video_id: video_id,
-      comments_total: result.total_count
-    )}
+    {:noreply,
+     assign(socket,
+       comments: result.comments,
+       comments_next_page: result.next_page_token,
+       comments_video_id: video_id,
+       comments_total: result.total_count
+     )}
   end
 
   def handle_info(_msg, socket) do
@@ -224,26 +261,34 @@ defmodule ByobWeb.RoomLive do
 
   def render(assigns) do
     ~H"""
-    <Components.room_nav room_id={@room_id} url_focused={@url_focused} url_preview_loading={@url_preview_loading} url_preview={@url_preview} preview_url={@preview_url} />
-    <Components.settings_modal sb_settings={@sb_settings} api_key={@api_key} show_comments={@show_comments} />
+    <Components.room_nav
+      room_id={@room_id}
+      url_preview_loading={@url_preview_loading}
+      url_preview={@url_preview}
+      preview_url={@preview_url}
+    />
+    <Components.settings_modal
+      sb_settings={@sb_settings}
+      api_key={@api_key}
+      show_comments={@show_comments}
+    />
 
     <div class="flex flex-col lg:flex-row gap-3 lg:h-[calc(100vh-3.5rem)]">
       <%!-- Main content --%>
       <div class="flex-1 min-w-0 min-h-0 flex flex-col">
-
         <%!-- Player wrapper: sizes the player to fit viewport while maintaining 16:9 --%>
         <div id="player-sizer" class="mb-2 flex justify-center flex-shrink-0" phx-update="ignore">
-        <div
-          id="player"
-          phx-hook="VideoPlayer"
-          data-user-id={@user_id}
-          data-current-index={@current_index}
-          class="relative bg-base-300 rounded-lg overflow-hidden"
-        >
-          <div class="absolute inset-0 flex items-center justify-center text-base-content/40">
-            Paste a URL below to start watching
+          <div
+            id="player"
+            phx-hook="VideoPlayer"
+            data-user-id={@user_id}
+            data-current-index={@current_index}
+            class="relative bg-base-300 rounded-lg overflow-hidden"
+          >
+            <div class="absolute inset-0 flex items-center justify-center text-base-content/40">
+              Paste a URL below to start watching
+            </div>
           </div>
-        </div>
         </div>
 
         <Comments.comments_panel
@@ -276,7 +321,6 @@ defmodule ByobWeb.RoomLive do
             Open Player Window
           </button>
         </div>
-
       </div>
 
       <%!-- Sidebar: queue/history at top, users pinned at bottom --%>
@@ -294,7 +338,9 @@ defmodule ByobWeb.RoomLive do
                   phx-value-tab="queue"
                 >
                   Queue
-                  <span :if={@queue != []} class="badge badge-xs ml-1">{length(@queue) - (@current_index || 0)}</span>
+                  <span :if={@queue != []} class="badge badge-xs ml-1">
+                    {length(@queue) - (@current_index || 0)}
+                  </span>
                 </button>
                 <button
                   role="tab"
@@ -336,6 +382,7 @@ defmodule ByobWeb.RoomLive do
 
   defp ensure_room_pid(socket) do
     pid = socket.assigns[:room_pid]
+
     if pid && Process.alive?(pid) do
       socket
     else
@@ -346,6 +393,7 @@ defmodule ByobWeb.RoomLive do
         RoomServer.join(new_pid, socket.assigns.user_id, username)
         Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{socket.assigns.room_id}")
       end
+
       assign(socket, room_pid: new_pid)
     end
   end

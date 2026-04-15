@@ -52,18 +52,22 @@ defmodule ByobWeb.ExtensionChannel do
   def handle_in("video:ended", _payload, socket) do
     # Extension doesn't know the index — use server's current_index
     state = RoomServer.get_state(socket.assigns.room_pid)
+
     if state.current_index do
       RoomServer.video_ended(socket.assigns.room_pid, state.current_index)
     end
+
     {:noreply, socket}
   end
 
   def handle_in("video:all_closed", _payload, socket) do
     # All extension player windows closed — pause so next joiner syncs without autoplay
     state = RoomServer.get_state(socket.assigns.room_pid)
+
     if state.play_state == :playing do
       RoomServer.pause(socket.assigns.room_pid, socket.assigns.user_id, state.current_time)
     end
+
     {:noreply, socket}
   end
 
@@ -74,14 +78,18 @@ defmodule ByobWeb.ExtensionChannel do
     is_hooked = payload["hooked"] || false
 
     if is_playing or is_hooked do
-      Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{socket.assigns.room_id}",
-        {:extension_player_state, %{
-          hooked: is_hooked,
-          position: payload["position"] || 0,
-          duration: payload["duration"] || 0,
-          playing: is_playing,
-          user_id: socket.assigns.user_id
-        }})
+      Phoenix.PubSub.broadcast(
+        Byob.PubSub,
+        "room:#{socket.assigns.room_id}",
+        {:extension_player_state,
+         %{
+           hooked: is_hooked,
+           position: payload["position"] || 0,
+           duration: payload["duration"] || 0,
+           playing: is_playing,
+           user_id: socket.assigns.user_id
+         }}
+      )
     end
 
     {:noreply, socket}
@@ -89,11 +97,14 @@ defmodule ByobWeb.ExtensionChannel do
 
   def handle_in("sync:request_state", _payload, socket) do
     state = RoomServer.get_state(socket.assigns.room_pid)
-    {:reply, {:ok, %{
-      play_state: Atom.to_string(state.play_state),
-      current_time: state.current_time,
-      server_time: state.server_time
-    }}, socket}
+
+    {:reply,
+     {:ok,
+      %{
+        play_state: Atom.to_string(state.play_state),
+        current_time: state.current_time,
+        server_time: state.server_time
+      }}, socket}
   end
 
   def handle_in("sync:ping", %{"t1" => t1}, socket) do

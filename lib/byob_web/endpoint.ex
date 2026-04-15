@@ -11,8 +11,7 @@ defmodule ByobWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  socket "/extension", ByobWeb.ExtensionSocket,
-    websocket: [check_origin: false]
+  socket "/extension", ByobWeb.ExtensionSocket, websocket: [check_origin: false]
 
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],
@@ -51,9 +50,11 @@ defmodule ByobWeb.Endpoint do
 
   # Allow autoplay for YouTube embeds
   plug :permissions_policy
+
   defp permissions_policy(conn, _opts) do
     Plug.Conn.put_resp_header(conn, "permissions-policy", "autoplay=*, encrypted-media=*")
   end
+
   plug Plug.Session, @session_options
   plug ByobWeb.Router
 end

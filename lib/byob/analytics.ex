@@ -11,10 +11,16 @@ defmodule Byob.Analytics do
 
   def identify(user_id, properties \\ %{}) do
     if enabled?() do
-      PostHog.capture("$identify", Map.merge(%{
-        distinct_id: user_id,
-        "$set": properties
-      }, properties))
+      PostHog.capture(
+        "$identify",
+        Map.merge(
+          %{
+            distinct_id: user_id,
+            "$set": properties
+          },
+          properties
+        )
+      )
     end
   end
 

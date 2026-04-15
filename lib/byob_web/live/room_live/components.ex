@@ -7,19 +7,27 @@ defmodule ByobWeb.RoomLive.Components do
   """
 
   use Phoenix.Component
-  use Phoenix.VerifiedRoutes, endpoint: ByobWeb.Endpoint, router: ByobWeb.Router, statics: ByobWeb.static_paths()
+
+  use Phoenix.VerifiedRoutes,
+    endpoint: ByobWeb.Endpoint,
+    router: ByobWeb.Router,
+    statics: ByobWeb.static_paths()
 
   # ── Room Nav Bar ─────────────────────────────────────────────────
 
   attr :room_id, :string, required: true
-  attr :url_focused, :boolean, required: true
   attr :url_preview_loading, :boolean, required: true
   attr :url_preview, :any, default: nil
   attr :preview_url, :string, default: nil
 
   def room_nav(assigns) do
     ~H"""
-    <nav id="room-nav" phx-hook="ReplaceLayoutNav" class="navbar min-h-0 h-10 bg-base-200 border-b border-base-300 px-2 sm:px-4" style="margin: -0.5rem -1rem 0.5rem -1rem; width: calc(100% + 2rem);">
+    <nav
+      id="room-nav"
+      phx-hook="ReplaceLayoutNav"
+      class="navbar min-h-0 h-10 bg-base-200 border-b border-base-300 px-2 sm:px-4"
+      style="margin: -0.5rem -1rem 0.5rem -1rem; width: calc(100% + 2rem);"
+    >
       <div class="flex-1 flex items-center gap-2">
         <a href="/" class="flex items-center gap-1.5 flex-shrink-0">
           <img src={~p"/images/favicon.svg"} class="w-5 h-5" />
@@ -40,12 +48,23 @@ defmodule ByobWeb.RoomLive.Components do
           "}
           class="btn btn-ghost btn-sm gap-1 text-base-content/60 flex-shrink-0"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-4 w-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"
+            />
           </svg>
           <span class="hidden sm:inline">Copy Room Link</span>
         </button>
-        <div class="relative flex-1 min-w-0 max-w-[40vw]">
+        <div class="relative flex-1 min-w-0 max-w-[40vw] group">
           <form phx-submit="add_url" phx-change="preview_url" id="url-form">
             <div class="relative flex items-center" id="url-input-wrapper">
               <input
@@ -56,8 +75,6 @@ defmodule ByobWeb.RoomLive.Components do
                 class="input input-bordered input-xs w-full pr-6"
                 autocomplete="off"
                 phx-debounce="300"
-                phx-focus="url:focus"
-                phx-blur="url:blur"
                 oninput="this.parentElement.querySelector('.url-clear-btn').classList.toggle('hidden', !this.value)"
               />
               <button
@@ -67,7 +84,13 @@ defmodule ByobWeb.RoomLive.Components do
                 onmousedown="event.preventDefault()"
                 class={"url-clear-btn absolute inset-y-0 right-0 flex items-center pr-2 text-base-content/30 hover:text-base-content/60 transition-colors #{if !@preview_url || @preview_url == "", do: "hidden"}"}
               >
-                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                <svg
+                  class="w-3 h-3"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  stroke-width="2.5"
+                >
                   <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
@@ -75,34 +98,64 @@ defmodule ByobWeb.RoomLive.Components do
           </form>
           <%!-- Supported sites hint (shown on focus with empty input) --%>
           <div
-            :if={@url_focused && !@url_preview_loading && !@url_preview}
-            class="absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-50 p-3"
+            :if={!@url_preview_loading && !@url_preview}
+            class="hidden group-focus-within:block absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-50 p-3"
           >
-            <p class="text-xs font-semibold text-base-content/60 mb-2">Paste a URL to watch together</p>
+            <p class="text-xs font-semibold text-base-content/60 mb-2">
+              Paste a URL to watch together
+            </p>
             <div class="space-y-1.5">
               <div class="flex items-center gap-2 text-xs text-base-content/50">
-                <svg class="w-4 h-4 flex-shrink-0 text-red-500" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/>
+                <svg
+                  class="w-4 h-4 flex-shrink-0 text-red-500"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
+                  <path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z" />
                 </svg>
-                <span>YouTube — synced playback with <a href={Byob.Links.sponsor_block()} target="_blank" class="link link-primary">SponsorBlock</a></span>
+                <span>
+                  YouTube — synced playback with
+                  <a href={Byob.Links.sponsor_block()} target="_blank" class="link link-primary">
+                    SponsorBlock
+                  </a>
+                </span>
               </div>
               <div class="flex items-center gap-2 text-xs text-base-content/50">
-                <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="10"/>
-                  <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none"/>
+                <svg
+                  class="w-4 h-4 flex-shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <polygon points="10,8 16,12 10,16" fill="currentColor" stroke="none" />
                 </svg>
                 <span>Direct video files — .mp4, .webm, .ogg, .mov, .mkv</span>
               </div>
               <div class="flex items-center gap-2 text-xs text-base-content/50">
-                <svg class="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>
+                <svg
+                  class="w-4 h-4 flex-shrink-0"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+                  />
                 </svg>
                 <span>Any site — via browser extension (Crunchyroll, etc.)</span>
               </div>
             </div>
           </div>
           <%!-- Preview dropdown --%>
-          <.url_preview_dropdown url_focused={@url_focused} url_preview_loading={@url_preview_loading} url_preview={@url_preview} />
+          <.url_preview_dropdown
+            url_preview_loading={@url_preview_loading}
+            url_preview={@url_preview}
+          />
         </div>
       </div>
       <div class="flex-none flex items-center gap-1">
@@ -110,8 +163,19 @@ defmodule ByobWeb.RoomLive.Components do
           class="btn btn-ghost btn-xs btn-circle"
           onclick="document.getElementById('sb-settings-modal')?.showModal()"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-4 w-4"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="2"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"
+            />
             <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
           </svg>
         </button>
@@ -121,10 +185,18 @@ defmodule ByobWeb.RoomLive.Components do
             id="theme-toggle-room"
             onchange="document.documentElement.setAttribute('data-theme', this.checked ? 'dark' : 'light'); localStorage.setItem('phx:theme', this.checked ? 'dark' : 'light')"
           />
-          <svg class="swap-off h-4 w-4 fill-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+          <svg
+            class="swap-off h-4 w-4 fill-current"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+          >
             <path d="M5.64,17l-.71.71a1,1,0,0,0,0,1.41,1,1,0,0,0,1.41,0l.71-.71A1,1,0,0,0,5.64,17ZM5,12a1,1,0,0,0-1-1H3a1,1,0,0,0,0,2H4A1,1,0,0,0,5,12Zm7-7a1,1,0,0,0,1-1V3a1,1,0,0,0-2,0V4A1,1,0,0,0,12,5ZM5.64,7.05a1,1,0,0,0,.7.29,1,1,0,0,0,.71-.29,1,1,0,0,0,0-1.41l-.71-.71A1,1,0,0,0,4.93,6.34Zm12,.29a1,1,0,0,0,.7-.29l.71-.71a1,1,0,1,0-1.41-1.41L17,5.64a1,1,0,0,0,0,1.41A1,1,0,0,0,17.66,7.34ZM21,11H20a1,1,0,0,0,0,2h1a1,1,0,0,0,0-2Zm-9,8a1,1,0,0,0-1,1v1a1,1,0,0,0,2,0V20A1,1,0,0,0,12,19ZM18.36,17A1,1,0,0,0,17,18.36l.71.71a1,1,0,0,0,1.41,0,1,1,0,0,0,0-1.41ZM12,6.5A5.5,5.5,0,1,0,17.5,12,5.51,5.51,0,0,0,12,6.5Zm0,9A3.5,3.5,0,1,1,15.5,12,3.5,3.5,0,0,1,12,15.5Z" />
           </svg>
-          <svg class="swap-on h-4 w-4 fill-current" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+          <svg
+            class="swap-on h-4 w-4 fill-current"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+          >
             <path d="M21.64,13a1,1,0,0,0-1.05-.14,8.05,8.05,0,0,1-3.37.73A8.15,8.15,0,0,1,9.08,5.49a8.59,8.59,0,0,1,.25-2A1,1,0,0,0,8,2.36,10.14,10.14,0,1,0,22,14.05,1,1,0,0,0,21.64,13Zm-9.5,6.69A8.14,8.14,0,0,1,7.08,5.22v.27A10.15,10.15,0,0,0,17.22,15.63a9.79,9.79,0,0,0,2.1-.22A8.11,8.11,0,0,1,12.14,19.73Z" />
           </svg>
         </label>
@@ -152,13 +224,28 @@ defmodule ByobWeb.RoomLive.Components do
         </div>
         <div class="text-xs text-base-content/50 space-y-1 mb-4 pb-4 border-b border-base-300 text-center">
           <p>
-            <a href={Byob.Links.source_code()} target="_blank" class="text-base-content/50 hover:text-base-content/70" title="Source on GitHub">
-              <svg class="w-4 h-4 inline" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            <a
+              href={Byob.Links.source_code()}
+              target="_blank"
+              class="text-base-content/50 hover:text-base-content/70"
+              title="Source on GitHub"
+            >
+              <svg class="w-4 h-4 inline" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
+              </svg>
             </a>
             <span class="mx-1">&middot;</span>
-            <a href={Byob.Links.privacy_policy()} target="_blank" class="link link-primary">Privacy</a>
+            <a href={Byob.Links.privacy_policy()} target="_blank" class="link link-primary">
+              Privacy
+            </a>
             <span class="mx-1">&middot;</span>
-            <a href="https://github.com/joegoldin/byob.video/blob/main/CHANGELOG.md" target="_blank" class="link link-primary">v{Application.spec(:byob, :vsn)}</a>
+            <a
+              href="https://github.com/joegoldin/byob.video/blob/main/CHANGELOG.md"
+              target="_blank"
+              class="link link-primary"
+            >
+              v{Application.spec(:byob, :vsn)}
+            </a>
           </p>
         </div>
 
@@ -177,7 +264,9 @@ defmodule ByobWeb.RoomLive.Components do
         </div>
 
         <%!-- SponsorBlock settings --%>
-        <h3 class="font-bold text-lg mb-1"><a href={Byob.Links.sponsor_block()} target="_blank" class="link">SponsorBlock</a> Settings</h3>
+        <h3 class="font-bold text-lg mb-1">
+          <a href={Byob.Links.sponsor_block()} target="_blank" class="link">SponsorBlock</a> Settings
+        </h3>
         <p class="text-xs text-base-content/50 mb-4">
           Settings apply to this room for all users.
         </p>
@@ -192,25 +281,47 @@ defmodule ByobWeb.RoomLive.Components do
         <div :if={@api_key} class="mt-4 pt-4 border-t border-base-300">
           <h4 class="font-semibold text-sm mb-2">Room API Key</h4>
           <div class="flex items-center gap-2">
-            <code class="text-xs bg-base-100 px-2 py-1 rounded flex-1 truncate select-all">{@api_key}</code>
-            <button onclick={"navigator.clipboard.writeText('#{@api_key}')"} class="btn btn-xs btn-ghost">Copy</button>
+            <code class="text-xs bg-base-100 px-2 py-1 rounded flex-1 truncate select-all">
+              {@api_key}
+            </code>
+            <button
+              onclick={"navigator.clipboard.writeText('#{@api_key}')"}
+              class="btn btn-xs btn-ghost"
+            >
+              Copy
+            </button>
           </div>
-          <a href="/api" target="_blank" class="text-xs link link-primary mt-1 block">API Documentation</a>
+          <a href="/api" target="_blank" class="text-xs link link-primary mt-1 block">
+            API Documentation
+          </a>
         </div>
         <%!-- Attribution --%>
         <div class="mt-4 pt-4 border-t border-base-300 text-xs text-base-content/40 space-y-1">
           <p>
-            <a href={Byob.Links.sponsor_block()} target="_blank" class="link link-primary">SponsorBlock</a>
-            API by <a href="https://ajay.app" target="_blank" class="link link-primary">Ajay Ramachandran</a> (GPLv3)
+            <a href={Byob.Links.sponsor_block()} target="_blank" class="link link-primary">
+              SponsorBlock
+            </a>
+            API by
+            <a href="https://ajay.app" target="_blank" class="link link-primary">Ajay Ramachandran</a>
+            (GPLv3)
           </p>
           <p>
-            Built with
-            <a href="https://phoenixframework.org" target="_blank" class="link link-primary">Phoenix</a>,
-            <a href="https://daisyui.com" target="_blank" class="link link-primary">daisyUI</a>,
-            and <a href="https://tailwindcss.com" target="_blank" class="link link-primary">Tailwind CSS</a>
+            Built with <a
+              href="https://phoenixframework.org"
+              target="_blank"
+              class="link link-primary"
+            >Phoenix</a>, <a href="https://daisyui.com" target="_blank" class="link link-primary">daisyUI</a>,
+            and
+            <a href="https://tailwindcss.com" target="_blank" class="link link-primary">
+              Tailwind CSS
+            </a>
           </p>
           <p>
-            byob.video is <a href={Byob.Links.source_code()} target="_blank" class="link link-primary">open source</a> under MIT License
+            byob.video is
+            <a href={Byob.Links.source_code()} target="_blank" class="link link-primary">
+              open source
+            </a>
+            under MIT License
           </p>
         </div>
       </div>
@@ -223,16 +334,15 @@ defmodule ByobWeb.RoomLive.Components do
 
   # ── URL Preview Dropdown ──────────────────────────────────────────
 
-  attr :url_focused, :boolean, required: true
   attr :url_preview_loading, :boolean, required: true
   attr :url_preview, :any, default: nil
 
   def url_preview_dropdown(assigns) do
     ~H"""
     <div
-      :if={@url_focused && (@url_preview_loading || @url_preview)}
+      :if={@url_preview_loading || @url_preview}
       onmousedown="event.preventDefault()"
-      class="absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-50"
+      class="hidden group-focus-within:block absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-50"
     >
       <div :if={@url_preview_loading} class="flex items-center gap-3 p-3 animate-pulse">
         <div class="w-16 h-10 bg-base-300 rounded flex-shrink-0" />
@@ -271,14 +381,33 @@ defmodule ByobWeb.RoomLive.Components do
         class="flex items-center gap-2 p-3"
       >
         <div class="w-16 h-10 bg-base-300 rounded flex-shrink-0 flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-base-content/30" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z" />
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-5 w-5 text-base-content/30"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            stroke-width="1.5"
+          >
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+            />
+            <path
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              d="M15.91 11.672a.375.375 0 010 .656l-5.603 3.113a.375.375 0 01-.557-.328V8.887c0-.286.307-.466.557-.327l5.603 3.112z"
+            />
           </svg>
         </div>
         <div class="flex-1 min-w-0">
-          <p :if={@url_preview.title} class="text-sm font-medium line-clamp-3">{@url_preview.title}</p>
-          <p :if={!@url_preview.title} class="text-sm font-medium truncate">{@url_preview.url || "Direct video"}</p>
+          <p :if={@url_preview.title} class="text-sm font-medium line-clamp-3">
+            {@url_preview.title}
+          </p>
+          <p :if={!@url_preview.title} class="text-sm font-medium truncate">
+            {@url_preview.url || "Direct video"}
+          </p>
           <p class="text-xs text-base-content/50">Direct video file</p>
         </div>
         <div class="flex gap-1 flex-shrink-0">
@@ -307,7 +436,9 @@ defmodule ByobWeb.RoomLive.Components do
           <span class="text-xs text-base-content/30">EXT</span>
         </div>
         <div class="flex-1 min-w-0">
-          <p :if={@url_preview.title} class="text-sm font-medium line-clamp-3">{@url_preview.title}</p>
+          <p :if={@url_preview.title} class="text-sm font-medium line-clamp-3">
+            {@url_preview.title}
+          </p>
           <p :if={!@url_preview.title} class="text-sm font-medium">External site</p>
           <p class="text-xs text-warning byob-no-ext">
             <a href="#" onclick={"#{Byob.Links.extension_js()}; return false;"} class="underline">
@@ -366,12 +497,22 @@ defmodule ByobWeb.RoomLive.Components do
             >
               {now_playing.title}
             </span>
-            <span :if={show_url?(now_playing)} title={now_playing.url} class="block text-xs text-base-content/50 line-clamp-2">
+            <span
+              :if={show_url?(now_playing)}
+              title={now_playing.url}
+              class="block text-xs text-base-content/50 line-clamp-2"
+            >
               {now_playing.url}
             </span>
             <span :if={now_playing.added_by_name} class="block text-xs text-base-content/40 mt-0.5">
               {now_playing.added_by_name}
-              <time :if={format_time(now_playing.added_at)} datetime={format_time(now_playing.added_at)} phx-hook="LocalTime" id={"time-np-#{now_playing.id}"}></time>
+              <time
+                :if={format_time(now_playing.added_at)}
+                datetime={format_time(now_playing.added_at)}
+                phx-hook="LocalTime"
+                id={"time-np-#{now_playing.id}"}
+              >
+              </time>
             </span>
           </div>
         </div>
@@ -381,8 +522,7 @@ defmodule ByobWeb.RoomLive.Components do
       <% up_next =
         @queue
         |> Enum.with_index()
-        |> Enum.filter(fn {_item, idx} -> idx > (@current_index || -1) end)
-      %>
+        |> Enum.filter(fn {_item, idx} -> idx > (@current_index || -1) end) %>
       <div :if={up_next != []}>
         <div class="text-xs font-semibold text-base-content/40 uppercase tracking-wide mb-1">
           Up Next
@@ -422,7 +562,13 @@ defmodule ByobWeb.RoomLive.Components do
               </span>
               <span :if={item.added_by_name} class="block text-[10px] text-base-content/40 mt-0.5">
                 {item.added_by_name}
-                <time :if={format_time(item.added_at)} datetime={format_time(item.added_at)} phx-hook="LocalTime" id={"time-q-#{item.id}"}></time>
+                <time
+                  :if={format_time(item.added_at)}
+                  datetime={format_time(item.added_at)}
+                  phx-hook="LocalTime"
+                  id={"time-q-#{item.id}"}
+                >
+                </time>
               </span>
             </button>
             <button
@@ -473,7 +619,11 @@ defmodule ByobWeb.RoomLive.Components do
           <span class="text-xs text-base-content/30">?</span>
         </div>
         <div class="flex-1 min-w-0">
-          <span :if={entry.item.title} title={entry.item.title} class="block text-xs font-medium line-clamp-2">
+          <span
+            :if={entry.item.title}
+            title={entry.item.title}
+            class="block text-xs font-medium line-clamp-2"
+          >
             {entry.item.title}
           </span>
           <span :if={!entry.item.title} class="block text-xs text-base-content/50 truncate">
@@ -481,7 +631,13 @@ defmodule ByobWeb.RoomLive.Components do
           </span>
           <span class="block text-xs text-base-content/40 mt-0.5">
             {if entry.item.added_by_name, do: entry.item.added_by_name, else: ""}
-            <time :if={format_time(entry.played_at)} datetime={format_time(entry.played_at)} phx-hook="LocalTime" id={"time-h-#{entry.item.id}-#{System.unique_integer([:positive])}"}></time>
+            <time
+              :if={format_time(entry.played_at)}
+              datetime={format_time(entry.played_at)}
+              phx-hook="LocalTime"
+              id={"time-h-#{entry.item.id}-#{System.unique_integer([:positive])}"}
+            >
+            </time>
           </span>
         </div>
       </li>
@@ -504,17 +660,29 @@ defmodule ByobWeb.RoomLive.Components do
     <div class="card bg-base-200 flex-shrink-0">
       <div class="card-body p-3">
         <h3 class="card-title text-xs text-base-content/40">Activity</h3>
-        <ul id="activity-log" phx-hook="ScrollBottom" class="space-y-0.5 mt-1 max-h-32 overflow-y-auto text-[11px] text-base-content/50 leading-relaxed">
+        <ul
+          id="activity-log"
+          phx-hook="ScrollBottom"
+          class="space-y-0.5 mt-1 max-h-32 overflow-y-auto text-[11px] text-base-content/50 leading-relaxed"
+        >
           <li :for={entry <- Enum.reverse(Enum.take(@activity_log, 30))} class="flex gap-1">
             <span :if={entry.action == :joined} class="text-success/60 flex-shrink-0">+</span>
             <span :if={entry.action == :left} class="text-error/60 flex-shrink-0">-</span>
-            <span :if={entry.action == :now_playing} class="text-primary/60 flex-shrink-0">&#9654;</span>
+            <span :if={entry.action == :now_playing} class="text-primary/60 flex-shrink-0">
+              &#9654;
+            </span>
             <span :if={entry.action == :play} class="text-success/60 flex-shrink-0">&#9654;</span>
-            <span :if={entry.action == :pause} class="text-warning/60 flex-shrink-0">&#10074;&#10074;</span>
+            <span :if={entry.action == :pause} class="text-warning/60 flex-shrink-0">
+              &#10074;&#10074;
+            </span>
             <span :if={entry.action == :added} class="text-primary/60 flex-shrink-0">+</span>
-            <span :if={entry.action == :skipped} class="text-base-content/40 flex-shrink-0">&#9197;</span>
+            <span :if={entry.action == :skipped} class="text-base-content/40 flex-shrink-0">
+              &#9197;
+            </span>
             <span :if={entry.action == :seeked} class="text-info/60 flex-shrink-0">&#8644;</span>
-            <span :if={entry.action == :renamed} class="text-base-content/40 flex-shrink-0">&#9998;</span>
+            <span :if={entry.action == :renamed} class="text-base-content/40 flex-shrink-0">
+              &#9998;
+            </span>
             <span class="flex-1 line-clamp-2">{format_log_entry(entry)}</span>
             <time
               :if={entry.at}
@@ -522,7 +690,8 @@ defmodule ByobWeb.RoomLive.Components do
               phx-hook="LocalTime"
               id={"log-#{System.unique_integer([:positive])}"}
               class="text-base-content/30 flex-shrink-0 whitespace-nowrap"
-            ></time>
+            >
+            </time>
           </li>
           <li :if={@activity_log == []} class="text-base-content/30 italic">No activity yet</li>
         </ul>
@@ -543,7 +712,9 @@ defmodule ByobWeb.RoomLive.Components do
       <div class="card-body p-4">
         <h3 class="card-title text-sm">
           Users
-          <span class="badge badge-sm">{@users |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq() |> length()}</span>
+          <span class="badge badge-sm">
+            {@users |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq() |> length()}
+          </span>
         </h3>
         <ul class="space-y-2 mt-1 max-h-48 overflow-y-auto">
           <li
@@ -551,7 +722,7 @@ defmodule ByobWeb.RoomLive.Components do
             data-user-id={uid}
             class="flex items-center gap-2 text-sm"
           >
-            <div class={"w-2 h-2 rounded-full flex-shrink-0 #{if user.connected, do: "bg-success", else: "bg-base-content/20"}"}  />
+            <div class={"w-2 h-2 rounded-full flex-shrink-0 #{if user.connected, do: "bg-success", else: "bg-base-content/20"}"} />
             <%!-- Other users: just show name --%>
             <span :if={!is_self_user(uid, @user_id)} class="truncate">{user.username}</span>
             <%!-- Self: show name + tab indicator --%>
@@ -561,7 +732,9 @@ defmodule ByobWeb.RoomLive.Components do
             >
               <span class="font-bold">{user.username}</span>
               <span :if={uid == @user_id} class="text-base-content/40 font-normal">(you)</span>
-              <span :if={uid != @user_id} class="text-base-content/30 font-normal text-xs">(other tab)</span>
+              <span :if={uid != @user_id} class="text-base-content/30 font-normal text-xs">
+                (other tab)
+              </span>
             </span>
             <button
               :if={uid == @user_id && !@editing_username}
@@ -633,26 +806,38 @@ defmodule ByobWeb.RoomLive.Components do
   def format_log_entry(%{action: :left, user: user}), do: "#{user} left"
   def format_log_entry(%{action: :now_playing, detail: detail}), do: "Now playing: #{detail}"
   def format_log_entry(%{action: :play, user: user, detail: nil}), do: "#{user} resumed"
-  def format_log_entry(%{action: :play, user: user, detail: title}), do: "#{user} resumed #{title}"
+
+  def format_log_entry(%{action: :play, user: user, detail: title}),
+    do: "#{user} resumed #{title}"
+
   def format_log_entry(%{action: :pause, user: user, detail: nil}), do: "#{user} paused"
-  def format_log_entry(%{action: :pause, user: user, detail: title}), do: "#{user} paused #{title}"
+
+  def format_log_entry(%{action: :pause, user: user, detail: title}),
+    do: "#{user} paused #{title}"
+
   def format_log_entry(%{action: :added, user: user, detail: url}), do: "#{user} added #{url}"
-  def format_log_entry(%{action: :seeked, user: user, detail: detail}), do: "#{user} seeked #{detail}"
+
+  def format_log_entry(%{action: :seeked, user: user, detail: detail}),
+    do: "#{user} seeked #{detail}"
+
   def format_log_entry(%{action: :skipped}), do: "Skipped to next"
   def format_log_entry(%{action: :renamed, detail: detail}), do: "Renamed: #{detail}"
   def format_log_entry(_), do: nil
 
   def show_url?(item) do
     has_title = is_binary(item.title) and item.title != ""
-    is_youtube = is_binary(item.url) and (String.contains?(item.url, "youtube.com") or String.contains?(item.url, "youtu.be"))
+
+    is_youtube =
+      is_binary(item.url) and
+        (String.contains?(item.url, "youtube.com") or String.contains?(item.url, "youtu.be"))
+
     not (has_title and is_youtube)
   end
 
   def dedup_users(users, my_user_id) do
     users
     |> Enum.sort_by(fn {id, u} ->
-      {(if is_self_user(id, my_user_id), do: 0, else: 1),
-       (if u.connected, do: 0, else: 1)}
+      {if(is_self_user(id, my_user_id), do: 0, else: 1), if(u.connected, do: 0, else: 1)}
     end)
     |> Enum.uniq_by(fn {_id, u} -> u.username end)
   end

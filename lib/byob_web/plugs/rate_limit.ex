@@ -34,7 +34,10 @@ defmodule ByobWeb.Plugs.RateLimit do
       conn
       |> put_resp_header("retry-after", Integer.to_string(window))
       |> put_resp_content_type("application/json")
-      |> send_resp(429, Jason.encode!(%{error: "Rate limit exceeded. Try again in #{window} seconds."}))
+      |> send_resp(
+        429,
+        Jason.encode!(%{error: "Rate limit exceeded. Try again in #{window} seconds."})
+      )
       |> halt()
     else
       conn
@@ -58,6 +61,7 @@ defmodule ByobWeb.Plugs.RateLimit do
     case :ets.whereis(:byob_rate_limit) do
       :undefined ->
         :ets.new(:byob_rate_limit, [:named_table, :public, :duplicate_bag])
+
       _ ->
         :ok
     end

@@ -1,5 +1,16 @@
 defmodule Byob.MediaItem do
-  defstruct [:id, :url, :source_type, :source_id, :title, :duration, :thumbnail_url, :added_by, :added_by_name, :added_at]
+  defstruct [
+    :id,
+    :url,
+    :source_type,
+    :source_id,
+    :title,
+    :duration,
+    :thumbnail_url,
+    :added_by,
+    :added_by_name,
+    :added_at
+  ]
 
   @youtube_hosts ~w(youtube.com www.youtube.com m.youtube.com youtu.be)
 
@@ -22,6 +33,23 @@ defmodule Byob.MediaItem do
   end
 
   def parse_url(_), do: {:error, :invalid_url}
+
+  @doc """
+  Extracts the last `http(s)://` URL from a string, trimming trailing punctuation.
+  Returns the URL or `nil`.
+  """
+  def extract_url(text) when is_binary(text) do
+    case Regex.scan(~r{https?://\S+}, text) do
+      [] ->
+        nil
+
+      matches ->
+        [url] = List.last(matches)
+        Regex.replace(~r/[,.;:)\]}>"']+$/, url, "")
+    end
+  end
+
+  def extract_url(_), do: nil
 
   @video_extensions ~w(.mp4 .webm .ogg .mov .mkv .avi .m4v)
 

@@ -26,10 +26,15 @@ defmodule ByobWeb.RoomLive.Playback do
   end
 
   def handle_embed_blocked(_params, socket) do
-    Analytics.track("video_embed_blocked", socket.assigns[:browser_id] || socket.assigns.user_id, %{
-      room_id: socket.assigns.room_id,
-      source_type: "youtube_restricted"
-    })
+    Analytics.track(
+      "video_embed_blocked",
+      socket.assigns[:browser_id] || socket.assigns.user_id,
+      %{
+        room_id: socket.assigns.room_id,
+        source_type: "youtube_restricted"
+      }
+    )
+
     {:noreply, socket}
   end
 
@@ -45,7 +50,10 @@ defmodule ByobWeb.RoomLive.Playback do
   end
 
   def handle_has_extension(_params, socket) do
-    Analytics.identify(socket.assigns[:browser_id] || socket.assigns.user_id, %{has_extension: true})
+    Analytics.identify(socket.assigns[:browser_id] || socket.assigns.user_id, %{
+      has_extension: true
+    })
+
     {:noreply, socket}
   end
 

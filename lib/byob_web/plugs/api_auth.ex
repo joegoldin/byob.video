@@ -35,8 +35,12 @@ defmodule ByobWeb.Plugs.ApiAuth do
 
       _ ->
         case conn.query_params do
-          %{"api_key" => key} when key != "" -> {:ok, key}
-          _ -> {:error, "Missing API key. Provide Authorization: Bearer <token> header or api_key query param."}
+          %{"api_key" => key} when key != "" ->
+            {:ok, key}
+
+          _ ->
+            {:error,
+             "Missing API key. Provide Authorization: Bearer <token> header or api_key query param."}
         end
     end
   end

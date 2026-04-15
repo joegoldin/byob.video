@@ -73,8 +73,12 @@ defmodule Byob.Persistence do
     blob = :erlang.term_to_binary(state)
     now = System.system_time(:second)
 
-    {:ok, stmt} = Exqlite.Sqlite3.prepare(db,
-      "INSERT OR REPLACE INTO rooms (room_id, state, updated_at, schema_version) VALUES (?1, ?2, ?3, ?4)")
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(
+        db,
+        "INSERT OR REPLACE INTO rooms (room_id, state, updated_at, schema_version) VALUES (?1, ?2, ?3, ?4)"
+      )
+
     :ok = Exqlite.Sqlite3.bind(stmt, [room_id, blob, now, Migrations.current_version()])
     Exqlite.Sqlite3.step(db, stmt)
     Exqlite.Sqlite3.release(db, stmt)
@@ -92,8 +96,12 @@ defmodule Byob.Persistence do
 
   @impl true
   def handle_call({:load_room, room_id}, _from, %{db: db} = s) do
-    {:ok, stmt} = Exqlite.Sqlite3.prepare(db,
-      "SELECT state, schema_version FROM rooms WHERE room_id = ?1")
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(
+        db,
+        "SELECT state, schema_version FROM rooms WHERE room_id = ?1"
+      )
+
     :ok = Exqlite.Sqlite3.bind(stmt, [room_id])
 
     result =
@@ -102,6 +110,7 @@ defmodule Byob.Persistence do
           loaded_version = schema_version || 1
           state = :erlang.binary_to_term(blob, [:safe])
           {:ok, Migrations.run(state, loaded_version, Migrations.current_version())}
+
         _ ->
           :not_found
       end
@@ -111,7 +120,9 @@ defmodule Byob.Persistence do
   end
 
   def handle_call(:list_rooms, _from, %{db: db} = s) do
-    {:ok, stmt} = Exqlite.Sqlite3.prepare(db, "SELECT room_id FROM rooms ORDER BY updated_at DESC")
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(db, "SELECT room_id FROM rooms ORDER BY updated_at DESC")
+
     rooms = collect_rows(db, stmt, [])
     Exqlite.Sqlite3.release(db, stmt)
     {:reply, rooms, s}

@@ -74,4 +74,49 @@ defmodule Byob.MediaItemTest do
       assert item.url == url
     end
   end
+
+  describe "extract_url/1" do
+    test "empty string returns nil" do
+      assert MediaItem.extract_url("") == nil
+    end
+
+    test "non-URL text returns nil" do
+      assert MediaItem.extract_url("hello world") == nil
+    end
+
+    test "clean URL returns itself" do
+      assert MediaItem.extract_url("https://youtu.be/abc") == "https://youtu.be/abc"
+    end
+
+    test "prefix text is stripped" do
+      assert MediaItem.extract_url("hey watch this https://youtu.be/abc") ==
+               "https://youtu.be/abc"
+    end
+
+    test "last URL wins when multiple are present" do
+      assert MediaItem.extract_url("https://foo.com https://youtu.be/abc") ==
+               "https://youtu.be/abc"
+    end
+
+    test "trailing comma is stripped" do
+      assert MediaItem.extract_url("see https://youtu.be/abc, thanks") ==
+               "https://youtu.be/abc"
+    end
+
+    test "trailing period is stripped" do
+      assert MediaItem.extract_url("watch https://youtu.be/abc.") == "https://youtu.be/abc"
+    end
+
+    test "trailing paren is stripped" do
+      assert MediaItem.extract_url("(https://youtu.be/abc)") == "https://youtu.be/abc"
+    end
+
+    test "http scheme works" do
+      assert MediaItem.extract_url("http://example.com/x.mp4") == "http://example.com/x.mp4"
+    end
+
+    test "nil input returns nil" do
+      assert MediaItem.extract_url(nil) == nil
+    end
+  end
 end

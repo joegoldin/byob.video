@@ -2,21 +2,13 @@ defmodule ByobWeb.RoomLive.UrlPreview do
   @moduledoc """
   Handles URL preview event handlers extracted from RoomLive.
 
-  Covers: url:focus, url:blur, preview_url, add_url, preview:play_now,
-  preview:queue, and the {:url_preview_result, _} info messages.
+  Covers: preview_url, add_url, preview:play_now, preview:queue,
+  and the {:url_preview_result, _} info messages.
   """
 
   import Phoenix.Component, only: [assign: 2]
 
   alias Byob.RoomServer
-
-  def handle_url_focus(_params, socket) do
-    {:noreply, assign(socket, url_focused: true)}
-  end
-
-  def handle_url_blur(_params, socket) do
-    {:noreply, assign(socket, url_focused: false)}
-  end
 
   def handle_preview_url(%{"url" => url}, socket) do
     url = String.trim(url)
@@ -41,13 +33,16 @@ defmodule ByobWeb.RoomLive.UrlPreview do
         {:ok, %{source_type: :direct_url}} ->
           # Direct video URLs don't need metadata fetching
           filename = url |> URI.parse() |> Map.get(:path, "") |> Path.basename()
+
           preview = %{
             source_type: :direct_url,
             title: filename,
             thumbnail_url: nil,
             url: url
           }
-          {:noreply, assign(socket, url_preview: preview, url_preview_loading: false, preview_url: url)}
+
+          {:noreply,
+           assign(socket, url_preview: preview, url_preview_loading: false, preview_url: url)}
 
         {:ok, %{source_type: :extension_required}} ->
           socket = assign(socket, url_preview_loading: true, url_preview: nil, preview_url: url)
@@ -57,8 +52,13 @@ defmodule ByobWeb.RoomLive.UrlPreview do
             case Byob.OEmbed.fetch_opengraph(url) do
               {:ok, meta} ->
                 send(me, {:url_preview_result, Map.put(meta, :source_type, :extension_required)})
+
               _ ->
-                send(me, {:url_preview_result, %{title: nil, thumbnail_url: nil, source_type: :extension_required}})
+                send(
+                  me,
+                  {:url_preview_result,
+                   %{title: nil, thumbnail_url: nil, source_type: :extension_required}}
+                )
             end
           end)
 
@@ -78,19 +78,35 @@ defmodule ByobWeb.RoomLive.UrlPreview do
 
   def handle_play_now(_params, socket) do
     if url = socket.assigns.preview_url do
-      source_type = if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
-      Byob.Analytics.video_added(socket.assigns[:browser_id] || socket.assigns.user_id, socket.assigns.room_id, source_type)
+      source_type =
+        if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
+
+      Byob.Analytics.video_added(
+        socket.assigns[:browser_id] || socket.assigns.user_id,
+        socket.assigns.room_id,
+        source_type
+      )
+
       RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :now)
     end
+
     {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
   end
 
   def handle_queue(_params, socket) do
     if url = socket.assigns.preview_url do
-      source_type = if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
-      Byob.Analytics.video_added(socket.assigns[:browser_id] || socket.assigns.user_id, socket.assigns.room_id, source_type)
+      source_type =
+        if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
+
+      Byob.Analytics.video_added(
+        socket.assigns[:browser_id] || socket.assigns.user_id,
+        socket.assigns.room_id,
+        source_type
+      )
+
       RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :queue)
     end
+
     {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
   end
 

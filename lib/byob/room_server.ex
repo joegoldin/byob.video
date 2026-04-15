@@ -114,23 +114,31 @@ defmodule Byob.RoomServer do
     room_id = Keyword.fetch!(opts, :room_id)
     empty_timeout = Keyword.get(opts, :empty_timeout, :timer.minutes(5))
 
-    loaded = try do Byob.Persistence.load_room(room_id) rescue _ -> :not_found catch :exit, _ -> :not_found end
+    loaded =
+      try do
+        Byob.Persistence.load_room(room_id)
+      rescue
+        _ -> :not_found
+      catch
+        :exit, _ -> :not_found
+      end
 
     state =
       case loaded do
         {:ok, saved} ->
           # Restore from saved state, reset transient fields
-          %{saved |
-            empty_timeout: empty_timeout,
-            last_sync_at: System.monotonic_time(:millisecond),
-            cleanup_ref: nil,
-            sync_correction_ref: nil,
-            rate_limit_ref: nil,
-            last_seek_at: %{},
-            event_counts: %{},
-            play_state: :paused,
-            sponsor_segments: [],
-            users: Enum.into(saved.users, %{}, fn {k, v} -> {k, %{v | connected: false}} end)
+          %{
+            saved
+            | empty_timeout: empty_timeout,
+              last_sync_at: System.monotonic_time(:millisecond),
+              cleanup_ref: nil,
+              sync_correction_ref: nil,
+              rate_limit_ref: nil,
+              last_seek_at: %{},
+              event_counts: %{},
+              play_state: :paused,
+              sponsor_segments: [],
+              users: Enum.into(saved.users, %{}, fn {k, v} -> {k, %{v | connected: false}} end)
           }
 
         :not_found ->
@@ -220,20 +228,23 @@ defmodule Byob.RoomServer do
         state = %{state | play_state: :playing, current_time: position, last_sync_at: now}
         state = schedule_sync_correction(state)
         # Only log play if actually transitioning from paused (not seek-resume)
-        state = if was_paused do
-          title = current_media_title(state)
-          added_by = current_media_added_by(state)
-          if position < 2 && title do
-            # Video starting from beginning — log as "now playing" not "user played"
-            detail = if added_by, do: "#{title} (added by #{added_by})", else: title
-            log_activity(state, :now_playing, nil, detail)
+        state =
+          if was_paused do
+            title = current_media_title(state)
+            added_by = current_media_added_by(state)
+
+            if position < 2 && title do
+              # Video starting from beginning — log as "now playing" not "user played"
+              detail = if added_by, do: "#{title} (added by #{added_by})", else: title
+              log_activity(state, :now_playing, nil, detail)
+            else
+              # Resume from pause — log who resumed
+              log_activity(state, :play, user_id, title)
+            end
           else
-            # Resume from pause — log who resumed
-            log_activity(state, :play, user_id, title)
+            state
           end
-        else
-          state
-        end
+
         broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
         {:reply, :ok, state}
     end
@@ -250,11 +261,13 @@ defmodule Byob.RoomServer do
         state = %{state | play_state: :paused, current_time: position, last_sync_at: now}
         state = cancel_sync_correction(state)
         # Only log pause if actually transitioning from playing
-        state = if was_playing do
-          log_activity(state, :pause, user_id, current_media_title(state))
-        else
-          state
-        end
+        state =
+          if was_playing do
+            log_activity(state, :pause, user_id, current_media_title(state))
+          else
+            state
+          end
+
         broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
         {:reply, :ok, state}
     end
@@ -268,14 +281,29 @@ defmodule Byob.RoomServer do
       {:reply, {:error, :debounced}, state}
     else
       old_pos = current_position(state)
-      state = %{state | current_time: position, last_sync_at: now, last_seek_at: Map.put(state.last_seek_at, user_id, now)}
+
+      state = %{
+        state
+        | current_time: position,
+          last_sync_at: now,
+          last_seek_at: Map.put(state.last_seek_at, user_id, now)
+      }
+
       # Only log meaningful seeks (>3s jump, not from 0:00)
       diff = abs(position - old_pos)
-      state = if diff > 3 and old_pos > 1 do
-        log_activity(state, :seeked, user_id, "#{format_seconds(old_pos)} → #{format_seconds(position)}")
-      else
-        state
-      end
+
+      state =
+        if diff > 3 and old_pos > 1 do
+          log_activity(
+            state,
+            :seeked,
+            user_id,
+            "#{format_seconds(old_pos)} → #{format_seconds(position)}"
+          )
+        else
+          state
+        end
+
       broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
       {:reply, :ok, state}
     end
@@ -290,10 +318,20 @@ defmodule Byob.RoomServer do
             _ -> nil
           end
 
-        item = %{item | added_by: user_id, added_by_name: added_by_name, added_at: DateTime.utc_now()}
+        item = %{
+          item
+          | added_by: user_id,
+            added_by_name: added_by_name,
+            added_at: DateTime.utc_now()
+        }
+
         state = add_item_to_queue(state, item, mode)
         state = log_activity(state, :added, user_id, url)
-        broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
+
+        broadcast(
+          state,
+          {:queue_updated, %{queue: state.queue, current_index: state.current_index}}
+        )
 
         # Fetch metadata async
         item_id = item.id
@@ -350,27 +388,47 @@ defmodule Byob.RoomServer do
         end
 
       state = %{state | queue: queue, current_index: current_index}
-      broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
+
+      broadcast(
+        state,
+        {:queue_updated, %{queue: state.queue, current_index: state.current_index}}
+      )
+
       {:reply, :ok, state}
     else
       {:reply, :ok, state}
     end
   end
 
-  def handle_call({:play_index, index}, _from, state) when index >= 0 and index < length(state.queue) do
+  def handle_call({:play_index, index}, _from, state)
+      when index >= 0 and index < length(state.queue) do
     now = System.monotonic_time(:millisecond)
     item = Enum.at(state.queue, index)
 
     # Remove old now-playing, pull clicked item to front, keep rest in order
     queue = state.queue
-    queue = if state.current_index != nil, do: List.delete_at(queue, state.current_index), else: queue
+
+    queue =
+      if state.current_index != nil, do: List.delete_at(queue, state.current_index), else: queue
+
     # Adjust index after removal
-    adj_index = if state.current_index != nil and state.current_index < index, do: index - 1, else: index
+    adj_index =
+      if state.current_index != nil and state.current_index < index, do: index - 1, else: index
+
     # Remove the clicked item from its current position and put it at front
     queue = List.delete_at(queue, adj_index)
     queue = [item | queue]
 
-    state = %{state | queue: queue, current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
+    state = %{
+      state
+      | queue: queue,
+        current_index: 0,
+        current_time: 0.0,
+        last_sync_at: now,
+        play_state: :playing,
+        sponsor_segments: []
+    }
+
     state = add_to_history(state, item)
     state = schedule_sync_correction(state)
     fetch_sponsor_segments(item)
@@ -386,7 +444,8 @@ defmodule Byob.RoomServer do
   end
 
   def handle_call({:reorder_queue, from, to}, _from, state)
-      when from >= 0 and from < length(state.queue) and to >= 0 and to < length(state.queue) and from != to do
+      when from >= 0 and from < length(state.queue) and to >= 0 and to < length(state.queue) and
+             from != to do
     item = Enum.at(state.queue, from)
     queue = List.delete_at(state.queue, from) |> List.insert_at(to, item)
 
@@ -455,17 +514,19 @@ defmodule Byob.RoomServer do
     # Update activity log: replace raw URLs with titles for this item
     old_item = Enum.find(state.queue, &(&1.id == item_id))
     old_url = if old_item, do: old_item.url
-    activity_log = if old_url && meta.title do
-      Enum.map(state.activity_log, fn entry ->
-        if entry.action == :added && entry.detail == old_url do
-          %{entry | detail: meta.title}
-        else
-          entry
-        end
-      end)
-    else
-      state.activity_log
-    end
+
+    activity_log =
+      if old_url && meta.title do
+        Enum.map(state.activity_log, fn entry ->
+          if entry.action == :added && entry.detail == old_url do
+            %{entry | detail: meta.title}
+          else
+            entry
+          end
+        end)
+      else
+        state.activity_log
+      end
 
     state = %{state | queue: queue, history: history, activity_log: activity_log}
     broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
@@ -503,7 +564,11 @@ defmodule Byob.RoomServer do
 
     if current_item && current_item.source_id == video_id do
       state = %{state | sponsor_segments: segments}
-      broadcast(state, {:sponsor_segments, %{segments: segments, duration: duration, video_id: video_id}})
+
+      broadcast(
+        state,
+        {:sponsor_segments, %{segments: segments, duration: duration, video_id: video_id}}
+      )
     end
 
     {:noreply, state}
@@ -513,12 +578,16 @@ defmodule Byob.RoomServer do
     current_item = if state.current_index, do: Enum.at(state.queue, state.current_index)
 
     if current_item && current_item.source_id == video_id do
-      broadcast(state, {:comments_updated, %{
-        video_id: video_id,
-        comments: result.comments,
-        next_page_token: result.next_page_token,
-        total_count: result.total_count
-      }})
+      broadcast(
+        state,
+        {:comments_updated,
+         %{
+           video_id: video_id,
+           comments: result.comments,
+           next_page_token: result.next_page_token,
+           total_count: result.total_count
+         }}
+      )
     end
 
     {:noreply, state}
@@ -588,7 +657,17 @@ defmodule Byob.RoomServer do
       # Auto-play if nothing is currently playing
       if state.current_index == nil do
         now = System.monotonic_time(:millisecond)
-        state = %{state | queue: queue, current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
+
+        state = %{
+          state
+          | queue: queue,
+            current_index: 0,
+            current_time: 0.0,
+            last_sync_at: now,
+            play_state: :playing,
+            sponsor_segments: []
+        }
+
         state = add_to_history(state, item)
         added_by = item.added_by_name
         title = item.title || item.url
@@ -610,7 +689,16 @@ defmodule Byob.RoomServer do
 
     case state.current_index do
       nil ->
-        state = %{state | queue: [item], current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
+        state = %{
+          state
+          | queue: [item],
+            current_index: 0,
+            current_time: 0.0,
+            last_sync_at: now,
+            play_state: :playing,
+            sponsor_segments: []
+        }
+
         state = add_to_history(state, item)
         state = schedule_sync_correction(state)
         fetch_sponsor_segments(item)
@@ -622,7 +710,17 @@ defmodule Byob.RoomServer do
         # Remove old now-playing, put new item at front
         queue = List.delete_at(state.queue, idx)
         queue = [item | queue]
-        state = %{state | queue: queue, current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
+
+        state = %{
+          state
+          | queue: queue,
+            current_index: 0,
+            current_time: 0.0,
+            last_sync_at: now,
+            play_state: :playing,
+            sponsor_segments: []
+        }
+
         state = add_to_history(state, item)
         state = schedule_sync_correction(state)
         fetch_sponsor_segments(item)
@@ -642,7 +740,17 @@ defmodule Byob.RoomServer do
     if length(queue) > 0 do
       # Next item is now at index 0 (since we removed the played one)
       item = Enum.at(queue, 0)
-      state = %{state | queue: queue, current_index: 0, current_time: 0.0, last_sync_at: now, play_state: :playing, sponsor_segments: []}
+
+      state = %{
+        state
+        | queue: queue,
+          current_index: 0,
+          current_time: 0.0,
+          last_sync_at: now,
+          play_state: :playing,
+          sponsor_segments: []
+      }
+
       state = add_to_history(state, item)
       state = schedule_sync_correction(state)
       fetch_sponsor_segments(item)
@@ -651,7 +759,15 @@ defmodule Byob.RoomServer do
       broadcast(state, {:queue_updated, %{queue: queue, current_index: 0}})
       state
     else
-      state = %{state | queue: queue, play_state: :ended, current_time: 0.0, last_sync_at: now, current_index: nil}
+      state = %{
+        state
+        | queue: queue,
+          play_state: :ended,
+          current_time: 0.0,
+          last_sync_at: now,
+          current_index: nil
+      }
+
       state = cancel_sync_correction(state)
       broadcast(state, {:queue_ended, %{}})
       broadcast(state, {:queue_updated, %{queue: queue, current_index: nil}})
@@ -664,11 +780,14 @@ defmodule Byob.RoomServer do
     secs = trunc(rem(trunc(s), 60))
     "#{mins}:#{String.pad_leading(Integer.to_string(secs), 2, "0")}"
   end
+
   defp format_seconds(_), do: "0:00"
 
   defp current_media_added_by(state) do
     case state.current_index do
-      nil -> nil
+      nil ->
+        nil
+
       idx ->
         item = Enum.at(state.queue, idx)
         if item, do: item.added_by_name, else: nil
@@ -677,7 +796,9 @@ defmodule Byob.RoomServer do
 
   defp current_media_title(state) do
     case state.current_index do
-      nil -> nil
+      nil ->
+        nil
+
       idx ->
         item = Enum.at(state.queue, idx)
         if item, do: item.title || item.url, else: nil
@@ -685,13 +806,18 @@ defmodule Byob.RoomServer do
   end
 
   defp log_activity(state, action, user_id \\ nil, detail \\ nil) do
-    username = if user_id, do: get_in(state, [Access.key(:users), user_id, Access.key(:username)]), else: nil
+    username =
+      if user_id,
+        do: get_in(state, [Access.key(:users), user_id, Access.key(:username)]),
+        else: nil
+
     entry = %{
       action: action,
       user: username || user_id,
       detail: detail,
       at: DateTime.utc_now()
     }
+
     log = Enum.take([entry | state.activity_log], @max_log_entries)
     state = %{state | activity_log: log}
     broadcast(state, {:activity_log_entry, entry})
@@ -733,7 +859,13 @@ defmodule Byob.RoomServer do
   end
 
   defp persist(state) do
-    try do Byob.Persistence.save_room(state.room_id, state) rescue _ -> :ok catch :exit, _ -> :ok end
+    try do
+      Byob.Persistence.save_room(state.room_id, state)
+    rescue
+      _ -> :ok
+    catch
+      :exit, _ -> :ok
+    end
   end
 
   defp schedule_persist(state) do
@@ -748,8 +880,11 @@ defmodule Byob.RoomServer do
 
       Task.start(fn ->
         case Byob.SponsorBlock.fetch_segments(video_id) do
-          {:ok, segments, duration} -> send(pid, {:sponsor_segments_result, video_id, segments, duration})
-          _ -> :ok
+          {:ok, segments, duration} ->
+            send(pid, {:sponsor_segments_result, video_id, segments, duration})
+
+          _ ->
+            :ok
         end
       end)
     end

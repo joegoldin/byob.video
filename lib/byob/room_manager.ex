@@ -4,7 +4,14 @@ defmodule Byob.RoomManager do
   @alphabet "0123456789abcdefghijklmnopqrstuvwxyz"
 
   def create_room do
-    count = try do Byob.Persistence.room_count() rescue _ -> 0 catch :exit, _ -> 0 end
+    count =
+      try do
+        Byob.Persistence.room_count()
+      rescue
+        _ -> 0
+      catch
+        :exit, _ -> 0
+      end
 
     if count >= Byob.Persistence.max_rooms() do
       {:error, :max_capacity}

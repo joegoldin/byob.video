@@ -27,8 +27,12 @@ defmodule Byob.PersistenceTest do
       blob = :erlang.term_to_binary(state)
       now = System.system_time(:second)
 
-      {:ok, stmt} = Exqlite.Sqlite3.prepare(db,
-        "INSERT INTO rooms (room_id, state, updated_at) VALUES (?1, ?2, ?3)")
+      {:ok, stmt} =
+        Exqlite.Sqlite3.prepare(
+          db,
+          "INSERT INTO rooms (room_id, state, updated_at) VALUES (?1, ?2, ?3)"
+        )
+
       :ok = Exqlite.Sqlite3.bind(stmt, ["test-room", blob, now])
       Exqlite.Sqlite3.step(db, stmt)
       Exqlite.Sqlite3.release(db, stmt)
@@ -37,8 +41,12 @@ defmodule Byob.PersistenceTest do
       Exqlite.Sqlite3.execute(db, "ALTER TABLE rooms ADD COLUMN schema_version INTEGER DEFAULT 1")
 
       # Read back — schema_version should be 1 (the DEFAULT)
-      {:ok, stmt} = Exqlite.Sqlite3.prepare(db,
-        "SELECT state, schema_version FROM rooms WHERE room_id = ?1")
+      {:ok, stmt} =
+        Exqlite.Sqlite3.prepare(
+          db,
+          "SELECT state, schema_version FROM rooms WHERE room_id = ?1"
+        )
+
       :ok = Exqlite.Sqlite3.bind(stmt, ["test-room"])
 
       {:row, [loaded_blob, schema_version]} = Exqlite.Sqlite3.step(db, stmt)

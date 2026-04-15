@@ -34,7 +34,10 @@ defmodule ByobWeb.RoomLiveTest do
       {:ok, view, _html} = live(conn, "/room/testroomqueue")
 
       view
-      |> render_submit("add_url", %{"url" => "https://youtube.com/watch?v=dQw4w9WgXcQ", "mode" => "queue"})
+      |> render_submit("add_url", %{
+        "url" => "https://youtube.com/watch?v=dQw4w9WgXcQ",
+        "mode" => "queue"
+      })
 
       # Give PubSub a moment
       Process.sleep(50)

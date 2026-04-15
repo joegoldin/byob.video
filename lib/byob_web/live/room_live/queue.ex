@@ -31,7 +31,12 @@ defmodule ByobWeb.RoomLive.Queue do
   end
 
   def handle_reorder(%{"from" => from, "to" => to}, socket) do
-    RoomServer.reorder_queue(socket.assigns.room_pid, String.to_integer(from), String.to_integer(to))
+    RoomServer.reorder_queue(
+      socket.assigns.room_pid,
+      String.to_integer(from),
+      String.to_integer(to)
+    )
+
     {:noreply, socket}
   end
 
