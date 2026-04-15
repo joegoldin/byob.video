@@ -31,6 +31,8 @@ defmodule ByobWeb.RoomLive do
         url_preview: nil,
         url_preview_loading: false,
         preview_url: nil,
+        resolved_url: nil,
+        url_preview_error: nil,
         api_key: nil,
         activity_log: [],
         sb_settings: Byob.RoomServer.default_sb_settings(),
@@ -148,7 +150,14 @@ defmodule ByobWeb.RoomLive do
     do: UrlPreview.handle_preview_url(params, socket)
 
   def handle_event("clear_url", _params, socket) do
-    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
+    {:noreply,
+     assign(socket,
+       url_preview: nil,
+       url_preview_loading: false,
+       preview_url: nil,
+       resolved_url: nil,
+       url_preview_error: nil
+     )}
   end
 
   def handle_event("history:play", params, socket), do: Queue.handle_history_play(params, socket)
@@ -265,7 +274,9 @@ defmodule ByobWeb.RoomLive do
       room_id={@room_id}
       url_preview_loading={@url_preview_loading}
       url_preview={@url_preview}
+      url_preview_error={@url_preview_error}
       preview_url={@preview_url}
+      resolved_url={@resolved_url}
     />
     <Components.settings_modal
       sb_settings={@sb_settings}
