@@ -2,6 +2,12 @@
 
 ---
 
+# v3.4.15
+
+- Fix: reconcile loop's "resync-before-hard-seek" safety check was swallowing every hard seek. Each tick with drift > 2s triggered a fresh NTP burst instead of seeking, then the next tick saw the still-huge drift and triggered another burst — infinite loop, never actually seeking. Now after a recent resync (< 3s ago) the reconcile loop trusts the drift measurement and performs the hard seek. This is why a refreshed client could stay stuck out of sync: the reconcile's self-correction was disabled.
+
+---
+
 # v3.4.14
 
 - Fix (for real this time): page refresh during active playback now starts the YouTube embed at the correct position directly, via the `start` playerVar. Previously the embed loaded at 0 and we relied on a post-load `seekTo` — which got swallowed when autoplay was blocked or the player wasn't yet in a seekable state. The reconcile loop still tightens sub-second drift after load.

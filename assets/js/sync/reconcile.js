@@ -37,6 +37,7 @@ export class Reconcile {
     this.lastHardSeekAt = 0;
     this.pausedUntil = 0; // temporarily disable reconcile
     this.resyncInFlight = false;
+    this.lastResyncAt = 0;
     this.driftHistory = []; // rolling list of most-recent drifts (ms)
   }
 
@@ -96,18 +97,21 @@ export class Reconcile {
       : HARD_SEEK_THRESHOLD_MS;
 
     // -----------------------------------------------------------------
-    // Hard-seek path: confirm with a fresh clock sync before snapping.
+    // Hard-seek path: confirm with a fresh clock sync before snapping, but
+    // only once. If drift is still hard-seek-worthy after a recent resync,
+    // it's real drift — seek and stop looping.
     // -----------------------------------------------------------------
     if (absMedian >= hardSeekThreshold) {
-      if (this.clockSync.resync) {
+      const recentlyResynced = Date.now() - this.lastResyncAt < 3000;
+
+      if (!recentlyResynced && this.clockSync.resync) {
         this.resyncInFlight = true;
         this.clockSync
           .resync(3)
           .catch(() => {})
           .finally(() => {
             this.resyncInFlight = false;
-            // Re-check drift on the next tick with the fresh offset;
-            // no action here — let the loop decide.
+            this.lastResyncAt = Date.now();
           });
         return;
       }
