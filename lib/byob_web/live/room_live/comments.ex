@@ -95,9 +95,9 @@ defmodule ByobWeb.RoomLive.Comments do
           phx-hook="ExpandWhenCramped"
           phx-click="toggle_comments_expand"
           data-expanded={if @expanded, do: "true", else: "false"}
-          title={if @expanded, do: "Collapse comments", else: "Expand comments"}
+          data-tip={if @expanded, do: "Hide comments viewer", else: "Expand comments viewer"}
           style="display:none"
-          class="pointer-events-auto btn btn-circle btn-xs bg-base-200/95 border border-base-300 shadow-md hover:bg-base-300 items-center justify-center"
+          class="tooltip tooltip-left pointer-events-auto btn btn-circle btn-xs bg-base-200/95 border border-base-300 shadow-md hover:bg-base-300"
         >
           <svg
             class={"w-3 h-3 transition-transform " <> if(@expanded, do: "rotate-45", else: "")}

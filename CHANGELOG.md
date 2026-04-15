@@ -2,6 +2,12 @@
 
 ---
 
+# v3.4.10
+
+- Tooltip on the comments expand button: "Expand comments viewer" / "Hide comments viewer" — uses daisyUI `tooltip tooltip-left` so it appears on hover without the 1–2s native `title` delay
+
+---
+
 # v3.4.9
 
 - Activity log: clicking a queue item now records a distinct `played` event ("user played <title>") with a primary-colored play icon, instead of misleadingly reading "user resumed <title>"
