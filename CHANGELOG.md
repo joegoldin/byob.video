@@ -2,6 +2,20 @@
 
 ---
 
+# v3.4.0
+
+- URL input dropdown now opens instantly on focus (CSS-driven, no server round-trip)
+- Loading skeleton appears on the first keystroke, not after the 300ms debounce
+- Error card explains why a URL was rejected:
+  - byob room links (common accidental paste): "That's a byob room link — paste a video URL instead."
+  - DRM-protected services (Netflix, Disney+, Max, Hulu, Prime Video, Apple TV+, Peacock, Paramount+): "{Service} uses DRM and can't be synced."
+  - Non-URL / invalid input: "Doesn't look like a video URL."
+- Paste support for URLs inside arbitrary text — the last `http(s)://` URL in the field is used, with trailing punctuation trimmed
+- Play Now / Queue / Enter submit the extracted URL, so `hey watch this https://youtu.be/abc` works
+- Hitting Enter on invalid input is a silent no-op (the error card already explains why)
+
+---
+
 # v3.3.5
 
 - Keep Fly.io machine always running (disable auto-suspend, min 1 machine) — no cold-start delay on first visit
