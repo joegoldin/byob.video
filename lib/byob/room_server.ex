@@ -360,6 +360,17 @@ defmodule Byob.RoomServer do
   end
 
   def handle_call({:video_ended, index}, _from, %{current_index: index} = state) do
+    # Log the just-finished video before advancing (skip path already has its own log)
+    state =
+      case Enum.at(state.queue, index) do
+        %{} = finished ->
+          title = finished.title || finished.url
+          log_activity(state, :finished, nil, title)
+
+        _ ->
+          state
+      end
+
     state = advance_queue(state)
     {:reply, :ok, state}
   end

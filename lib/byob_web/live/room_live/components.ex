@@ -815,6 +815,9 @@ defmodule ByobWeb.RoomLive.Components do
             <span :if={entry.action == :skipped} class="text-base-content/40 flex-shrink-0">
               &#9197;
             </span>
+            <span :if={entry.action == :finished} class="text-base-content/40 flex-shrink-0">
+              &#10004;
+            </span>
             <span :if={entry.action == :seeked} class="text-info/60 flex-shrink-0">&#8644;</span>
             <span :if={entry.action == :renamed} class="text-base-content/40 flex-shrink-0">
               &#9998;
@@ -960,6 +963,7 @@ defmodule ByobWeb.RoomLive.Components do
     do: "#{user} seeked #{detail}"
 
   def format_log_entry(%{action: :skipped}), do: "Skipped to next"
+  def format_log_entry(%{action: :finished, detail: title}), do: "Finished: #{title}"
   def format_log_entry(%{action: :renamed, detail: detail}), do: "Renamed: #{detail}"
   def format_log_entry(_), do: nil
 
