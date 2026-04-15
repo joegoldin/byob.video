@@ -10,74 +10,139 @@ defmodule ByobWeb.RoomLive.UrlPreview do
 
   alias Byob.RoomServer
 
-  def handle_preview_url(%{"url" => url}, socket) do
-    url = String.trim(url)
+  def handle_preview_url(%{"url" => raw}, socket) do
+    trimmed = String.trim(raw)
 
-    if url == "" do
-      {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
-    else
-      case Byob.MediaItem.parse_url(url) do
-        {:ok, %{source_type: :youtube}} ->
-          socket = assign(socket, url_preview_loading: true, url_preview: nil, preview_url: url)
-          pid = self()
+    cond do
+      trimmed == "" ->
+        {:noreply, reset_preview(socket)}
 
-          Task.start(fn ->
-            case Byob.OEmbed.fetch_youtube(url) do
-              {:ok, meta} -> send(pid, {:url_preview_result, meta})
-              _ -> send(pid, {:url_preview_result, nil})
-            end
-          end)
-
-          {:noreply, socket}
-
-        {:ok, %{source_type: :direct_url}} ->
-          # Direct video URLs don't need metadata fetching
-          filename = url |> URI.parse() |> Map.get(:path, "") |> Path.basename()
-
-          preview = %{
-            source_type: :direct_url,
-            title: filename,
-            thumbnail_url: nil,
-            url: url
-          }
-
-          {:noreply,
-           assign(socket, url_preview: preview, url_preview_loading: false, preview_url: url)}
-
-        {:ok, %{source_type: :extension_required}} ->
-          socket = assign(socket, url_preview_loading: true, url_preview: nil, preview_url: url)
-          me = self()
-
-          Task.start(fn ->
-            case Byob.OEmbed.fetch_opengraph(url) do
-              {:ok, meta} ->
-                send(me, {:url_preview_result, Map.put(meta, :source_type, :extension_required)})
-
-              _ ->
-                send(
-                  me,
-                  {:url_preview_result,
-                   %{title: nil, thumbnail_url: nil, source_type: :extension_required}}
-                )
-            end
-          end)
-
-          {:noreply, socket}
-
-        _ ->
-          {:noreply, assign(socket, url_preview: nil, url_preview_loading: false)}
-      end
+      true ->
+        extracted = Byob.MediaItem.extract_url(raw)
+        route_preview(extracted, raw, socket)
     end
   end
 
-  def handle_add_url(%{"url" => url, "mode" => mode}, socket) do
-    mode_atom = if mode == "now", do: :now, else: :queue
-    RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, mode_atom)
-    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
+  defp route_preview(nil, raw, socket) do
+    {:noreply,
+     assign(socket,
+       preview_url: raw,
+       resolved_url: nil,
+       url_preview: nil,
+       url_preview_loading: false,
+       url_preview_error: :invalid_url
+     )}
+  end
+
+  defp route_preview(extracted, raw, socket) do
+    base =
+      assign(socket,
+        preview_url: raw,
+        resolved_url: extracted,
+        url_preview_error: nil
+      )
+
+    case Byob.MediaItem.parse_url(extracted) do
+      {:ok, %{source_type: :youtube}} ->
+        socket = assign(base, url_preview_loading: true, url_preview: nil)
+        pid = self()
+
+        Task.start(fn ->
+          case Byob.OEmbed.fetch_youtube(extracted) do
+            {:ok, meta} -> send(pid, {:url_preview_result, meta})
+            _ -> send(pid, {:url_preview_result, nil})
+          end
+        end)
+
+        {:noreply, socket}
+
+      {:ok, %{source_type: :direct_url}} ->
+        filename = extracted |> URI.parse() |> Map.get(:path, "") |> Path.basename()
+
+        preview = %{
+          source_type: :direct_url,
+          title: filename,
+          thumbnail_url: nil,
+          url: extracted
+        }
+
+        {:noreply, assign(base, url_preview: preview, url_preview_loading: false)}
+
+      {:ok, %{source_type: :extension_required}} ->
+        socket = assign(base, url_preview_loading: true, url_preview: nil)
+        me = self()
+
+        Task.start(fn ->
+          case Byob.OEmbed.fetch_opengraph(extracted) do
+            {:ok, meta} ->
+              send(me, {:url_preview_result, Map.put(meta, :source_type, :extension_required)})
+
+            _ ->
+              send(
+                me,
+                {:url_preview_result,
+                 %{title: nil, thumbnail_url: nil, source_type: :extension_required}}
+              )
+          end
+        end)
+
+        {:noreply, socket}
+
+      {:error, :self_reference} ->
+        {:noreply, preview_error(base, :self_reference)}
+
+      {:error, :drm_site, service} ->
+        {:noreply, preview_error(base, {:drm_site, service})}
+
+      {:error, :invalid_url} ->
+        {:noreply, preview_error(base, :invalid_url)}
+
+      _ ->
+        {:noreply, preview_error(base, :invalid_url)}
+    end
+  end
+
+  defp preview_error(socket, reason) do
+    assign(socket,
+      url_preview: nil,
+      url_preview_loading: false,
+      url_preview_error: reason,
+      resolved_url: nil
+    )
+  end
+
+  defp reset_preview(socket) do
+    assign(socket,
+      url_preview: nil,
+      url_preview_loading: false,
+      preview_url: nil,
+      url_preview_error: nil,
+      resolved_url: nil
+    )
+  end
+
+  def handle_add_url(%{"url" => raw, "mode" => mode}, socket) do
+    case Byob.MediaItem.extract_url(raw) do
+      nil ->
+        # Invalid input — leave error card visible, don't queue.
+        {:noreply, socket}
+
+      resolved ->
+        mode_atom = if mode == "now", do: :now, else: :queue
+
+        RoomServer.add_to_queue(
+          socket.assigns.room_pid,
+          socket.assigns.user_id,
+          resolved,
+          mode_atom
+        )
+
+        {:noreply, reset_preview(socket)}
+    end
   end
 
   def handle_play_now(_params, socket) do
-    if url = socket.assigns.preview_url do
+    if url = socket.assigns[:resolved_url] do
       source_type =
         if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
 
@@ -88,13 +153,14 @@ defmodule ByobWeb.RoomLive.UrlPreview do
       )
 
       RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :now)
+      {:noreply, reset_preview(socket)}
+    else
+      {:noreply, socket}
     end
-
-    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
   end
 
   def handle_queue(_params, socket) do
-    if url = socket.assigns.preview_url do
+    if url = socket.assigns[:resolved_url] do
       source_type =
         if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
 
@@ -105,9 +171,10 @@ defmodule ByobWeb.RoomLive.UrlPreview do
       )
 
       RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :queue)
+      {:noreply, reset_preview(socket)}
+    else
+      {:noreply, socket}
     end
-
-    {:noreply, assign(socket, url_preview: nil, url_preview_loading: false, preview_url: nil)}
   end
 
   def handle_preview_result(nil, socket) do
