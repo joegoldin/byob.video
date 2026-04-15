@@ -200,7 +200,7 @@ const QueueContextMenu = {
           addItem("Play Now", () => this.pushEvent("history:play", { url }));
           break;
         case "requeue":
-          addItem("Re-add to Queue", () => this.pushEvent("queue:readd", { url }));
+          addItem("Add to Queue", () => this.pushEvent("queue:readd", { url }));
           break;
         case "remove":
           if (ds.itemId != null) {

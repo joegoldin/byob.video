@@ -7,7 +7,7 @@
 - Richer right-click context menu per item type:
   - Now Playing: Restart, Copy URL
   - Up Next: Play Now, Remove from Queue, Copy URL
-  - History: Play Now, Re-add to Queue, Copy URL
+  - History: Play Now, Add to Queue, Copy URL
 - Fix URL extraction when two URLs are concatenated with no separator (e.g. pasting `https://youtu.be/ahttps://youtu.be/b`) — the last URL now wins instead of the whole string being treated as one garbage URL
 
 ---
