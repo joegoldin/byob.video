@@ -114,6 +114,29 @@ const DragSort = {
   },
 }
 
+// Shows/hides the expand button based on whether the comments panel is cramped
+// (height < threshold). When server-rendered as data-expanded="true", the button
+// stays visible so the user can collapse back.
+const ExpandWhenCramped = {
+  mounted() {
+    this._panel = this.el.closest(".byob-comments-panel") || this.el.parentElement;
+    this._onResize = () => this._update();
+    this._observer = new ResizeObserver(this._onResize);
+    this._observer.observe(this._panel);
+    this._update();
+  },
+  updated() { this._update(); },
+  destroyed() {
+    this._observer?.disconnect();
+    this._observer = null;
+  },
+  _update() {
+    const expanded = this.el.dataset.expanded === "true";
+    const cramped = this._panel.offsetHeight < 180;
+    this.el.style.display = (expanded || cramped) ? "flex" : "none";
+  }
+}
+
 const QueueContextMenu = {
   mounted() {
     this._handler = (e) => this._onContextMenu(e);
@@ -227,7 +250,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     has_extension: document.documentElement.hasAttribute("data-byob-extension"),
     show_comments: localStorage.getItem("byob_show_comments") !== "false",
   }),
-  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu, ScrollBottom},
+  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu, ExpandWhenCramped, ScrollBottom},
 })
 
 // Listen for username changes to persist to localStorage

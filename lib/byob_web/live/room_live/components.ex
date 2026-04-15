@@ -372,15 +372,33 @@ defmodule ByobWeb.RoomLive.Components do
         :if={@url_preview && @url_preview.source_type == :youtube}
         class="flex items-center gap-2 p-3"
       >
-        <img
-          :if={@url_preview.thumbnail_url}
-          src={@url_preview.thumbnail_url}
-          class="w-16 h-10 object-cover rounded flex-shrink-0"
-        />
+        <div :if={@url_preview.thumbnail_url} class="relative flex-shrink-0">
+          <img
+            src={@url_preview.thumbnail_url}
+            class="w-16 h-10 object-cover rounded"
+          />
+          <span
+            :if={format_duration(@url_preview[:duration])}
+            class="absolute bottom-0.5 right-0.5 px-1 py-px text-[9px] leading-none font-semibold text-white bg-black/75 rounded"
+          >
+            {format_duration(@url_preview[:duration])}
+          </span>
+        </div>
         <div class="flex-1 min-w-0">
           <p class="text-sm font-medium line-clamp-3">{@url_preview.title || "YouTube video"}</p>
           <p :if={@url_preview.author_name} class="text-xs text-base-content/50">
             {@url_preview.author_name}
+            <%= if format_relative_date(@url_preview[:published_at]) do %>
+              <span class="text-base-content/30">
+                 ·  {format_relative_date(@url_preview[:published_at])}
+              </span>
+            <% end %>
+          </p>
+          <p
+            :if={!@url_preview.author_name && format_relative_date(@url_preview[:published_at])}
+            class="text-xs text-base-content/50"
+          >
+            {format_relative_date(@url_preview[:published_at])}
           </p>
         </div>
         <div class="flex gap-1 flex-shrink-0">
@@ -560,12 +578,24 @@ defmodule ByobWeb.RoomLive.Components do
           Now Playing
         </div>
         <% now_playing = Enum.at(@queue, @current_index) %>
-        <div class="flex items-center gap-2 p-2 rounded-lg bg-primary/10 ring-1 ring-primary/30 text-sm">
-          <img
-            :if={now_playing.thumbnail_url}
-            src={now_playing.thumbnail_url}
-            class="w-14 h-9 object-cover rounded flex-shrink-0"
-          />
+        <div
+          class="flex items-center gap-2 p-2 rounded-lg bg-primary/10 ring-1 ring-primary/30 text-sm"
+          data-url={now_playing.url}
+          phx-hook="QueueContextMenu"
+          id={"now-playing-#{now_playing.id}"}
+        >
+          <div :if={now_playing.thumbnail_url} class="relative flex-shrink-0">
+            <img
+              src={now_playing.thumbnail_url}
+              class="w-14 h-9 object-cover rounded"
+            />
+            <span
+              :if={format_duration(now_playing.duration)}
+              class="absolute bottom-0.5 right-0.5 px-1 py-px text-[9px] leading-none font-semibold text-white bg-black/75 rounded"
+            >
+              {format_duration(now_playing.duration)}
+            </span>
+          </div>
           <div
             :if={!now_playing.thumbnail_url}
             class="w-14 h-9 bg-base-300 rounded flex-shrink-0 flex items-center justify-center"
@@ -621,11 +651,18 @@ defmodule ByobWeb.RoomLive.Components do
             class="flex items-center gap-2 p-2 rounded-lg text-sm hover:bg-base-300 transition-colors cursor-grab active:cursor-grabbing"
           >
             <span class="text-base-content/20 flex-shrink-0 text-xs select-none">&#x2807;</span>
-            <img
-              :if={item.thumbnail_url}
-              src={item.thumbnail_url}
-              class="w-14 h-9 object-cover rounded flex-shrink-0"
-            />
+            <div :if={item.thumbnail_url} class="relative flex-shrink-0">
+              <img
+                src={item.thumbnail_url}
+                class="w-14 h-9 object-cover rounded"
+              />
+              <span
+                :if={format_duration(item.duration)}
+                class="absolute bottom-0.5 right-0.5 px-1 py-px text-[9px] leading-none font-semibold text-white bg-black/75 rounded"
+              >
+                {format_duration(item.duration)}
+              </span>
+            </div>
             <div
               :if={!item.thumbnail_url}
               class="w-14 h-9 bg-base-300 rounded flex-shrink-0 flex items-center justify-center"
@@ -688,13 +725,23 @@ defmodule ByobWeb.RoomLive.Components do
         :for={entry <- @history}
         phx-click="history:play"
         phx-value-url={entry.item.url}
+        data-url={entry.item.url}
+        phx-hook="QueueContextMenu"
+        id={"history-item-#{entry.item.id}-#{DateTime.to_unix(entry.played_at, :millisecond)}"}
         class="flex items-center gap-2 p-2 rounded-lg text-sm hover:bg-base-300 transition-colors cursor-pointer"
       >
-        <img
-          :if={entry.item.thumbnail_url}
-          src={entry.item.thumbnail_url}
-          class="w-14 h-9 object-cover rounded flex-shrink-0"
-        />
+        <div :if={entry.item.thumbnail_url} class="relative flex-shrink-0">
+          <img
+            src={entry.item.thumbnail_url}
+            class="w-14 h-9 object-cover rounded"
+          />
+          <span
+            :if={format_duration(entry.item.duration)}
+            class="absolute bottom-0.5 right-0.5 px-1 py-px text-[9px] leading-none font-semibold text-white bg-black/75 rounded"
+          >
+            {format_duration(entry.item.duration)}
+          </span>
+        </div>
         <div
           :if={!entry.item.thumbnail_url}
           class="w-14 h-9 bg-base-300 rounded flex-shrink-0 flex items-center justify-center"
@@ -933,4 +980,55 @@ defmodule ByobWeb.RoomLive.Components do
   def format_time(nil), do: nil
   def format_time(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   def format_time(_), do: nil
+
+  @doc """
+  Format total seconds as `M:SS` or `H:MM:SS`. Returns `nil` for nil/invalid.
+  """
+  def format_duration(nil), do: nil
+
+  def format_duration(seconds) when is_integer(seconds) and seconds >= 0 do
+    hours = div(seconds, 3600)
+    minutes = div(rem(seconds, 3600), 60)
+    secs = rem(seconds, 60)
+
+    if hours > 0 do
+      :io_lib.format("~B:~2..0B:~2..0B", [hours, minutes, secs]) |> IO.iodata_to_binary()
+    else
+      :io_lib.format("~B:~2..0B", [minutes, secs]) |> IO.iodata_to_binary()
+    end
+  end
+
+  def format_duration(_), do: nil
+
+  @doc """
+  Format an ISO 8601 datetime string (or DateTime) as a relative date:
+  "3 days ago", "2 months ago", "1 year ago". Returns `nil` for nil/invalid.
+  """
+  def format_relative_date(nil), do: nil
+
+  def format_relative_date(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, dt, _} -> format_relative_date(dt)
+      _ -> nil
+    end
+  end
+
+  def format_relative_date(%DateTime{} = dt) do
+    diff = DateTime.diff(DateTime.utc_now(), dt, :second)
+
+    cond do
+      diff < 60 -> "just now"
+      diff < 3600 -> pluralize(div(diff, 60), "minute") <> " ago"
+      diff < 86_400 -> pluralize(div(diff, 3600), "hour") <> " ago"
+      diff < 604_800 -> pluralize(div(diff, 86_400), "day") <> " ago"
+      diff < 2_592_000 -> pluralize(div(diff, 604_800), "week") <> " ago"
+      diff < 31_536_000 -> pluralize(div(diff, 2_592_000), "month") <> " ago"
+      true -> pluralize(div(diff, 31_536_000), "year") <> " ago"
+    end
+  end
+
+  def format_relative_date(_), do: nil
+
+  defp pluralize(1, unit), do: "1 #{unit}"
+  defp pluralize(n, unit), do: "#{n} #{unit}s"
 end

@@ -87,8 +87,8 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:remove_from_queue, item_id})
   end
 
-  def play_index(pid, index) do
-    GenServer.call(pid, {:play_index, index})
+  def play_index(pid, index, user_id \\ nil) do
+    GenServer.call(pid, {:play_index, index, user_id})
   end
 
   def reorder_queue(pid, from_index, to_index) do
@@ -340,7 +340,7 @@ defmodule Byob.RoomServer do
         Task.start(fn ->
           result =
             if item.source_type == :youtube do
-              Byob.OEmbed.fetch_youtube(url)
+              fetch_youtube_meta(item.source_id, url)
             else
               Byob.OEmbed.fetch_opengraph(url)
             end
@@ -400,7 +400,7 @@ defmodule Byob.RoomServer do
     end
   end
 
-  def handle_call({:play_index, index}, _from, state)
+  def handle_call({:play_index, index, user_id}, _from, state)
       when index >= 0 and index < length(state.queue) do
     now = System.monotonic_time(:millisecond)
     item = Enum.at(state.queue, index)
@@ -434,12 +434,16 @@ defmodule Byob.RoomServer do
     fetch_sponsor_segments(item)
     state = fetch_comments_for_current(state)
 
+    # Log a play event so the activity log reflects the manual queue click
+    title = item.title || item.url
+    state = log_activity(state, :play, user_id, title)
+
     broadcast(state, {:video_changed, %{media_item: item, index: 0}})
     broadcast(state, {:queue_updated, %{queue: queue, current_index: 0}})
     {:reply, :ok, state}
   end
 
-  def handle_call({:play_index, _index}, _from, state) do
+  def handle_call({:play_index, _index, _user_id}, _from, state) do
     {:reply, {:error, :invalid_index}, state}
   end
 
@@ -498,7 +502,13 @@ defmodule Byob.RoomServer do
   def handle_info({:oembed_result, item_id, meta}, state) do
     update_item = fn item ->
       if item.id == item_id do
-        %{item | title: meta.title, thumbnail_url: meta.thumbnail_url}
+        %{
+          item
+          | title: meta[:title] || item.title,
+            thumbnail_url: meta[:thumbnail_url] || item.thumbnail_url,
+            duration: meta[:duration] || item.duration,
+            published_at: meta[:published_at] || item.published_at
+        }
       else
         item
       end
@@ -516,10 +526,10 @@ defmodule Byob.RoomServer do
     old_url = if old_item, do: old_item.url
 
     activity_log =
-      if old_url && meta.title do
+      if old_url && meta[:title] do
         Enum.map(state.activity_log, fn entry ->
           if entry.action == :added && entry.detail == old_url do
-            %{entry | detail: meta.title}
+            %{entry | detail: meta[:title]}
           else
             entry
           end
@@ -530,7 +540,7 @@ defmodule Byob.RoomServer do
 
     state = %{state | queue: queue, history: history, activity_log: activity_log}
     broadcast(state, {:queue_updated, %{queue: state.queue, current_index: state.current_index}})
-    if old_url && meta.title, do: broadcast(state, {:activity_log_updated, activity_log})
+    if old_url && meta[:title], do: broadcast(state, {:activity_log_updated, activity_log})
     {:noreply, state}
   end
 
@@ -601,6 +611,22 @@ defmodule Byob.RoomServer do
   end
 
   defp current_position(state), do: state.current_time
+
+  # Fetch YouTube metadata. Prefer the Data API (duration + published_at);
+  # fall back to oEmbed (title + thumbnail only) if the API isn't configured
+  # or quota is out.
+  defp fetch_youtube_meta(source_id, url) do
+    case source_id && Byob.YouTube.Videos.fetch(source_id) do
+      {:ok, meta} ->
+        {:ok, meta}
+
+      _ ->
+        case Byob.OEmbed.fetch_youtube(url) do
+          {:ok, meta} -> {:ok, Map.put(meta, :source_type, :youtube)}
+          err -> err
+        end
+    end
+  end
 
   defp snapshot(state) do
     %{

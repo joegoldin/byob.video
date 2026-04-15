@@ -2,6 +2,17 @@
 
 ---
 
+# v3.4.4
+
+- Video duration badge overlaid on thumbnails in the URL preview card, Now Playing, Up Next, and History (YouTube-style, bottom-right)
+- URL preview shows channel name · "2 years ago" style relative upload date under the title
+- New `Byob.YouTube.Videos` module fetches duration and `publishedAt` via the Data API with 24h ETS cache; falls back to oEmbed if the API key is missing or quota is out
+- Fix: expand (+) button on the comments panel now uses a ResizeObserver instead of a Tailwind media query — shows whenever the panel is actually cramped, regardless of viewport height or aspect ratio
+- Fix: right-click context menu now works on the Now Playing item and History items (was only Up Next)
+- Fix: activity log now records a "play" event when you click an item in the queue (was silent)
+
+---
+
 # v3.4.3
 
 - Sync: NTP maintenance every 10s (down from 30s) so drift is caught faster

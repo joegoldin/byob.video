@@ -7,6 +7,7 @@ defmodule Byob.MediaItem do
     :title,
     :duration,
     :thumbnail_url,
+    :published_at,
     :added_by,
     :added_by_name,
     :added_at

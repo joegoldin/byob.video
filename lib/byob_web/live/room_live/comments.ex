@@ -18,8 +18,9 @@ defmodule ByobWeb.RoomLive.Comments do
     ~H"""
     <div
       :if={@comments && @comments != []}
+      id="comments-panel"
       class={[
-        "relative bg-base-200 rounded-lg",
+        "byob-comments-panel relative bg-base-200 rounded-lg",
         unless @collapsed do
           if @expanded do
             "lg:min-h-[500px] overflow-y-auto"
@@ -84,18 +85,19 @@ defmodule ByobWeb.RoomLive.Comments do
         </button>
       </div>
 
-      <%!-- Expand button (shown only when comments space is cramped, or when already expanded) --%>
+      <%!-- Expand button (JS hook reveals it when panel height is cramped, or when already expanded) --%>
       <div
         :if={!@collapsed}
         class="sticky bottom-0 flex justify-end px-2 pb-2 pt-1 pointer-events-none z-10"
       >
         <button
+          id="comments-expand-btn"
+          phx-hook="ExpandWhenCramped"
           phx-click="toggle_comments_expand"
+          data-expanded={if @expanded, do: "true", else: "false"}
           title={if @expanded, do: "Collapse comments", else: "Expand comments"}
-          class={[
-            "pointer-events-auto btn btn-circle btn-xs bg-base-200/95 border border-base-300 shadow-md hover:bg-base-300",
-            if(@expanded, do: "", else: "hidden [@media(max-height:800px)]:flex")
-          ]}
+          style="display:none"
+          class="pointer-events-auto btn btn-circle btn-xs bg-base-200/95 border border-base-300 shadow-md hover:bg-base-300 items-center justify-center"
         >
           <svg
             class={"w-3 h-3 transition-transform " <> if(@expanded, do: "rotate-45", else: "")}

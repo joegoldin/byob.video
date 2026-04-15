@@ -8,6 +8,7 @@ defmodule Byob.Application do
   @impl true
   def start(_type, _args) do
     :ets.new(:youtube_comments_cache, [:named_table, :public, :set])
+    :ets.new(:youtube_videos_cache, [:named_table, :public, :set])
 
     children = [
       ByobWeb.Telemetry,

@@ -43,21 +43,24 @@ defmodule ByobWeb.RoomLive.UrlPreview do
       )
 
     case Byob.MediaItem.parse_url(extracted) do
-      {:ok, %{source_type: :youtube}} ->
+      {:ok, %{source_type: :youtube, source_id: source_id}} ->
         socket = assign(base, url_preview_loading: true, url_preview: nil)
         pid = self()
 
         Task.start(fn ->
-          case Byob.OEmbed.fetch_youtube(extracted) do
-            {:ok, meta} ->
-              send(pid, {:url_preview_result, Map.put(meta, :source_type, :youtube)})
+          meta =
+            case source_id && Byob.YouTube.Videos.fetch(source_id) do
+              {:ok, data} ->
+                Map.put(data, :source_type, :youtube)
 
-            _ ->
-              send(
-                pid,
-                {:url_preview_result, %{title: nil, thumbnail_url: nil, source_type: :youtube}}
-              )
-          end
+              _ ->
+                case Byob.OEmbed.fetch_youtube(extracted) do
+                  {:ok, data} -> Map.put(data, :source_type, :youtube)
+                  _ -> %{title: nil, thumbnail_url: nil, source_type: :youtube}
+                end
+            end
+
+          send(pid, {:url_preview_result, meta})
         end)
 
         {:noreply, socket}
@@ -168,6 +171,8 @@ defmodule ByobWeb.RoomLive.UrlPreview do
       title: meta[:title],
       thumbnail_url: meta[:thumbnail_url],
       author_name: meta[:author_name],
+      duration: meta[:duration],
+      published_at: meta[:published_at],
       source_type: meta[:source_type] || :youtube
     }
 

@@ -26,7 +26,12 @@ defmodule ByobWeb.RoomLive.Queue do
   end
 
   def handle_play_index(%{"index" => index}, socket) do
-    RoomServer.play_index(socket.assigns.room_pid, String.to_integer(index))
+    RoomServer.play_index(
+      socket.assigns.room_pid,
+      String.to_integer(index),
+      socket.assigns.user_id
+    )
+
     {:noreply, socket}
   end
 
