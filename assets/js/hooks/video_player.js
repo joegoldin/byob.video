@@ -235,7 +235,12 @@ const VideoPlayer = {
     const canReuse = this.player && this.player.loadVideoById && this.sourceType === "youtube";
 
     const callbacks = {
-      onReady: () => {
+      onReady: (player) => {
+        // Assign synchronously so _applyPendingState's seek/play call find the
+        // player. Previously `this.player` was only set after the awaited
+        // `create()` resolved — which happens AFTER this callback fires —
+        // leaving the initial seek as a no-op.
+        if (player) this.player = player;
         this.isReady = true;
         this._applyPendingState();
         this._startSeekDetector();

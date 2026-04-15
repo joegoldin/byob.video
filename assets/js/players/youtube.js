@@ -32,7 +32,7 @@ export async function create(el, callbacks, opts) {
       reuse.cueVideoById({ videoId, ...start });
     }
     const wrapped = _wrap(reuse);
-    callbacks.onReady();
+    callbacks.onReady(wrapped);
     return wrapped;
   }
 
@@ -68,7 +68,9 @@ export async function create(el, callbacks, opts) {
             iframe.allow = "autoplay; encrypted-media; picture-in-picture";
           }
           const wrapped = _wrap(rawPlayer);
-          callbacks.onReady();
+          // Pass the wrapped player to the hook so it can assign `this.player`
+          // BEFORE _applyPendingState runs and tries to seek/play.
+          callbacks.onReady(wrapped);
           resolve(wrapped);
         },
         onStateChange: (event) => _onStateChange(event, callbacks),

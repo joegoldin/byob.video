@@ -2,6 +2,12 @@
 
 ---
 
+# v3.4.16
+
+- Fix: YouTube `onReady` callback now receives the wrapped player so the hook can assign `this.player` BEFORE `_applyPendingState` runs. Previously the onReady fired synchronously inside the `YT.Player` event — while the hook was still blocked on the `await YouTubePlayer.create(...)` — so `this.player` was still the old/null value and the initial `_seekTo` / `_play` in `_applyPendingState` were no-ops. This was the root cause of refresh-starts-at-0 and refresh-doesn't-autoplay.
+
+---
+
 # v3.4.15
 
 - Fix: reconcile loop's "resync-before-hard-seek" safety check was swallowing every hard seek. Each tick with drift > 2s triggered a fresh NTP burst instead of seeking, then the next tick saw the still-huge drift and triggered another burst — infinite loop, never actually seeking. Now after a recent resync (< 3s ago) the reconcile loop trusts the drift measurement and performs the hard seek. This is why a refreshed client could stay stuck out of sync: the reconcile's self-correction was disabled.
