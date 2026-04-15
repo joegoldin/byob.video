@@ -2,6 +2,12 @@
 
 ---
 
+# v3.4.9
+
+- Activity log: clicking a queue item now records a distinct `played` event ("user played <title>") with a primary-colored play icon, instead of misleadingly reading "user resumed <title>"
+
+---
+
 # v3.4.8
 
 - Sync: RoomServer broadcasts a lightweight state heartbeat every 5s. Clients adopt the server's `play_state` if theirs disagrees, and refresh the reconcile loop's reference point so drift extrapolation stays accurate between natural state changes. Any client that missed a broadcast (reconnect, transient drop, backgrounded tab) now self-heals within 5s — no need to wait for the next play/pause/seek event.

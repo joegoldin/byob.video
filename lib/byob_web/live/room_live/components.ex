@@ -807,6 +807,7 @@ defmodule ByobWeb.RoomLive.Components do
               &#9654;
             </span>
             <span :if={entry.action == :play} class="text-success/60 flex-shrink-0">&#9654;</span>
+            <span :if={entry.action == :played} class="text-primary/60 flex-shrink-0">&#9654;</span>
             <span :if={entry.action == :pause} class="text-warning/60 flex-shrink-0">
               &#10074;&#10074;
             </span>
@@ -944,6 +945,9 @@ defmodule ByobWeb.RoomLive.Components do
 
   def format_log_entry(%{action: :play, user: user, detail: title}),
     do: "#{user} resumed #{title}"
+
+  def format_log_entry(%{action: :played, user: user, detail: title}),
+    do: "#{user} played #{title}"
 
   def format_log_entry(%{action: :pause, user: user, detail: nil}), do: "#{user} paused"
 

@@ -435,9 +435,9 @@ defmodule Byob.RoomServer do
     fetch_sponsor_segments(item)
     state = fetch_comments_for_current(state)
 
-    # Log a play event so the activity log reflects the manual queue click
+    # Log a "jumped to" event so the activity log reflects the manual queue click
     title = item.title || item.url
-    state = log_activity(state, :play, user_id, title)
+    state = log_activity(state, :played, user_id, title)
 
     broadcast(state, {:video_changed, %{media_item: item, index: 0}})
     broadcast(state, {:queue_updated, %{queue: queue, current_index: 0}})
