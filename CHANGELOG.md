@@ -2,6 +2,13 @@
 
 ---
 
+# v3.4.6
+
+- Context menu: "Re-add to Queue" renamed to just "Add to Queue"
+- Comments expand now clamps to a fixed 400px tall with internal scroll (was min-height 500px, which grew to fit all comments)
+
+---
+
 # v3.4.5
 
 - Richer right-click context menu per item type:
