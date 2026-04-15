@@ -15,20 +15,21 @@ export { YT_UNSTARTED, YT_ENDED, YT_PLAYING, YT_PAUSED, YT_BUFFERING, YT_CUED };
  *
  * @param {HTMLElement} el - Container element
  * @param {object} callbacks - Hook callbacks
- * @param {object} opts - { videoId, shouldPlay, reuse (existing YT player or null) }
+ * @param {object} opts - { videoId, shouldPlay, startSeconds, reuse (existing YT player or null) }
  * @returns {Promise<object>} player interface
  */
 export async function create(el, callbacks, opts) {
-  const { videoId, shouldPlay, reuse } = opts;
+  const { videoId, shouldPlay, startSeconds, reuse } = opts;
   const YT = await loadYouTubeAPI();
 
   // Reuse existing player if possible — preserves user gesture context for autoplay
   if (reuse && reuse.loadVideoById) {
     callbacks.onLoadStart();
+    const start = startSeconds && startSeconds > 0 ? { startSeconds } : {};
     if (shouldPlay) {
-      reuse.loadVideoById(videoId);
+      reuse.loadVideoById({ videoId, ...start });
     } else {
-      reuse.cueVideoById(videoId);
+      reuse.cueVideoById({ videoId, ...start });
     }
     const wrapped = _wrap(reuse);
     callbacks.onReady();
@@ -42,6 +43,11 @@ export async function create(el, callbacks, opts) {
     container.id = "yt-player";
     el.appendChild(container);
 
+    // `start` in playerVars accepts integer seconds. Drop fractional tail —
+    // the drift reconcile loop tightens up to sub-second precision after load.
+    const startInt =
+      startSeconds && startSeconds > 0 ? Math.floor(startSeconds) : undefined;
+
     const rawPlayer = new YT.Player("yt-player", {
       videoId: videoId,
       width: "100%",
@@ -51,6 +57,7 @@ export async function create(el, callbacks, opts) {
         controls: 1,
         modestbranding: 1,
         rel: 0,
+        ...(startInt ? { start: startInt } : {}),
       },
       events: {
         onReady: () => {

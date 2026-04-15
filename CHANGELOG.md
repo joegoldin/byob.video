@@ -2,6 +2,12 @@
 
 ---
 
+# v3.4.14
+
+- Fix (for real this time): page refresh during active playback now starts the YouTube embed at the correct position directly, via the `start` playerVar. Previously the embed loaded at 0 and we relied on a post-load `seekTo` — which got swallowed when autoplay was blocked or the player wasn't yet in a seekable state. The reconcile loop still tightens sub-second drift after load.
+
+---
+
 # v3.4.13
 
 - **Server-driven autoplay countdown**: when a video ends, the server waits 5s before advancing to the next item. Clients render a bottom-right pie-slice overlay that fills clockwise over 5s, with the remaining seconds in the middle. All clients see the same countdown — no client-side timers, no race conditions, no duplicate log entries if multiple clients report `video_ended` for the same index.

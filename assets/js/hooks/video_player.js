@@ -207,10 +207,22 @@ const VideoPlayer = {
     this._embedBlocked = false;
     if (this._extPollInterval) { clearInterval(this._extPollInterval); this._extPollInterval = null; }
 
-    const shouldPlay = this._pendingState?.play_state === "playing";
+    const pending = this._pendingState;
+    const shouldPlay = pending?.play_state === "playing";
+
+    // Compute where to start playback. Using YouTube's `start` playerVar avoids
+    // the load-at-0-then-seek flash (and keeps the correct position even if
+    // the post-load seek is swallowed by autoplay blocking).
+    let startSeconds = 0;
+    if (pending && this.clockSync?.isReady?.()) {
+      const elapsed = pending.play_state === "playing"
+        ? (this.clockSync.serverNow() - pending.server_time) / 1000
+        : 0;
+      startSeconds = Math.max(0, (pending.current_time || 0) + elapsed);
+    }
 
     if (sourceType === "youtube") {
-      await this._loadYouTube(sourceId, shouldPlay);
+      await this._loadYouTube(sourceId, shouldPlay, startSeconds);
     } else if (sourceType === "direct_url") {
       this._loadDirectUrl(url);
     } else {
@@ -218,7 +230,7 @@ const VideoPlayer = {
     }
   },
 
-  async _loadYouTube(videoId, shouldPlay) {
+  async _loadYouTube(videoId, shouldPlay, startSeconds = 0) {
     // Can we reuse the existing YouTube player?
     const canReuse = this.player && this.player.loadVideoById && this.sourceType === "youtube";
 
@@ -250,6 +262,7 @@ const VideoPlayer = {
       this.player = await YouTubePlayer.create(this.el, callbacks, {
         videoId,
         shouldPlay,
+        startSeconds,
         reuse: rawPlayer,
       });
     } else {
@@ -262,6 +275,7 @@ const VideoPlayer = {
       this.player = await YouTubePlayer.create(this.el, callbacks, {
         videoId,
         shouldPlay,
+        startSeconds,
         reuse: null,
       });
     }
