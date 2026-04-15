@@ -90,6 +90,7 @@ const VideoPlayer = {
   },
 
   destroyed() {
+    window.__byobPlaying = false;
     this.reconcile.stop();
     this.suppression.destroy();
     this.clockSync.stop();
@@ -342,6 +343,7 @@ const VideoPlayer = {
 
     if (stateName === "playing") {
       this.expectedPlayState = "playing";
+      window.__byobPlaying = true;
       const position = this.player.getCurrentTime();
       this.pushEvent("video:play", { position });
       // Update own reconcile so it doesn't drift-correct back to old position
@@ -351,12 +353,14 @@ const VideoPlayer = {
       this.reconcile.start();
     } else if (stateName === "paused") {
       this.expectedPlayState = "paused";
+      window.__byobPlaying = false;
       const position = this.player.getCurrentTime();
       this.pushEvent("video:pause", { position });
       this.reconcile.stop();
     } else if (stateName === "ended") {
       // Stop heartbeat from force-replaying the video
       this.expectedPlayState = null;
+      window.__byobPlaying = false;
       this.reconcile.stop();
       // Only send ended if the position-based detector hasn't already
       if (!this._endedFired) {

@@ -2,6 +2,12 @@
 
 ---
 
+# v3.4.7
+
+- Fix: "click play on next video" required after deploy — the auto-reload on disconnect was triggering after just 5s, destroying the YouTube iframe and losing the autoplay permission granted by earlier user gesture. Bumped the threshold: **30s when idle**, **120s while a video is actively playing**. LiveView normally reconnects in seconds after a deploy, so in the common case no reload happens and playback continues uninterrupted — the VideoPlayer hook's `reconnected()` callback handles resync on top of the existing iframe.
+
+---
+
 # v3.4.6
 
 - Context menu: "Re-add to Queue" renamed to just "Add to Queue"

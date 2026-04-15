@@ -314,8 +314,13 @@ window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
 // connect if there are any LiveViews on the page
 liveSocket.connect()
 
-// Auto-reload on server disconnect (deploy/restart)
-// LiveView tries to reconnect, but if the page JS is stale after deploy, force reload
+// Auto-reload on extended server disconnect (deploy/restart).
+// A full page reload destroys the YouTube iframe and loses the autoplay
+// permission granted by prior user gesture — so subsequent videos require a
+// click to play. We only reload after a long disconnect, and we wait longer
+// while a video is actively playing so normal deploys don't interrupt playback.
+// If LiveView reconnects within the window, the VideoPlayer hook's
+// `reconnected()` callback handles resync without disturbing the iframe.
 let disconnectedAt = null;
 window.addEventListener("phx:page-loading-start", (info) => {
   if (info.detail?.kind === "error") {
@@ -325,9 +330,13 @@ window.addEventListener("phx:page-loading-start", (info) => {
 window.addEventListener("phx:page-loading-stop", () => {
   disconnectedAt = null;
 });
-// If disconnected for >5s, reload to get fresh assets
 setInterval(() => {
-  if (disconnectedAt && Date.now() - disconnectedAt > 5000) {
+  if (!disconnectedAt) return;
+  const elapsed = Date.now() - disconnectedAt;
+  // The VideoPlayer hook sets this flag while a video is actively playing.
+  const playing = window.__byobPlaying === true;
+  const threshold = playing ? 120_000 : 30_000;
+  if (elapsed > threshold) {
     disconnectedAt = null;
     window.location.reload();
   }
