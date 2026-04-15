@@ -2,6 +2,13 @@
 
 ---
 
+# v3.4.18
+
+- On LiveView reconnect (e.g. after a server deploy), the client now pushes its current local play state and position back to the server via `video:play` / `video:pause`. Rationale: after a deploy the server reloads from SQLite with `play_state: :paused` and a possibly stale `current_time` (up to 30s old, or 0 if the video started recently). Without this echo, no one ever told the server the real position — so a fresh-joining tab would `sync:state` down the stale value. Combined with v3.4.17's is-a-real-transition guard on `:play`, the echo is safe: it's accepted when the server needs updating, ignored when it's already in sync.
+- Added a `console.debug("[byob] _loadVideo", …)` diagnostic so the computed `startSeconds`, server-reported `current_time`, and clock-sync offset show up in browser devtools. Temporary aid for tracking the remaining edge cases in the refresh-after-deploy path.
+
+---
+
 # v3.4.17
 
 - Server resilience: `:play` / `:pause` handlers now only update `current_time` on a real state transition (paused → playing, playing → paused). A client that's already seeing the video as playing and echoes `video:play` again can no longer overwrite the room's position. This is why the v3.4.16 refresh fix only worked once **everyone** refreshed — pre-v3.4.16 clients were sending position=0 back to the server during normal playback, and the server happily accepted it, poisoning state for fresh joiners. Seek events still update position explicitly.

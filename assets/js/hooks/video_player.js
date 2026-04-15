@@ -84,12 +84,31 @@ const VideoPlayer = {
   },
 
   reconnected() {
-    // LiveView reconnected — server will push fresh sync:state
-    // Reset clock sync to re-calibrate
+    // LiveView reconnected — server may have lost state (e.g. after a deploy
+    // the room GenServer reloads from SQLite with play_state=:paused and a
+    // possibly stale current_time, up to 30 s old).
+    //
+    // Reset clock sync to re-calibrate, then push our current local state so
+    // the server can heal BEFORE it starts broadcasting heartbeats that would
+    // pull us backward. v3.4.17's :play handler only updates current_time on
+    // a real state transition, so this is safe: if the server already has
+    // accurate state (didn't restart), the echo is harmless.
     this.clockSync.stop();
     this.clockSync = new ClockSync((event, payload) =>
       this.pushEvent(event, payload)
     );
+
+    if (this.player && this.isReady) {
+      const localState = this.player.getState?.();
+      const position = this.player.getCurrentTime?.();
+      if (typeof position === "number" && !isNaN(position)) {
+        if (localState === "playing") {
+          this.pushEvent("video:play", { position });
+        } else if (localState === "paused") {
+          this.pushEvent("video:pause", { position });
+        }
+      }
+    }
   },
 
   destroyed() {
@@ -220,6 +239,18 @@ const VideoPlayer = {
         : 0;
       startSeconds = Math.max(0, (pending.current_time || 0) + elapsed);
     }
+
+    // Diagnostic — surface the computed start so we can see in the console
+    // whether the server is handing us a stale current_time after a deploy.
+    console.debug("[byob] _loadVideo", {
+      sourceType,
+      shouldPlay,
+      startSeconds,
+      pending_current_time: pending?.current_time,
+      pending_server_time: pending?.server_time,
+      clockSync_ready: this.clockSync?.isReady?.(),
+      clockSync_offset: this.clockSync?.offset,
+    });
 
     if (sourceType === "youtube") {
       await this._loadYouTube(sourceId, shouldPlay, startSeconds);
