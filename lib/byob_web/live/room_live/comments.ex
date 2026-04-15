@@ -23,7 +23,7 @@ defmodule ByobWeb.RoomLive.Comments do
         "byob-comments-panel relative bg-base-200 rounded-lg",
         unless @collapsed do
           if @expanded do
-            "lg:min-h-[500px] overflow-y-auto"
+            "lg:min-h-[400px] overflow-y-auto"
           else
             "max-h-[300px] lg:flex-1 lg:max-h-none min-h-0 overflow-y-auto"
           end
