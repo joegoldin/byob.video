@@ -68,6 +68,7 @@ defmodule ByobWeb.RoomLive.Components do
         </button>
         <div class="relative flex-1 min-w-0 max-w-[40vw] group">
           <form phx-submit="add_url" phx-change="preview_url" id="url-form">
+            <input type="hidden" name="mode" value="queue" id="url-form-mode" />
             <div class="relative flex items-center" id="url-input-wrapper">
               <input
                 type="text"
@@ -100,8 +101,8 @@ defmodule ByobWeb.RoomLive.Components do
           </form>
           <%!-- Supported sites hint (shown on focus with empty input) --%>
           <div
-            :if={!@url_preview_loading && !@url_preview}
-            class="hidden group-focus-within:block absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-50 p-3"
+            :if={!@url_preview_loading && !@url_preview && !@url_preview_error}
+            class="hidden group-[&:focus-within:has(input[name=url]:placeholder-shown)]:block absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-50 p-3"
           >
             <p class="text-xs font-semibold text-base-content/60 mb-2">
               Paste a URL to watch together
@@ -156,7 +157,7 @@ defmodule ByobWeb.RoomLive.Components do
           <%!-- Instant CSS-driven skeleton: fills the 300ms debounce gap --%>
           <div
             :if={!@url_preview && !@url_preview_error && !@url_preview_loading}
-            class="hidden group-[:has(input:not(:placeholder-shown))]:flex absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-40 items-center gap-3 p-3 animate-pulse pointer-events-none"
+            class="hidden group-[&:focus-within:has(input[name=url]:not(:placeholder-shown))]:flex absolute top-full left-0 right-0 mt-1 bg-base-200 rounded-lg shadow-xl border border-base-300 z-40 items-center gap-3 p-3 animate-pulse pointer-events-none"
             aria-hidden="true"
           >
             <div class="w-16 h-10 bg-base-300 rounded flex-shrink-0" />
@@ -377,16 +378,28 @@ defmodule ByobWeb.RoomLive.Components do
           class="w-16 h-10 object-cover rounded flex-shrink-0"
         />
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium line-clamp-3">{@url_preview.title}</p>
+          <p class="text-sm font-medium line-clamp-3">{@url_preview.title || "YouTube video"}</p>
           <p :if={@url_preview.author_name} class="text-xs text-base-content/50">
             {@url_preview.author_name}
           </p>
         </div>
         <div class="flex gap-1 flex-shrink-0">
-          <button type="button" phx-click="preview:play_now" class="btn btn-primary btn-xs">
+          <button
+            type="submit"
+            form="url-form"
+            onmousedown="event.preventDefault()"
+            onclick="document.getElementById('url-form-mode').value='now'"
+            class="btn btn-primary btn-xs"
+          >
             Play Now
           </button>
-          <button type="button" phx-click="preview:queue" class="btn btn-outline btn-xs">
+          <button
+            type="submit"
+            form="url-form"
+            onmousedown="event.preventDefault()"
+            onclick="document.getElementById('url-form-mode').value='queue'"
+            class="btn btn-outline btn-xs"
+          >
             Queue
           </button>
         </div>
@@ -427,10 +440,22 @@ defmodule ByobWeb.RoomLive.Components do
           <p class="text-xs text-base-content/50">Direct video file</p>
         </div>
         <div class="flex gap-1 flex-shrink-0">
-          <button type="button" phx-click="preview:play_now" class="btn btn-primary btn-xs">
+          <button
+            type="submit"
+            form="url-form"
+            onmousedown="event.preventDefault()"
+            onclick="document.getElementById('url-form-mode').value='now'"
+            class="btn btn-primary btn-xs"
+          >
             Play Now
           </button>
-          <button type="button" phx-click="preview:queue" class="btn btn-outline btn-xs">
+          <button
+            type="submit"
+            form="url-form"
+            onmousedown="event.preventDefault()"
+            onclick="document.getElementById('url-form-mode').value='queue'"
+            class="btn btn-outline btn-xs"
+          >
             Queue
           </button>
         </div>
@@ -464,10 +489,22 @@ defmodule ByobWeb.RoomLive.Components do
           </p>
         </div>
         <div class="flex gap-1 flex-shrink-0">
-          <button type="button" phx-click="preview:play_now" class="btn btn-primary btn-xs">
+          <button
+            type="submit"
+            form="url-form"
+            onmousedown="event.preventDefault()"
+            onclick="document.getElementById('url-form-mode').value='now'"
+            class="btn btn-primary btn-xs"
+          >
             Play Now
           </button>
-          <button type="button" phx-click="preview:queue" class="btn btn-outline btn-xs">
+          <button
+            type="submit"
+            form="url-form"
+            onmousedown="event.preventDefault()"
+            onclick="document.getElementById('url-form-mode').value='queue'"
+            class="btn btn-outline btn-xs"
+          >
             Queue
           </button>
         </div>

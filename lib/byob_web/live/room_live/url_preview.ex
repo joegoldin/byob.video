@@ -2,7 +2,7 @@ defmodule ByobWeb.RoomLive.UrlPreview do
   @moduledoc """
   Handles URL preview event handlers extracted from RoomLive.
 
-  Covers: preview_url, add_url, preview:play_now, preview:queue,
+  Covers: preview_url, add_url (submit drives Play Now / Queue via hidden mode input),
   and the {:url_preview_result, _} info messages.
   """
 
@@ -49,8 +49,14 @@ defmodule ByobWeb.RoomLive.UrlPreview do
 
         Task.start(fn ->
           case Byob.OEmbed.fetch_youtube(extracted) do
-            {:ok, meta} -> send(pid, {:url_preview_result, meta})
-            _ -> send(pid, {:url_preview_result, nil})
+            {:ok, meta} ->
+              send(pid, {:url_preview_result, Map.put(meta, :source_type, :youtube)})
+
+            _ ->
+              send(
+                pid,
+                {:url_preview_result, %{title: nil, thumbnail_url: nil, source_type: :youtube}}
+              )
           end
         end)
 
@@ -130,6 +136,18 @@ defmodule ByobWeb.RoomLive.UrlPreview do
       resolved ->
         mode_atom = if mode == "now", do: :now, else: :queue
 
+        source_type =
+          case Byob.MediaItem.parse_url(resolved) do
+            {:ok, %{source_type: st}} -> st
+            _ -> :unknown
+          end
+
+        Byob.Analytics.video_added(
+          socket.assigns[:browser_id] || socket.assigns.user_id,
+          socket.assigns.room_id,
+          source_type
+        )
+
         RoomServer.add_to_queue(
           socket.assigns.room_pid,
           socket.assigns.user_id,
@@ -138,42 +156,6 @@ defmodule ByobWeb.RoomLive.UrlPreview do
         )
 
         {:noreply, reset_preview(socket)}
-    end
-  end
-
-  def handle_play_now(_params, socket) do
-    if url = socket.assigns[:resolved_url] do
-      source_type =
-        if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
-
-      Byob.Analytics.video_added(
-        socket.assigns[:browser_id] || socket.assigns.user_id,
-        socket.assigns.room_id,
-        source_type
-      )
-
-      RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :now)
-      {:noreply, reset_preview(socket)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_queue(_params, socket) do
-    if url = socket.assigns[:resolved_url] do
-      source_type =
-        if(socket.assigns.url_preview, do: socket.assigns.url_preview.source_type, else: :unknown)
-
-      Byob.Analytics.video_added(
-        socket.assigns[:browser_id] || socket.assigns.user_id,
-        socket.assigns.room_id,
-        source_type
-      )
-
-      RoomServer.add_to_queue(socket.assigns.room_pid, socket.assigns.user_id, url, :queue)
-      {:noreply, reset_preview(socket)}
-    else
-      {:noreply, socket}
     end
   end
 

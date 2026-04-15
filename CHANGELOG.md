@@ -2,6 +2,15 @@
 
 ---
 
+# v3.4.1
+
+- Fix Play Now / Queue using stale URL when clicked before the 300ms debounce (form now submits with the current input value — no more "first URL wins when you paste a second")
+- Fix UI sticking in a loading skeleton when the YouTube oEmbed fetch fails — preview now renders with a fallback title and working Play Now / Queue
+- Fix overlapping dropdowns: the supported-sites hint no longer renders behind the error card, and only shows when the input is empty
+- Dropdowns (hint, skeleton, preview, error) hide when the URL field isn't focused
+
+---
+
 # v3.4.0
 
 - URL input dropdown now opens instantly on focus (CSS-driven, no server round-trip)
