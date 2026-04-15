@@ -31,6 +31,9 @@ defmodule Byob.MediaItem do
       %URI{scheme: scheme, host: host} = uri
       when scheme in ["http", "https"] and is_binary(host) ->
         cond do
+          self_reference?(host) ->
+            {:error, :self_reference}
+
           service = drm_service(host) ->
             {:error, :drm_site, service}
 
@@ -52,6 +55,23 @@ defmodule Byob.MediaItem do
   end
 
   def parse_url(_), do: {:error, :invalid_url}
+
+  defp self_reference?(host) when is_binary(host) do
+    host in self_hosts()
+  end
+
+  defp self_reference?(_), do: false
+
+  defp self_hosts do
+    endpoint_host =
+      case Application.get_env(:byob, ByobWeb.Endpoint) do
+        nil -> nil
+        cfg -> get_in(cfg, [:url, :host])
+      end
+
+    ["byob.video", "www.byob.video", endpoint_host]
+    |> Enum.reject(&is_nil/1)
+  end
 
   defp drm_service(host) when is_binary(host) do
     Enum.find_value(@drm_hosts, fn {domain, name} ->

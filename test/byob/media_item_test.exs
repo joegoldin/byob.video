@@ -70,6 +70,23 @@ defmodule Byob.MediaItemTest do
     end
   end
 
+  describe "parse_url/1 self-reference" do
+    test "byob.video room link returns self_reference" do
+      assert {:error, :self_reference} =
+               MediaItem.parse_url("https://byob.video/room/abc")
+    end
+
+    test "www.byob.video returns self_reference" do
+      assert {:error, :self_reference} = MediaItem.parse_url("https://www.byob.video")
+    end
+
+    test "runtime PHX_HOST returns self_reference" do
+      host = Application.get_env(:byob, ByobWeb.Endpoint)[:url][:host]
+      refute is_nil(host), "expected endpoint url host to be configured"
+      assert {:error, :self_reference} = MediaItem.parse_url("https://#{host}/room/xyz")
+    end
+  end
+
   describe "parse_url/1 DRM sites" do
     test "netflix returns drm_site" do
       assert {:error, :drm_site, "Netflix"} =
