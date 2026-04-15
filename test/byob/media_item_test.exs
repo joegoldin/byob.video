@@ -57,6 +57,18 @@ defmodule Byob.MediaItemTest do
       assert {:error, :invalid_url} = MediaItem.parse_url("")
     end
 
+    test "javascript: scheme returns invalid_url" do
+      assert {:error, :invalid_url} = MediaItem.parse_url("javascript:alert(1)")
+    end
+
+    test "data: scheme returns invalid_url" do
+      assert {:error, :invalid_url} = MediaItem.parse_url("data:text/html,x")
+    end
+
+    test "file: scheme returns invalid_url" do
+      assert {:error, :invalid_url} = MediaItem.parse_url("file:///etc/passwd")
+    end
+
     test "parsed item has an id" do
       {:ok, item} = MediaItem.parse_url("https://youtu.be/dQw4w9WgXcQ")
       assert is_binary(item.id)
