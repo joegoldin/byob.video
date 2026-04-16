@@ -17,6 +17,7 @@ defmodule Byob.Application do
       {Registry, keys: :unique, name: Byob.RoomRegistry},
       {DynamicSupervisor, name: Byob.RoomSupervisor, strategy: :one_for_one},
       Byob.Persistence,
+      {Byob.Pool.Scheduler, auto_start: start_pool_scheduler?()},
       ByobWeb.Endpoint
     ]
 
@@ -32,5 +33,12 @@ defmodule Byob.Application do
   def config_change(changed, _new, removed) do
     ByobWeb.Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  # Don't run background scrapers under `mix test` — each test would then
+  # fight the scheduler for the shared DB connection. Controlled by
+  # application config set in config/test.exs.
+  defp start_pool_scheduler? do
+    Application.get_env(:byob, :start_pool_scheduler, true)
   end
 end

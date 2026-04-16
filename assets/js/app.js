@@ -26,6 +26,8 @@ import {hooks as colocatedHooks} from "phoenix-colocated/byob"
 import topbar from "../vendor/topbar"
 import VideoPlayer from "./hooks/video_player"
 import CopyUrl from "./hooks/copy_url"
+import RouletteWheel from "./hooks/roulette_wheel"
+import RoundTimer from "./hooks/round_timer"
 
 const ReplaceLayoutNav = {
   mounted() {
@@ -287,7 +289,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     has_extension: document.documentElement.hasAttribute("data-byob-extension"),
     show_comments: localStorage.getItem("byob_show_comments") !== "false",
   }),
-  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu, ExpandWhenCramped, ScrollBottom},
+  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu, ExpandWhenCramped, ScrollBottom, RouletteWheel, RoundTimer},
 })
 
 // Listen for username changes to persist to localStorage

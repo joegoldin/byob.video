@@ -1,6 +1,8 @@
 defmodule Byob.RoomServer do
   use GenServer
 
+  alias Byob.RoomServer.Round
+
   @default_sb_settings %{
     "sponsor" => "auto_skip",
     "selfpromo" => "show_bar",
@@ -33,7 +35,11 @@ defmodule Byob.RoomServer do
     event_counts: %{},
     rate_limit_ref: nil,
     activity_log: [],
-    pending_advance_ref: nil
+    pending_advance_ref: nil,
+    round: nil,
+    round_expire_ref: nil,
+    round_last_broadcast_ms: 0,
+    round_coalesce_ref: nil
   ]
 
   @autoplay_countdown_ms 5_000
@@ -110,6 +116,18 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, :get_api_key)
   end
 
+  def start_round(pid, mode, user_id) when mode in [:voting, :roulette] do
+    GenServer.call(pid, {:start_round, mode, user_id})
+  end
+
+  def cast_vote(pid, user_id, external_id, round_id) do
+    GenServer.call(pid, {:cast_vote, user_id, external_id, round_id})
+  end
+
+  def cancel_round(pid, user_id, round_id) do
+    GenServer.call(pid, {:cancel_round, user_id, round_id})
+  end
+
   # Server callbacks
 
   @impl true
@@ -161,6 +179,10 @@ defmodule Byob.RoomServer do
             event_counts: %{},
             sponsor_segments: [],
             pending_advance_ref: nil,
+            round: nil,
+            round_expire_ref: nil,
+            round_last_broadcast_ms: 0,
+            round_coalesce_ref: nil,
             users: Enum.into(saved.users, %{}, fn {k, v} -> {k, %{v | connected: false}} end)
           })
 
@@ -572,6 +594,113 @@ defmodule Byob.RoomServer do
     {:reply, :ok, state}
   end
 
+  # --- Rounds (roulette / voting) ---
+
+  def handle_call({:start_round, _mode, _user_id}, _from, %{round: %Round{}} = state) do
+    {:reply, {:error, :round_active}, state}
+  end
+
+  def handle_call({:start_round, mode, user_id}, _from, state) do
+    queue_ids =
+      state.queue
+      |> Enum.map(fn item ->
+        case item do
+          %{source_type: :youtube, source_id: id} when is_binary(id) -> id
+          _ -> nil
+        end
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    case Byob.Pool.pick_candidates(queue_ids) do
+      {:ok, candidates} ->
+        candidate_maps =
+          Enum.map(candidates, fn row ->
+            %{
+              external_id: row.external_id,
+              title: row.title,
+              channel: row.channel,
+              duration_s: row.duration_s,
+              thumbnail_url: row.thumbnail_url,
+              source_type: row.source_bucket || row.source_type
+            }
+          end)
+
+        round = Round.new(mode, user_id, candidate_maps)
+
+        duration =
+          case mode do
+            :voting -> Round.vote_duration_ms()
+            :roulette -> Round.roulette_duration_ms()
+          end
+
+        expire_ref = Process.send_after(self(), {:round_expire, round.id}, duration)
+
+        state = %{state | round: round, round_expire_ref: expire_ref, round_last_broadcast_ms: 0}
+
+        state =
+          log_activity(
+            state,
+            if(mode == :voting, do: :vote_started, else: :roulette_started),
+            user_id,
+            nil
+          )
+
+        broadcast(state, {:round_started, snapshot_round(round)})
+        {:reply, {:ok, round}, state}
+
+      {:error, :no_candidates} ->
+        {:reply, {:error, :no_candidates}, state}
+    end
+  end
+
+  def handle_call({:cast_vote, user_id, external_id, round_id}, _from, state) do
+    case state.round do
+      %Round{id: ^round_id, mode: :voting, phase: :active} = round ->
+        updated = Round.cast_vote(round, user_id, external_id)
+        state = %{state | round: updated}
+
+        # Early-close if all present (connected) users have voted
+        connected_user_ids =
+          state.users
+          |> Enum.filter(fn {_, u} -> u.connected end)
+          |> Enum.map(fn {id, _} -> id end)
+          |> MapSet.new()
+
+        voted_user_ids =
+          updated.votes
+          |> Map.values()
+          |> Enum.reduce(MapSet.new(), &MapSet.union/2)
+
+        if MapSet.size(connected_user_ids) > 0 and
+             MapSet.subset?(connected_user_ids, voted_user_ids) do
+          state = cancel_round_expire(state)
+          state = resolve_round_now(state)
+          {:reply, :ok, state}
+        else
+          state = schedule_round_broadcast(state)
+          {:reply, :ok, state}
+        end
+
+      _ ->
+        {:reply, {:error, :invalid_round}, state}
+    end
+  end
+
+  def handle_call({:cancel_round, user_id, round_id}, _from, state) do
+    case state.round do
+      %Round{id: ^round_id, started_by: ^user_id, phase: :active} ->
+        state = cancel_round_expire(state)
+        state = flush_round_coalesce(state)
+        state = log_activity(state, :round_cancelled, user_id, "cancelled")
+        broadcast(state, {:round_cancelled, %{reason: :cancelled_by_starter}})
+        state = %{state | round: nil}
+        {:reply, :ok, state}
+
+      _ ->
+        {:reply, {:error, :not_authorized}, state}
+    end
+  end
+
   @impl true
   def handle_info(:check_empty, state) do
     connected_count = Enum.count(state.users, fn {_, u} -> u.connected end)
@@ -644,6 +773,42 @@ defmodule Byob.RoomServer do
     state = %{state | pending_advance_ref: nil}
     state = advance_queue(state)
     {:noreply, state}
+  end
+
+  # --- round timers ---
+
+  def handle_info({:round_expire, round_id}, %{round: %Round{id: round_id, phase: :active}} = state) do
+    state = %{state | round_expire_ref: nil}
+    state = flush_round_coalesce(state)
+    state = resolve_round_now(state)
+    {:noreply, state}
+  end
+
+  def handle_info({:round_expire, _stale_id}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info({:round_finalize, round_id}, %{round: %Round{id: round_id} = round} = state) do
+    state = finalize_round(state, round)
+    {:noreply, state}
+  end
+
+  def handle_info({:round_finalize, _stale_id}, state) do
+    {:noreply, state}
+  end
+
+  def handle_info(:round_broadcast_flush, state) do
+    state = %{state | round_coalesce_ref: nil}
+
+    case state.round do
+      %Round{} = r ->
+        state = %{state | round_last_broadcast_ms: System.monotonic_time(:millisecond)}
+        broadcast(state, {:round_updated, snapshot_round(r)})
+        {:noreply, state}
+
+      _ ->
+        {:noreply, state}
+    end
   end
 
   # Periodic state heartbeat: re-broadcasts play_state + current_time so
@@ -752,7 +917,8 @@ defmodule Byob.RoomServer do
       history: state.history,
       sponsor_segments: state.sponsor_segments,
       sb_settings: state.sb_settings,
-      activity_log: Enum.take(state.activity_log, 50)
+      activity_log: Enum.take(state.activity_log, 50),
+      round: if(state.round, do: snapshot_round(state.round), else: nil)
     }
   end
 
@@ -1051,6 +1217,177 @@ defmodule Byob.RoomServer do
         end
       end)
     end
+  end
+
+  # --- round helpers ---
+
+  defp cancel_round_expire(%{round_expire_ref: nil} = state), do: state
+
+  defp cancel_round_expire(%{round_expire_ref: ref} = state) do
+    Process.cancel_timer(ref)
+    %{state | round_expire_ref: nil}
+  end
+
+  defp flush_round_coalesce(%{round_coalesce_ref: nil} = state), do: state
+
+  defp flush_round_coalesce(%{round_coalesce_ref: ref} = state) do
+    Process.cancel_timer(ref)
+    %{state | round_coalesce_ref: nil}
+  end
+
+  # Throttle :round_updated broadcasts — max one per 250ms.
+  defp schedule_round_broadcast(state) do
+    now = System.monotonic_time(:millisecond)
+    elapsed = now - state.round_last_broadcast_ms
+
+    cond do
+      state.round_coalesce_ref != nil ->
+        state
+
+      elapsed >= 250 ->
+        broadcast(state, {:round_updated, snapshot_round(state.round)})
+        %{state | round_last_broadcast_ms: now}
+
+      true ->
+        ref = Process.send_after(self(), :round_broadcast_flush, 250 - elapsed)
+        %{state | round_coalesce_ref: ref}
+    end
+  end
+
+  # Resolve (pick winner), broadcast :round_revealed, schedule finalize.
+  defp resolve_round_now(state) do
+    {resolved, outcome} = Round.resolve(state.round)
+
+    case {resolved.mode, outcome} do
+      {:voting, :no_votes} ->
+        state = log_activity(state, :round_cancelled, nil, "no votes cast")
+        broadcast(state, {:round_cancelled, %{reason: :no_votes}})
+        %{state | round: nil}
+
+      {mode, :winner_chosen} ->
+        payload =
+          case mode do
+            :voting ->
+              %{
+                mode: :voting,
+                winner_external_id: resolved.winner_external_id,
+                tallies: Round.tallies(resolved)
+              }
+
+            :roulette ->
+              %{
+                mode: :roulette,
+                seed: resolved.seed,
+                winner_external_id: resolved.winner_external_id
+              }
+          end
+
+        delay =
+          case mode do
+            :voting -> Round.reveal_delay_voting_ms()
+            :roulette -> Round.reveal_delay_roulette_ms()
+          end
+
+        finalize_ref = Process.send_after(self(), {:round_finalize, resolved.id}, delay)
+        resolved = %{resolved | finalize_ref: finalize_ref}
+        broadcast(state, {:round_revealed, payload})
+        %{state | round: resolved}
+    end
+  end
+
+  # Finalize: enqueue winner, mark in pool, activity log, broadcast.
+  defp finalize_round(state, %Round{winner_external_id: nil}) do
+    %{state | round: nil}
+  end
+
+  defp finalize_round(state, %Round{winner_external_id: winner_id} = round) do
+    candidate = Round.candidate_by_id(round, winner_id)
+
+    state =
+      case candidate do
+        %{} = c -> append_pool_winner(state, c, round)
+        _ -> state
+      end
+
+    Byob.Pool.mark_picked(winner_id)
+    broadcast(state, {:round_finalized, %{}})
+    %{state | round: nil}
+  end
+
+  defp append_pool_winner(state, candidate, round) do
+    url = "https://www.youtube.com/watch?v=#{candidate.external_id}"
+
+    item = %Byob.MediaItem{
+      id: Base.url_encode64(:crypto.strong_rand_bytes(9), padding: false),
+      url: url,
+      source_type: :youtube,
+      source_id: candidate.external_id,
+      title: candidate.title,
+      thumbnail_url: candidate.thumbnail_url,
+      duration: candidate.duration_s,
+      added_by: round.started_by,
+      added_by_name: starter_name(state, round.started_by),
+      added_at: DateTime.utc_now()
+    }
+
+    state = add_item_to_queue(state, item, :queue)
+
+    title = candidate.title || url
+
+    state =
+      case round.mode do
+        :voting ->
+          count =
+            round.votes
+            |> Map.get(winner_of(round), MapSet.new())
+            |> MapSet.size()
+
+          detail = "#{title} (#{count} vote#{if count == 1, do: "", else: "s"})"
+          log_activity(state, :vote_winner, nil, detail)
+
+        :roulette ->
+          log_activity(state, :roulette_winner, nil, title)
+      end
+
+    broadcast(
+      state,
+      {:queue_updated, %{queue: state.queue, current_index: state.current_index}}
+    )
+
+    state
+  end
+
+  defp winner_of(%Round{winner_external_id: id}), do: id
+
+  defp starter_name(state, user_id) do
+    case Map.get(state.users, user_id) do
+      %{username: name} -> name
+      _ -> nil
+    end
+  end
+
+  # Public-facing serialization for broadcasts. Strips MapSets (which don't
+  # survive Phoenix.PubSub → LiveView assigns gracefully) and exposes only
+  # what the client needs.
+  defp snapshot_round(%Round{} = r) do
+    %{
+      id: r.id,
+      mode: r.mode,
+      started_by: r.started_by,
+      started_at: r.started_at,
+      expires_at: r.expires_at,
+      server_time: System.monotonic_time(:millisecond),
+      candidates: r.candidates,
+      tallies: if(r.mode == :voting, do: Round.tallies(r), else: %{}),
+      voter_ids_by_candidate:
+        if(r.mode == :voting,
+          do: Enum.into(r.votes, %{}, fn {ext, set} -> {ext, MapSet.to_list(set)} end),
+          else: %{}
+        ),
+      phase: r.phase,
+      seed: r.seed,
+      winner_external_id: r.winner_external_id
+    }
   end
 
   defp fetch_comments_for_current(state) do

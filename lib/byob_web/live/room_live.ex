@@ -2,7 +2,16 @@ defmodule ByobWeb.RoomLive do
   use ByobWeb, :live_view
 
   alias Byob.{RoomManager, RoomServer}
-  alias ByobWeb.RoomLive.{Comments, Components, Playback, PubSub, Queue, UrlPreview, Username}
+  alias ByobWeb.RoomLive.{
+    Comments,
+    Components,
+    Playback,
+    PubSub,
+    Queue,
+    RoundPanel,
+    UrlPreview,
+    Username
+  }
 
   def mount(%{"id" => room_id}, _session, socket) do
     if not Regex.match?(~r/^[a-z0-9]{1,16}$/, room_id) do
@@ -42,7 +51,9 @@ defmodule ByobWeb.RoomLive do
         comments_total: nil,
         show_comments: true,
         comments_collapsed: false,
-        comments_expanded: false
+        comments_expanded: false,
+        round: nil,
+        round_collapsed: false
       )
 
     if connected?(socket) do
@@ -83,7 +94,8 @@ defmodule ByobWeb.RoomLive do
           current_media: current_media,
           sb_settings: state.sb_settings,
           activity_log: state.activity_log || [],
-          api_key: RoomServer.get_api_key(pid)
+          api_key: RoomServer.get_api_key(pid),
+          round: Map.get(state, :round)
         )
 
       # Push full state to client hook for two-step join
@@ -214,6 +226,37 @@ defmodule ByobWeb.RoomLive do
 
   def handle_event("sync:ping", params, socket), do: Playback.handle_sync_ping(params, socket)
 
+  # Rounds (roulette / voting)
+
+  def handle_event("round:start", %{"mode" => mode}, socket) when mode in ["voting", "roulette"] do
+    mode_atom = String.to_existing_atom(mode)
+
+    case RoomServer.start_round(socket.assigns.room_pid, mode_atom, socket.assigns.user_id) do
+      {:ok, _round} ->
+        {:noreply, socket}
+
+      {:error, :no_candidates} ->
+        {:noreply, put_flash(socket, :error, "Pool is empty — come back in a bit.")}
+
+      {:error, :round_active} ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("round:vote", %{"round_id" => round_id, "external_id" => external_id}, socket) do
+    RoomServer.cast_vote(socket.assigns.room_pid, socket.assigns.user_id, external_id, round_id)
+    {:noreply, socket}
+  end
+
+  def handle_event("round:cancel", %{"round_id" => round_id}, socket) do
+    RoomServer.cancel_round(socket.assigns.room_pid, socket.assigns.user_id, round_id)
+    {:noreply, socket}
+  end
+
+  def handle_event("round:toggle_collapse", _params, socket) do
+    {:noreply, assign(socket, round_collapsed: !socket.assigns.round_collapsed)}
+  end
+
   # PubSub messages from RoomServer
 
   def handle_info({:sync_play, data}, socket), do: PubSub.handle_sync_play(data, socket)
@@ -257,6 +300,69 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:activity_log_entry, entry}, socket),
     do: PubSub.handle_activity_log_entry(entry, socket)
 
+  def handle_info({:round_started, round}, socket) do
+    socket = assign(socket, round: round, round_collapsed: false)
+
+    socket =
+      if round.mode == :roulette do
+        push_event(socket, "round:spin_start", %{
+          candidates: Enum.map(round.candidates, &candidate_for_client/1)
+        })
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:round_updated, round}, socket) do
+    {:noreply, assign(socket, round: round)}
+  end
+
+  def handle_info({:round_revealed, payload}, socket) do
+    round =
+      case socket.assigns.round do
+        nil ->
+          nil
+
+        existing ->
+          merged =
+            existing
+            |> Map.put(:phase, :revealing)
+            |> Map.put(:winner_external_id, payload.winner_external_id)
+            |> Map.put(:seed, payload[:seed])
+            |> Map.put(:tallies, payload[:tallies] || existing.tallies)
+
+          merged
+      end
+
+    socket = assign(socket, round: round)
+
+    socket =
+      if payload.mode == :roulette do
+        push_event(socket, "round:spin_land", %{
+          seed: payload.seed,
+          winner_external_id: payload.winner_external_id
+        })
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:round_cancelled, _payload}, socket) do
+    socket = assign(socket, round: nil, round_collapsed: false)
+    socket = push_event(socket, "round:cleanup", %{})
+    {:noreply, socket}
+  end
+
+  def handle_info({:round_finalized, _}, socket) do
+    socket = assign(socket, round: nil, round_collapsed: false)
+    socket = push_event(socket, "round:cleanup", %{})
+    {:noreply, socket}
+  end
+
   def handle_info({:comments_updated, data}, socket),
     do: PubSub.handle_comments_updated(data, socket)
 
@@ -288,6 +394,7 @@ defmodule ByobWeb.RoomLive do
       url_preview_error={@url_preview_error}
       preview_url={@preview_url}
       resolved_url={@resolved_url}
+      round_active={@round != nil}
     />
     <Components.settings_modal
       sb_settings={@sb_settings}
@@ -312,6 +419,12 @@ defmodule ByobWeb.RoomLive do
             </div>
           </div>
         </div>
+
+        <RoundPanel.round_panel
+          round={@round}
+          collapsed={@round_collapsed}
+          current_user_id={@user_id}
+        />
 
         <Comments.comments_panel
           :if={@show_comments}
@@ -459,6 +572,15 @@ defmodule ByobWeb.RoomLive do
       source_id: item[:source_id] || item["source_id"],
       title: item[:title] || item["title"],
       thumbnail_url: item[:thumbnail_url] || item["thumbnail_url"]
+    }
+  end
+
+  defp candidate_for_client(c) do
+    %{
+      external_id: c.external_id,
+      title: c.title,
+      thumbnail_url: c.thumbnail_url,
+      source_type: to_string(c.source_type)
     }
   end
 end

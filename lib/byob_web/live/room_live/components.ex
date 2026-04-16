@@ -21,6 +21,7 @@ defmodule ByobWeb.RoomLive.Components do
   attr :url_preview_error, :any, default: nil
   attr :preview_url, :string, default: nil
   attr :resolved_url, :string, default: nil
+  attr :round_active, :boolean, default: false
 
   def room_nav(assigns) do
     ~H"""
@@ -175,6 +176,28 @@ defmodule ByobWeb.RoomLive.Components do
         </div>
       </div>
       <div class="flex-none flex items-center gap-1">
+        <div class="tooltip tooltip-bottom" data-tip="Roulette — spin for a random video">
+          <button
+            class="btn btn-ghost btn-xs btn-circle"
+            phx-click="round:start"
+            phx-value-mode="roulette"
+            disabled={@round_active}
+            aria-label="Start roulette"
+          >
+            <span class="text-sm leading-none">🎰</span>
+          </button>
+        </div>
+        <div class="tooltip tooltip-bottom" data-tip="Voting — pick together">
+          <button
+            class="btn btn-ghost btn-xs btn-circle"
+            phx-click="round:start"
+            phx-value-mode="voting"
+            disabled={@round_active}
+            aria-label="Start voting"
+          >
+            <span class="text-sm leading-none">🗳️</span>
+          </button>
+        </div>
         <button
           class="btn btn-ghost btn-xs btn-circle"
           onclick="document.getElementById('sb-settings-modal')?.showModal()"
@@ -822,6 +845,21 @@ defmodule ByobWeb.RoomLive.Components do
             <span :if={entry.action == :renamed} class="text-base-content/40 flex-shrink-0">
               &#9998;
             </span>
+            <span :if={entry.action == :roulette_started} class="text-base-content/40 flex-shrink-0">
+              🎰
+            </span>
+            <span :if={entry.action == :roulette_winner} class="text-warning/60 flex-shrink-0">
+              ★
+            </span>
+            <span :if={entry.action == :vote_started} class="text-base-content/40 flex-shrink-0">
+              🗳
+            </span>
+            <span :if={entry.action == :vote_winner} class="text-warning/60 flex-shrink-0">
+              ★
+            </span>
+            <span :if={entry.action == :round_cancelled} class="text-base-content/30 flex-shrink-0">
+              &#8634;
+            </span>
             <span class="flex-1 line-clamp-2">{format_log_entry(entry)}</span>
             <time
               :if={entry.at}
@@ -965,6 +1003,25 @@ defmodule ByobWeb.RoomLive.Components do
   def format_log_entry(%{action: :skipped}), do: "Skipped to next"
   def format_log_entry(%{action: :finished, detail: title}), do: "Finished: #{title}"
   def format_log_entry(%{action: :renamed, detail: detail}), do: "Renamed: #{detail}"
+
+  def format_log_entry(%{action: :roulette_started, user: user}),
+    do: "#{user || "someone"} spun the roulette"
+
+  def format_log_entry(%{action: :roulette_winner, detail: title}),
+    do: "🎰 #{title}"
+
+  def format_log_entry(%{action: :vote_started, user: user}),
+    do: "#{user || "someone"} opened voting"
+
+  def format_log_entry(%{action: :vote_winner, detail: detail}),
+    do: "🗳️ #{detail}"
+
+  def format_log_entry(%{action: :round_cancelled, detail: "no votes cast"}),
+    do: "Round ended — no votes cast"
+
+  def format_log_entry(%{action: :round_cancelled, user: user}),
+    do: "#{user || "someone"} cancelled the round"
+
   def format_log_entry(_), do: nil
 
   def show_url?(item) do

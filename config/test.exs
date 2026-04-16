@@ -1,5 +1,13 @@
 import Config
 
+# Don't run the background pool scraper under test.
+config :byob, start_pool_scheduler: false
+
+# Use a dedicated test DB file so test data (pool entries, rooms) can't
+# leak into the dev DB. Also set at runtime via System.put_env so the
+# Persistence module's default path resolution picks it up.
+System.put_env("BYOB_DB_PATH", "priv/byob_test.db")
+
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
 config :byob, ByobWeb.Endpoint,

@@ -49,3 +49,7 @@ result-firefox
 # Editor lock files
 *~lock~*
 .superpowers/
+
+# dotenv
+.env
+priv/byob_test.db*

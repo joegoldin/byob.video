@@ -2,6 +2,28 @@
 
 ---
 
+# v3.5.0
+
+**Roulette & Voting modes.** Two new ways to pick a video in a room:
+
+- **Roulette** — click 🎰 in the room nav to open a shared wheel of 12 random candidates. Each candidate appears first as a readable card over the wheel, then shrinks into its slice. The ball orbits and physics-lands on the winner (exponential angular friction + inward spiral + damped pocket-bounce). Winner slice glows, a pie-slice countdown runs, then the winner auto-enqueues.
+- **Voting** — click 🗳️ for a 15-second vote. Everyone can vote for any candidate. Highest-tally winner enqueues; random tiebreak; empty rounds end cleanly.
+
+**Candidate pool.** Background `Byob.Pool.Scheduler` GenServer scrapes three sources on a schedule and writes to a new `video_pool` SQLite table:
+- YouTube Trending (US, hourly + jitter)
+- Reddit top-of-day from `r/videos`, `r/mealtimevideos`, `r/deepintoyoutube`, `r/listentothis` (hourly + jitter)
+- 12 hardcoded curated playlists (daily + jitter)
+
+Pick uses weighted sampling: **14-day freshness decay** (curated exempt) × **30-day repeat decay** on `last_picked_at`, so the same video rarely resurfaces soon after it's been picked in any room.
+
+**Non-intrusive UI.** Round panel slots above the YouTube comments in the main column — never modal, never interrupts playback. Per-user collapse button. Only the starter can cancel an active round. Winner enqueues silently; activity log captures `:roulette_started / :roulette_winner / :vote_started / :vote_winner / :round_cancelled`.
+
+**Ops.**
+- `YOUTUBE_API_KEY` now loads in all envs (was prod-only) so dev can populate the pool.
+- Test suite uses a dedicated `priv/byob_test.db` so test seeds can't leak into the dev DB.
+
+---
+
 # v3.4.19
 
 - Server persistence now snapshots the **computed current position** (not the stale `current_time` field from the last event) plus a wallclock timestamp. On restart, the load path advances the position by elapsed wallclock for videos that were playing — so a fresh process picks up within seconds of where it actually was, not where it was at the last play/seek event.

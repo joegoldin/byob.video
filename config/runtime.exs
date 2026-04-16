@@ -22,6 +22,13 @@ end
 
 config :byob, ByobWeb.Endpoint, http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
+# YouTube API key (optional, enables YouTube Data API features: comments,
+# video metadata, the roulette/voting pool scrapers). Read in every env so
+# dev can use it too.
+if yt_key = System.get_env("YOUTUBE_API_KEY") do
+  config :byob, :youtube_api_key, yt_key
+end
+
 if config_env() == :prod do
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
@@ -46,9 +53,6 @@ if config_env() == :prod do
       api_key: posthog_key,
       in_app_otp_apps: [:byob]
   end
-
-  # YouTube API key (optional, enables YouTube comments panel)
-  config :byob, :youtube_api_key, System.get_env("YOUTUBE_API_KEY")
 
   config :byob, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
