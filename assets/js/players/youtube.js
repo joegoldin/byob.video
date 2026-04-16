@@ -110,9 +110,17 @@ function _wrap(rawPlayer) {
       if (!rawPlayer.getPlayerState) return null;
       const s = rawPlayer.getPlayerState();
       if (s === YT_PLAYING) return "playing";
-      if (s === YT_PAUSED) return "paused";
       if (s === YT_BUFFERING) return "buffering";
       if (s === YT_ENDED) return "ended";
+      // -1 (unstarted) and 5 (cued) look exactly like paused to the
+      // viewer — they show a thumbnail with nothing playing. The state
+      // reconciliation logic needs to treat them as paused so that if
+      // the room's expected state is "playing" it will actually force a
+      // play() instead of ignoring the mismatch. Without this, a user
+      // whose player is stuck on the thumbnail (e.g. the initial cue
+      // after load, or a fresh video that never transitioned to play)
+      // would remain paused even though everyone else is playing.
+      if (s === YT_PAUSED || s === YT_UNSTARTED || s === YT_CUED) return "paused";
       return null;
     },
     getPlayerState() {
