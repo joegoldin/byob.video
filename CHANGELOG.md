@@ -2,6 +2,23 @@
 
 ---
 
+# v3.5.1
+
+**Roulette polish + sync hardening.**
+
+- **Roulette:** 3-second "Loading candidates…" overlay at the start of a round so users see the panel mount and have time to scroll down. Slice text now runs radially (aligned with each pie slice, flipped on the left half so glyphs stay left-to-right) with two-line word-aware splitting — up to ~36 chars legible per slice. Voting picks **5** candidates; roulette stays at **12**. Server scrolls the round panel into view on `:round_started` when nothing is currently playing (no queue, ended, or fresh room).
+- **Roulette physics:** `Byob.RoomServer.Round.simulate_landing_slice/2` ports the same exponential-decay formula the JS hook runs, and the server uses its result to pick the winner — whichever slice the physics lands on **is** the winner, rather than picking first and solving physics to match. Identical IEEE 754 arithmetic in Elixir and JS produces bit-identical slice indexes on both sides. Winner slice gets a yellow outline + glow pulse only after the ball fully settles; a pie-slice countdown (same visual as the autoplay one) runs until the server finalizes and enqueues.
+- **Fix:** clicking **Play Now** on a new video while the previous video was in its autoplay countdown dropped the user onto the "Queue finished" screen five seconds later (the countdown timer fired and advanced past the just-added video). Now any `add_to_queue` that replaces the now-playing item cancels the pending advance + broadcasts `:autoplay_countdown_cancelled`.
+- **Fix:** YouTube player states `-1` (unstarted) and `5` (cued) render as a static thumbnail but were returned as `null` from `getState()`. The reconciliation loop skips null-state checks, so a player stuck on the thumbnail never got force-played. Both states now map to `"paused"` — if the room's expected state is `"playing"`, the 500 ms mismatch gate kicks in and force-plays. Likely root cause of the reported "my friend was paused while I was playing" desync.
+- **Fix:** if the YouTube player stays in `"buffering"` for more than 5 seconds while expected state is `"playing"`, seek to the server's expected position and force-play. Prevents infinite-buffer stalls from blocking sync.
+- **Fix:** on tab becoming visible again after backgrounding, resync the clock (3 fresh probes) and echo current local state (`video:play` / `video:pause`) back to the server. Prevents throttled-timer-induced desync in backgrounded tabs.
+- **Video help:** first time a browser blocks autoplay and the "Click to join playback" overlay shows, we now also open a one-time help dialog with browser-specific instructions (Chrome/Edge/Firefox/Safari) for enabling autoplay on byob.video. "Don't show again" defaults to checked, persisted in `localStorage`.
+- **Comments layout:** `min-h-[220px]` on mobile, flex-fill on desktop (removed the `lg:min-h-[260px]` that was overflowing the main column and breaking the sidebar's sticky scroll).
+- **Ops:** `YOUTUBE_API_KEY` is now read in all envs (was prod-only) so dev can populate the pool. Test suite writes to a dedicated `priv/byob_test.db` so pool test seeds can't leak into dev.
+- **Infra:** Fly instance scaled to 1 GB RAM.
+
+---
+
 # v3.5.0
 
 **Roulette & Voting modes.** Two new ways to pick a video in a room:
