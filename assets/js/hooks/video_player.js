@@ -123,6 +123,7 @@ const VideoPlayer = {
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
     if (this._unloadHandler) window.removeEventListener("beforeunload", this._unloadHandler);
     if (this._resizeHandler) window.removeEventListener("resize", this._resizeHandler);
+    if (this._onVisibilityChange) document.removeEventListener("visibilitychange", this._onVisibilityChange);
     this._unloadHandler?.();
     if (this.player && this.player.destroy) {
       this.player.destroy();
@@ -755,11 +756,42 @@ const VideoPlayer = {
     // State sync heartbeat — catches fast pause/unpause desync
     // Tracks how long state has been wrong. After 500ms of mismatch, force correction.
     this._mismatchSince = null;
+    this._stuckBufferingSince = null;
     if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
     this.stateCheckInterval = setInterval(() => {
       if (!this.player || !this.expectedPlayState) return;
       const localState = this.player.getState?.();
-      if (!localState || localState === "buffering" || localState === "ended") return;
+      if (!localState || localState === "ended") return;
+
+      // Buffering is usually transient — but a player that's stuck
+      // buffering (e.g. after returning from a backgrounded tab) needs a
+      // kick. If we've been in "buffering" + expected "playing" for more
+      // than 5 s, pretend it's a real mismatch and force a play(+seek).
+      if (localState === "buffering") {
+        if (this.expectedPlayState !== "playing") {
+          this._stuckBufferingSince = null;
+          return;
+        }
+        if (!this._stuckBufferingSince) {
+          this._stuckBufferingSince = performance.now();
+          return;
+        }
+        if (performance.now() - this._stuckBufferingSince > 5000) {
+          this._stuckBufferingSince = null;
+          // Resume at the server's expected position, not wherever the
+          // stuck buffer is.
+          const expectedPos = this.reconcile?.serverPosition;
+          if (typeof expectedPos === "number" && expectedPos > 0) {
+            this._seekTo(expectedPos);
+          }
+          this.suppression.suppress("playing");
+          this._play();
+        }
+        return;
+      } else {
+        this._stuckBufferingSince = null;
+      }
+
       if (localState !== this.expectedPlayState) {
         if (!this._mismatchSince) {
           this._mismatchSince = performance.now();
@@ -777,6 +809,45 @@ const VideoPlayer = {
         this._mismatchSince = null;
       }
     }, 100);
+
+    // When the tab returns from the background, aggressively reconcile:
+    // timers were throttled, reconcile drift is likely huge, and the
+    // player may have been paused by the OS/browser. Echo our state
+    // back to the server so everyone is on the same page again.
+    if (this._onVisibilityChange) {
+      document.removeEventListener("visibilitychange", this._onVisibilityChange);
+    }
+    this._onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      if (!this.player) return;
+
+      // Kick the reconcile: if the player was paused while backgrounded,
+      // force it back to the expected state via the mismatch path above.
+      this._mismatchSince = null;
+      this._stuckBufferingSince = null;
+
+      // Force a quick clock resync so drift-correction isn't acting on
+      // stale offsets.
+      if (this.clockSync && this.clockSync.resync) {
+        this.clockSync.resync(3).catch(() => {});
+      }
+
+      // Echo our current state to the server. If we locally pushed through
+      // play/pause while backgrounded (or got desynced from the room),
+      // this pulls the server onto our actual state.
+      setTimeout(() => {
+        try {
+          const localState = this.player?.getState?.();
+          const pos = this._getCurrentTime();
+          if (localState === "playing") {
+            this.pushEvent("video:play", { time: pos });
+          } else if (localState === "paused") {
+            this.pushEvent("video:pause", { time: pos });
+          }
+        } catch (_) {}
+      }, 200);
+    };
+    document.addEventListener("visibilitychange", this._onVisibilityChange);
 
     // SponsorBlock skip check
     this._lastSkippedUUID = null;
