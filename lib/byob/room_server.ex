@@ -499,14 +499,7 @@ defmodule Byob.RoomServer do
   def handle_call({:play_index, index, user_id}, _from, state)
       when index >= 0 and index < length(state.queue) do
     # Jumping to a queue item during an autoplay countdown cancels the countdown.
-    state =
-      if state.pending_advance_ref do
-        state = cancel_pending_advance(state)
-        broadcast(state, {:autoplay_countdown_cancelled, %{}})
-        state
-      else
-        state
-      end
+    state = maybe_cancel_pending_advance(state)
 
     now = System.monotonic_time(:millisecond)
     item = Enum.at(state.queue, index)
@@ -974,6 +967,10 @@ defmodule Byob.RoomServer do
       if state.current_index == nil do
         now = System.monotonic_time(:millisecond)
 
+        # Nothing was playing, but the autoplay-advance timer may still be
+        # armed (e.g. race where queue_ended hadn't finalized). Defensive.
+        state = maybe_cancel_pending_advance(state)
+
         state = %{
           state
           | queue: queue,
@@ -1002,6 +999,13 @@ defmodule Byob.RoomServer do
 
   defp add_item_to_queue(state, item, :now) do
     now = System.monotonic_time(:millisecond)
+
+    # Replacing the now-playing video by hand. If the autoplay countdown
+    # was running for the previously-finished video, cancel it — otherwise
+    # it fires a few seconds later and advances OUT of the video we just
+    # queued, dropping the user on the "queue finished" screen (with the
+    # just-added video's metadata, no less).
+    state = maybe_cancel_pending_advance(state)
 
     case state.current_index do
       nil ->
@@ -1044,6 +1048,16 @@ defmodule Byob.RoomServer do
         broadcast(state, {:video_changed, %{media_item: item, index: 0}})
         state
     end
+  end
+
+  # Cancel the autoplay-advance timer (if any) and broadcast the
+  # cancellation so clients hide their pie countdowns immediately.
+  defp maybe_cancel_pending_advance(%{pending_advance_ref: nil} = state), do: state
+
+  defp maybe_cancel_pending_advance(%{pending_advance_ref: _} = state) do
+    state = cancel_pending_advance(state)
+    broadcast(state, {:autoplay_countdown_cancelled, %{}})
+    state
   end
 
   defp advance_queue(state) do
