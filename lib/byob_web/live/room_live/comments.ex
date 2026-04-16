@@ -25,7 +25,11 @@ defmodule ByobWeb.RoomLive.Comments do
           if @expanded do
             "lg:h-[400px] lg:flex-shrink-0 overflow-y-auto"
           else
-            "max-h-[300px] lg:flex-1 lg:max-h-none min-h-0 overflow-y-auto"
+            # min-h-[220px] so comments stay legible on tall viewports where
+            # flex-1 would otherwise squeeze them too short, but without
+            # the `lg:min-h` override that was pushing the main column past
+            # the viewport and killing the sidebar's sticky scroll.
+            "min-h-[220px] max-h-[300px] lg:flex-1 lg:max-h-none lg:min-h-0 overflow-y-auto"
           end
         end
       ]}

@@ -191,23 +191,34 @@ defmodule ByobWeb.RoomLive.RoundPanel do
 
         # Slice center in "from-top, clockwise" degrees (0 = 12 o'clock).
         slice_center_from_top = angle_per * (i + 0.5)
-        # Text along the tangent (perpendicular to the radius at slice
-        # center). For a slice at 12 o'clock that's 0° (horizontal); at 3
-        # o'clock it's 90° (vertical reading top-to-bottom); at 6 it's
-        # 180°. We flip text on the bottom half so it reads the same way
-        # up as on the top — 12 o'clock: L→R; 6 o'clock: also L→R (not
-        # upside-down).
-        tangent_rotate = slice_center_from_top
 
-        flip? = slice_center_from_top > 90 and slice_center_from_top < 270
+        # Slice midpoint in SVG coords (0° = +X axis, clockwise +Y down).
+        svg_angle_deg = slice_center_from_top - 90
+        rad = svg_angle_deg * :math.pi() / 180
+        mid_r = 58
+        text_mid_x = 100 + mid_r * :math.cos(rad)
+        text_mid_y = 100 + mid_r * :math.sin(rad)
 
-        # Slice center position in SVG coords (0,0 is top-left of viewBox).
-        center_svg = angle_per * (i + 0.5) - 90
-        rad = center_svg * :math.pi() / 180
-        slice_center_x = 100 + 50 * :math.cos(rad)
-        slice_center_y = 100 + 50 * :math.sin(rad)
+        # Card fly target (slightly closer to hub so convergence is obvious).
+        card_target_r = 50
+        card_target_x = 100 + card_target_r * :math.cos(rad)
+        card_target_y = 100 + card_target_r * :math.sin(rad)
 
-        {line1, line2} = split_title_for_slice(c.title, 16)
+        # Text baseline runs RADIALLY — parallel to the slice's axis
+        # (hub → outer edge). We position a <g> at the slice midpoint,
+        # then rotate by the slice's SVG angle so local +X points outward
+        # along the radial. If that rotation would put glyphs upside-
+        # down / right-to-left (svg_angle ∈ (90°, 270°)), flip 180° so
+        # they stay readable from the viewer's perspective.
+        radial_rotate = svg_angle_deg
+        flip? = radial_rotate > 90 and radial_rotate < 270
+        text_rotate = if flip?, do: radial_rotate - 180, else: radial_rotate
+
+        # 2 lines of up to 18 chars, word-boundary split. Radial text
+        # has the slice's full radial length (~65 units) along the
+        # baseline, so we can fit much more text than with the old
+        # tangent layout.
+        {line1, line2} = split_title_for_slice(c.title, 18)
 
         %{
           index: i,
@@ -215,19 +226,13 @@ defmodule ByobWeb.RoomLive.RoundPanel do
           path: path,
           pattern_id: "wheel-thumb-#{i}",
           fallback_fill: Enum.at(@slice_palette, rem(i, length(@slice_palette))),
-          text_rotate: if(flip?, do: tangent_rotate + 180, else: tangent_rotate),
-          # Text baseline distance from center. After the flip the text
-          # group is upside-down, so we put text on the opposite radial
-          # offset to keep it near the slice's outer edge.
-          # Radial distance ~66 / ~52 from center (wheel outer rim at 96,
-          # hub at 18). Text group is rotated around (100, 100); flipped
-          # slices get text on the opposite side so glyphs render upright.
-          text_y_line1: if(flip?, do: 166, else: 34),
-          text_y_line2: if(flip?, do: 152, else: 48),
+          text_mid_x: Float.round(text_mid_x, 2),
+          text_mid_y: Float.round(text_mid_y, 2),
+          text_rotate: Float.round(text_rotate, 2),
           title_line1: line1,
           title_line2: line2,
-          slice_cx: Float.round(slice_center_x, 2),
-          slice_cy: Float.round(slice_center_y, 2),
+          slice_cx: Float.round(card_target_x, 2),
+          slice_cy: Float.round(card_target_y, 2),
           is_winner: assigns.round.winner_external_id == c.external_id
         }
       end)
@@ -327,19 +332,21 @@ defmodule ByobWeb.RoomLive.RoundPanel do
                   style="opacity: 0; transition: opacity 200ms ease-out;"
                 />
 
-                <%!-- Title: 2-line version, rotated tangent to the circle.
-                     Hidden until the card flies in. --%>
+                <%!-- Title: translated to the slice midpoint, then rotated
+                     so its baseline runs RADIALLY (along the slice's axis
+                     from hub to outer edge). 2 lines stack perpendicular
+                     to the baseline. Hidden until the card flies in. --%>
                 <g
                   class="slice-text"
                   data-slice-index={s.index}
-                  transform={"rotate(#{s.text_rotate} 100 100)"}
+                  transform={"translate(#{s.text_mid_x} #{s.text_mid_y}) rotate(#{s.text_rotate})"}
                   style="opacity: 0; transition: opacity 300ms ease-out;"
                 >
                   <text
-                    x="100"
-                    y={s.text_y_line1}
+                    x="0"
+                    y="-1"
                     text-anchor="middle"
-                    font-size="6"
+                    font-size="7"
                     font-weight="700"
                     fill="white"
                     style="paint-order: stroke; stroke: rgba(0,0,0,0.9); stroke-width: 2.5px;"
@@ -348,10 +355,10 @@ defmodule ByobWeb.RoomLive.RoundPanel do
                   </text>
                   <text
                     :if={s.title_line2}
-                    x="100"
-                    y={s.text_y_line2}
+                    x="0"
+                    y="8"
                     text-anchor="middle"
-                    font-size="6"
+                    font-size="7"
                     font-weight="700"
                     fill="white"
                     style="paint-order: stroke; stroke: rgba(0,0,0,0.9); stroke-width: 2.5px;"

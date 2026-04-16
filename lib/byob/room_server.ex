@@ -611,7 +611,13 @@ defmodule Byob.RoomServer do
       end)
       |> Enum.reject(&is_nil/1)
 
-    case Byob.Pool.pick_candidates(queue_ids) do
+    total_target =
+      case mode do
+        :voting -> 5
+        :roulette -> 12
+      end
+
+    case Byob.Pool.pick_candidates(queue_ids, total_target) do
       {:ok, candidates} ->
         candidate_maps =
           Enum.map(candidates, fn row ->

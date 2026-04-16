@@ -17,30 +17,35 @@ defmodule Byob.Pool do
   require Logger
 
   @sources [:trending, :subreddit, :curated]
-  @per_source 4
-  @total_target 12
-  @overfetch 6
 
   @doc """
-  Pick up to 6 candidates (2 per source), excluding any `external_id` in
+  Pick up to `total_target` candidates, split across the three sources
+  (approximately evenly), excluding any `external_id` in
   `exclude_external_ids` (typically the live queue of the triggering room).
+
+  * Roulette uses 12 (4 per source).
+  * Voting uses 5 (~2 per source, rounds up).
+
   If one source is under-quota (empty DB, dedupe collisions, exclusions),
   backfill from sources that have surplus.
 
   Returns `{:ok, [candidate_map]}` or `{:error, :no_candidates}`.
   """
-  def pick_candidates(exclude_external_ids \\ []) when is_list(exclude_external_ids) do
-    per_source =
+  def pick_candidates(exclude_external_ids \\ [], total_target \\ 12)
+      when is_list(exclude_external_ids) and is_integer(total_target) and total_target > 0 do
+    per_source = div(total_target + length(@sources) - 1, length(@sources))
+    overfetch = per_source + 2
+
+    per_source_rows =
       @sources
       |> Enum.map(fn source ->
-        rows = Byob.Persistence.pick_pool_candidates(source, @overfetch, exclude_external_ids)
+        rows = Byob.Persistence.pick_pool_candidates(source, overfetch, exclude_external_ids)
         {source, rows}
       end)
       |> Enum.into(%{})
 
-    initial = Enum.map(@sources, fn s -> {s, Enum.take(per_source[s], @per_source)} end)
+    initial = Enum.map(@sources, fn s -> {s, Enum.take(per_source_rows[s], per_source)} end)
 
-    # Dedupe across sources by external_id — first occurrence wins.
     {chosen, _seen} =
       Enum.reduce(initial, {[], MapSet.new()}, fn {source, rows}, {acc, seen} ->
         {kept, seen} =
@@ -55,13 +60,18 @@ defmodule Byob.Pool do
         {acc ++ Enum.reverse(kept), seen}
       end)
 
-    # Backfill if under target. Drain surplus rows from per_source that weren't
-    # chosen, honoring the dedupe set.
-    chosen = backfill(chosen, per_source, MapSet.new(Enum.map(chosen, & &1.external_id)))
+    chosen =
+      backfill(
+        chosen,
+        per_source_rows,
+        MapSet.new(Enum.map(chosen, & &1.external_id)),
+        total_target,
+        per_source
+      )
 
     case chosen do
       [] -> {:error, :no_candidates}
-      list -> {:ok, Enum.take(list, @total_target)}
+      list -> {:ok, Enum.take(list, total_target)}
     end
   end
 
@@ -91,23 +101,24 @@ defmodule Byob.Pool do
 
   # --- private ---
 
-  defp backfill(chosen, _per_source, _seen) when length(chosen) >= @total_target, do: chosen
+  defp backfill(chosen, _per_source_rows, _seen, total_target, _per_source)
+       when length(chosen) >= total_target,
+       do: chosen
 
-  defp backfill(chosen, per_source, seen) do
-    need = @total_target - length(chosen)
+  defp backfill(chosen, per_source_rows, seen, total_target, per_source) do
+    need = total_target - length(chosen)
 
-    # Pull surplus rows (beyond the first @per_source) from every source, flatten,
-    # and take from them until quota is met.
+    # Pull surplus rows (beyond the first `per_source`) from every source.
     surplus =
-      per_source
+      per_source_rows
       |> Enum.flat_map(fn {source, rows} ->
-        rows |> Enum.drop(@per_source) |> Enum.map(&Map.put(&1, :source_bucket, source))
+        rows |> Enum.drop(per_source) |> Enum.map(&Map.put(&1, :source_bucket, source))
       end)
 
-    # If still nothing in surplus, also allow dipping into other sources' top-2
-    # that weren't already chosen (e.g. dedupe evicted one).
+    # If still nothing in surplus, also allow dipping into other sources' top
+    # rows that weren't already chosen (dedupe collisions can evict some).
     extras =
-      per_source
+      per_source_rows
       |> Enum.flat_map(fn {source, rows} ->
         Enum.map(rows, &Map.put(&1, :source_bucket, source))
       end)
