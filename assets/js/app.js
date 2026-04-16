@@ -308,6 +308,21 @@ window.addEventListener("phx:reopen-modal", (e) => {
   if (modal && !modal.open) modal.showModal()
 })
 
+// Scroll the round panel (roulette wheel or voting panel) into view when
+// the server indicates nothing is playing. Happens on `:round_started`.
+window.addEventListener("phx:round:scroll_into_view", () => {
+  const panel = document.getElementById("round-panel")
+  if (!panel) return
+  // Defer one tick so the panel's phx-update="ignore" mount completes first
+  requestAnimationFrame(() => {
+    try {
+      panel.scrollIntoView({ behavior: "smooth", block: "center" })
+    } catch (_) {
+      panel.scrollIntoView()
+    }
+  })
+})
+
 // Show progress bar on live navigation and form submits
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))

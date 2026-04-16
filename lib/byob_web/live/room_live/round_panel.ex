@@ -410,6 +410,20 @@ defmodule ByobWeb.RoomLive.RoundPanel do
           />
         </svg>
 
+        <%!-- 3-second loading overlay. Hook fades this out when it
+             transitions to the card preview phase. Gives viewers time
+             to see that a round has started, read the header, and
+             scroll into view if needed. --%>
+        <div
+          id="roulette-loading"
+          class="absolute inset-0 z-30 flex flex-col items-center justify-center gap-2 bg-base-200/70 backdrop-blur-sm rounded-full"
+          style="opacity: 1; transition: opacity 240ms ease-out;"
+        >
+          <span class="loading loading-spinner loading-lg text-primary"></span>
+          <span class="text-sm font-semibold text-base-content/80">Loading candidates…</span>
+          <span class="text-xs text-base-content/50">Get ready</span>
+        </div>
+
         <%!-- Pie-slice countdown: mirrors the autoplay overlay's visual
              language so users know the round is about to finalize. Hidden
              until the ball lands + settles. --%>

@@ -1,37 +1,46 @@
-// Roulette animation:
+// Roulette animation, four visual phases:
 //
-//   PREROLL  — Wheel is visible from the start with empty slices (just a
-//              fallback color). One candidate card at a time is shown
-//              centered over the wheel; after a brief pause it scales
-//              down and slides into its target slice. Simultaneously
-//              that slice's thumbnail + title fade in. Next card starts
-//              as the previous finishes, so it reads as a procession.
-//   SPIN     — Ball orbits the outer track.
-//   LANDING  — On `round:spin_land`, apply exponential angular friction
-//              ω(t) = ω₀·e^-kt + inward spiral so the ball decelerates
-//              into its target slice like real physics. `k` and `ω₀`
-//              are solved to hit the server-chosen slice exactly at the
-//              end of the land duration.
-//   SETTLE   — Small damped oscillation — the ball drops into the pocket.
+//   LOADING  — 3s "preparing candidates…" overlay. Gives everyone time to
+//              read the header and scroll down; nothing moves yet.
+//   PREVIEW  — cards fly one-by-one into their slices with a stagger; each
+//              card reveals its slice's thumbnail+title on arrival.
+//   LANDING  — on server `round:spin_land`, the ball appears at angle 0°
+//              (top of wheel) at high velocity and decays via
+//              ω(t) = ω₀·e^-kt. v₀ and k are both derived directly from
+//              the server-broadcast `seed`, and the identical formula
+//              runs in Elixir (Round.simulate_landing_slice/2) so
+//              client + server agree bit-for-bit on the winning slice.
+//   SETTLE   — small damped wobble (pocket bounce) + pie-slice countdown
+//              until the server finalizes and enqueues the winner.
+//
+// The winner slice is *determined by the physics* — server runs the same
+// sim to decide who to enqueue, rather than picking randomly and then
+// animating toward that pick.
 
-const CARD_DISPLAY_MS = 200;       // time card sits centered before flying
-const CARD_FLY_MS = 380;           // card travel + scale-down duration
-const CARD_STAGGER_MS = 220;       // time between cards
-const POST_PREROLL_PAUSE_MS = 250;
+const LOADING_MS = 3000;
+const CARD_DISPLAY_MS = 200;
+const CARD_FLY_MS = 380;
+const CARD_STAGGER_MS = 220;
+const POST_PREROLL_PAUSE_MS = 300;
 
-const MIN_LANDING_MS = 3000;
-const MAX_LANDING_MS = 3600;
-const SETTLE_MS = 400;
-const FINALIZE_PIE_MS = 2500;      // must fit inside server's reveal_delay_roulette_ms
-                                   // minus MAX_LANDING_MS + SETTLE_MS.
-
-const SPIN_V0_MIN = 540;
-const SPIN_V0_RANDOMIZE = 280;
+const SETTLE_MS = 500;
+const FINALIZE_PIE_MS = 2500;
 
 const CENTER = 100;
 const OUTER_R = 96;
 const INNER_R = 78;
-const POCKET_BOUNCE_DEG = 3;
+const POCKET_BOUNCE_DEG = 4;
+
+// Physics params derived from seed. Keep these in sync with
+// `Byob.RoomServer.Round.simulate_landing_slice/2` in the Elixir server.
+function derivePhysics(seed) {
+  const v0Frac = (seed % 65536) / 65536;
+  const v0 = 540 + v0Frac * 280;
+  const durFrac = (Math.floor(seed / 65536) % 65536) / 65536;
+  const duration = 3.0 + durFrac * 0.6;
+  const k = 4.0 / duration;
+  return { v0, duration, k };
+}
 
 const RouletteWheel = {
   mounted() { this._boot(); },
@@ -44,26 +53,27 @@ const RouletteWheel = {
 
     this._ball = this.el.querySelector("#roulette-ball");
     this._status = this.el.querySelector("#roulette-status");
+    this._loading = this.el.querySelector("#roulette-loading");
     this._cards = Array.from(this.el.querySelectorAll(".roulette-card"));
-    this._thumbs = this.el.querySelectorAll(".slice-thumb");
-    this._darks = this.el.querySelectorAll(".slice-dark");
-    this._texts = this.el.querySelectorAll(".slice-text");
     this._pie = this.el.querySelector("#roulette-pie");
     this._pieLabel = this.el.querySelector("#roulette-pie-label");
-    this._pendingLand = null;
-    this._prerollTimers = [];
+    this._pendingSeed = null;
+    this._timers = [];
     this._pieFrame = null;
+    this._raf = null;
 
-    this._phase = "preroll";
-    if (this._status) this._status.textContent = "candidates…";
+    this._phase = "loading";
+    if (this._status) this._status.textContent = "getting ready…";
 
-    this._startPreroll();
+    this._runLoading();
 
     this.handleEvent("round:spin_land", ({ seed }) => {
-      if (this._phase === "preroll") {
-        // If the server's land event arrives before preroll finishes
-        // (short client / fast server), stash and apply after preroll.
-        this._pendingLand = seed;
+      if (typeof seed !== "number") return;
+
+      // If we're still in loading or preview when server sends land, stash
+      // the seed and let the preroll finish.
+      if (this._phase === "loading" || this._phase === "preview") {
+        this._pendingSeed = seed;
       } else {
         this._beginLanding(seed);
       }
@@ -75,31 +85,42 @@ const RouletteWheel = {
   _teardown() {
     if (this._raf) cancelAnimationFrame(this._raf);
     if (this._pieFrame) cancelAnimationFrame(this._pieFrame);
-    this._prerollTimers.forEach((t) => clearTimeout(t));
-    this._prerollTimers = [];
+    this._timers.forEach((t) => clearTimeout(t));
+    this._timers = [];
     this._phase = "done";
   },
 
-  // --- PREROLL: cards fly into slices one at a time ---
+  // --- LOADING ---
 
-  _startPreroll() {
+  _runLoading() {
+    // Loading overlay is rendered with opacity:1 by default; we fade it
+    // after LOADING_MS, then start the preview phase.
+    const t = setTimeout(() => {
+      if (this._phase !== "loading") return;
+      if (this._loading) this._loading.style.opacity = "0";
+      this._startPreview();
+    }, LOADING_MS);
+    this._timers.push(t);
+  },
+
+
+  // --- PREVIEW: cards fly into slices ---
+
+  _startPreview() {
+    this._phase = "preview";
+    if (this._status) this._status.textContent = "candidates…";
+
     this._cards.forEach((card, i) => this._scheduleCard(card, i));
 
     const totalMs = this._cards.length * CARD_STAGGER_MS + CARD_DISPLAY_MS + CARD_FLY_MS;
-
-    const endTimer = setTimeout(() => {
-      if (this._status) this._status.textContent = "spinning…";
-      setTimeout(() => this._startSpinning(), POST_PREROLL_PAUSE_MS);
-    }, totalMs);
-
-    this._prerollTimers.push(endTimer);
+    const endTimer = setTimeout(() => this._afterPreview(), totalMs);
+    this._timers.push(endTimer);
   },
 
   _scheduleCard(card, i) {
     const showAt = i * CARD_STAGGER_MS;
 
     const showTimer = setTimeout(() => {
-      // Show card at center, full size
       card.style.transition =
         "opacity 180ms ease-out, transform 240ms cubic-bezier(.2,1.2,.4,1)";
       card.style.opacity = "1";
@@ -109,38 +130,21 @@ const RouletteWheel = {
     const flyAt = showAt + CARD_DISPLAY_MS;
     const flyTimer = setTimeout(() => this._flyCardToSlice(card), flyAt);
 
-    this._prerollTimers.push(showTimer, flyTimer);
+    this._timers.push(showTimer, flyTimer);
   },
 
   _flyCardToSlice(card) {
     const idx = parseInt(card.dataset.sliceIndex || "0", 10);
-
-    // The card sits at (left:50%, top:50%) offset by -50%/-50%. The target
-    // slice center, in SVG coord-space, is (100 + 50·cos θ, 100 + 50·sin θ).
-    // Data attrs encode that as a fraction of the SVG's 200-unit width/height
-    // relative to the center: `target_x` = (cx - 100)/200 * 100, etc.
-    //
-    // We want to translate the card from (-50%, -50%) of its own size (the
-    // centering transform) toward the slice's relative offset measured in
-    // percent of the container width. Container is a square equal in size
-    // to the SVG's rendered width, so that relative offset works directly.
-
     const tx = parseFloat(card.dataset.targetX || "0");
     const ty = parseFloat(card.dataset.targetY || "0");
 
     card.style.transition =
       `opacity 220ms ease-in ${CARD_FLY_MS - 200}ms, transform ${CARD_FLY_MS}ms cubic-bezier(.45,.02,.55,.95)`;
 
-    // Final transform: slide to the slice's position (expressed in container %)
-    // and scale way down so it visually merges into the slice. Opacity fades
-    // toward the end.
     card.style.transform = `translate(calc(-50% + ${tx}%), calc(-50% + ${ty}%)) scale(0.18)`;
     card.style.opacity = "0";
 
-    // Reveal the slice content at the same time the card reaches it.
-    setTimeout(() => {
-      this._revealSlice(idx);
-    }, CARD_FLY_MS - 160);
+    setTimeout(() => this._revealSlice(idx), CARD_FLY_MS - 160);
   },
 
   _revealSlice(idx) {
@@ -152,81 +156,63 @@ const RouletteWheel = {
     if (text) text.style.opacity = "1";
   },
 
-  // --- SPIN + PHYSICS LANDING ---
+  _afterPreview() {
+    if (this._status) this._status.textContent = "any second now…";
 
-  _startSpinning() {
-    if (this._phase === "done") return;
-    this._phase = "spinning";
+    // If the server's `round:spin_land` has already arrived, kick off
+    // landing after a brief pause so users see the fully-populated wheel.
+    const t = setTimeout(() => {
+      if (this._pendingSeed != null) {
+        const seed = this._pendingSeed;
+        this._pendingSeed = null;
+        this._beginLanding(seed);
+      } else {
+        this._phase = "waiting";
+      }
+    }, POST_PREROLL_PAUSE_MS);
+    this._timers.push(t);
+  },
 
-    this._angle = -90;
-    this._radius = OUTER_R;
-    this._velocity = SPIN_V0_MIN + Math.random() * SPIN_V0_RANDOMIZE;
-    this._lastTs = 0;
+  // --- LANDING: physics-driven, seed-deterministic ---
 
+  _beginLanding(seed) {
+    const { v0, duration, k } = derivePhysics(seed);
+
+    // Start ball at 0° (12 o'clock). In SVG coords where 0° = +X and
+    // clockwise is +Y, 12 o'clock = -90°. Keep everything in degrees.
+    this._land = {
+      startTs: performance.now(),
+      durationMs: duration * 1000,
+      k,                   // 1/s
+      v0,                  // deg/s
+      theta0: -90,
+      seed,
+    };
+    this._winningSlice = this._simulateSlice(seed);
+
+    this._phase = "landing";
+    if (this._status) this._status.textContent = "rolling…";
     if (this._ball) this._ball.style.opacity = "1";
+    this._applyBall(-90, OUTER_R);
 
-    this._loop = (ts) => {
-      if (!this._lastTs) this._lastTs = ts;
-      const dt = (ts - this._lastTs) / 1000;
-      this._lastTs = ts;
-
-      if (this._phase === "spinning") {
-        this._angle = this._angle + this._velocity * dt;
-        this._applyBall(this._angle, this._radius);
-        this._raf = requestAnimationFrame(this._loop);
-      } else if (this._phase === "landing") {
+    const loop = (ts) => {
+      if (this._phase === "landing") {
         this._tickLanding(ts);
       } else if (this._phase === "settling") {
         this._tickSettling(ts);
       }
     };
-
-    this._raf = requestAnimationFrame(this._loop);
-
-    if (this._pendingLand != null) {
-      const seed = this._pendingLand;
-      this._pendingLand = null;
-      // Give the spin a beat before deceleration starts.
-      setTimeout(() => this._beginLanding(seed), 300);
-    }
+    this._loop = loop;
+    this._raf = requestAnimationFrame(loop);
   },
 
-  _beginLanding(seed) {
-    if (typeof seed !== "number") return;
-    if (this._phase !== "spinning") {
-      this._pendingLand = seed;
-      return;
-    }
-
-    const winningSlice = seed % this._slices;
-    const targetCenterAngle = -90 + (winningSlice + 0.5) * this._sliceDeg;
-
-    const current = this._angle;
-    const relative = wrap360(targetCenterAngle - current);
-    const totalDelta = 2 * 360 + relative;
-
-    const durationMs =
-      MIN_LANDING_MS + Math.random() * (MAX_LANDING_MS - MIN_LANDING_MS);
-    const durationS = durationMs / 1000;
-
-    // Decay constant chosen so ω decays to ~2% at t=T.
-    const kT = 4;
-    const k = kT / durationS;
-    const decayFactor = 1 - Math.exp(-kT);
-    const requiredV0 = (totalDelta * k) / decayFactor;
-
-    this._land = {
-      startTs: performance.now(),
-      durationMs,
-      k,
-      v0: requiredV0,
-      theta0: current,
-      targetAngle: current + totalDelta,
-    };
-    this._winningSlice = winningSlice;
-
-    this._phase = "landing";
-    if (this._status) this._status.textContent = "settling…";
+  _simulateSlice(seed) {
+    const { v0, duration, k } = derivePhysics(seed);
+    const totalRotation = (v0 / k) * (1 - Math.exp(-4.0));
+    let wrapped = totalRotation % 360;
+    if (wrapped < 0) wrapped += 360;
+    const slice = Math.floor(wrapped / this._sliceDeg);
+    return slice % this._slices;
   },
 
   _tickLanding(ts) {
@@ -235,8 +221,12 @@ const RouletteWheel = {
     const T = L.durationMs / 1000;
 
     if (t < T) {
+      // Physics: θ(t) = θ₀ + (v₀/k)(1 - e^-kt)
       const exp = Math.exp(-L.k * t);
       const theta = L.theta0 + (L.v0 / L.k) * (1 - exp);
+
+      // Inward spiral: ball leaves outer track as it slows, ending on
+      // the inner pocket radius.
       const progress = 1 - exp;
       const radius = OUTER_R - (OUTER_R - INNER_R) * progress;
 
@@ -245,10 +235,10 @@ const RouletteWheel = {
       this._applyBall(theta, radius);
       this._raf = requestAnimationFrame(this._loop);
     } else {
-      this._settle = {
-        startTs: performance.now(),
-        baseAngle: L.targetAngle,
-      };
+      // Landing finished — ball has effectively stopped. Begin settle.
+      // The final resting angle (as t→∞) is theta0 + v0/k.
+      const finalAngle = L.theta0 + L.v0 / L.k;
+      this._settle = { startTs: performance.now(), baseAngle: finalAngle };
       this._phase = "settling";
       this._raf = requestAnimationFrame(this._loop);
     }
@@ -276,15 +266,11 @@ const RouletteWheel = {
 
   _pulseWinnerSlice() {
     if (this._winningSlice == null) return;
-
-    // Reveal the winner outline (was kept invisible during landing so the
-    // yellow ring didn't precede the ball).
     const outline = this.el.querySelector(
       `.slice-winner-outline[data-slice-index="${this._winningSlice}"]`
     );
     if (outline) outline.style.opacity = "1";
 
-    // Add the class that triggers the glow keyframe.
     const sliceGroup = this.el.querySelector(
       `.wheel-slice[data-slice-index="${this._winningSlice}"]`
     );
@@ -319,9 +305,5 @@ const RouletteWheel = {
     this._ball.setAttribute("cy", y.toFixed(2));
   },
 };
-
-function wrap360(d) {
-  return ((d % 360) + 360) % 360;
-}
 
 export default RouletteWheel;

@@ -25,7 +25,11 @@ defmodule Byob.RoomServer.Round do
   ]
 
   @vote_duration_ms 15_000
-  @roulette_duration_ms 7_000
+  # Roulette active phase covers: 3s loading overlay + ~3s card-to-slice
+  # fly-in + small pause. After that the server broadcasts `:round_revealed`
+  # (with the physics-determined winner) and the client animates the ball
+  # for ~3.5s landing + 0.5s settle + 2.5s pie countdown = ~6.5s post-reveal.
+  @roulette_duration_ms 6_500
   @reveal_delay_voting_ms 1_500
   @reveal_delay_roulette_ms 6_500
   # Must be >= MAX_LANDING_MS + SETTLE_MS + FINALIZE_PIE_MS in the JS hook,
@@ -109,8 +113,47 @@ defmodule Byob.RoomServer.Round do
 
   def resolve(%__MODULE__{mode: :roulette} = r) do
     seed = :rand.uniform(1 <<< 32) - 1
-    winner = Enum.at(r.candidates, rem(seed, length(r.candidates))).external_id
+    slice = simulate_landing_slice(seed, length(r.candidates))
+    winner = Enum.at(r.candidates, slice).external_id
     {%{r | phase: :revealing, seed: seed, winner_external_id: winner}, :winner_chosen}
+  end
+
+  @doc """
+  Deterministic roulette landing physics: given a 32-bit `seed` and the
+  total `slice_count`, computes which slice the ball lands in.
+
+  The ball starts at angle 0° (12 o'clock, counting clockwise), with an
+  initial angular velocity `v0` and exponential decay constant `k`.
+  Both are seeded from `seed` so every client running the same algorithm
+  with the same seed reproduces the same landing slice:
+
+      v0 = 540 + (seed mod 2^16) / 2^16 * 280  (deg/s)
+      duration = 3.0 + (seed >> 16 mod 2^16) / 2^16 * 0.6  (s)
+      k = 4.0 / duration
+
+  Under exponential decay θ(t) = θ₀ + (v0/k)(1 - e^-kt), the ball's final
+  resting angle (as t → ∞ with our t→T ≈ 98% decayed) is θ₀ + v0/k ≈
+  `v0 * duration / 4 * (1 - e^-4)`. The JS client runs the identical
+  formula against the same seed, so both sides converge on the same
+  landing slice bit-for-bit.
+  """
+  def simulate_landing_slice(seed, slice_count)
+      when is_integer(seed) and is_integer(slice_count) and slice_count > 0 do
+    v0_frac = rem(seed, 65_536) / 65_536.0
+    v0 = 540.0 + v0_frac * 280.0
+
+    dur_frac = rem(div(seed, 65_536), 65_536) / 65_536.0
+    duration = 3.0 + dur_frac * 0.6
+
+    k = 4.0 / duration
+    total_rotation = v0 / k * (1 - :math.exp(-4.0))
+
+    slice_deg = 360.0 / slice_count
+    wrapped = :math.fmod(total_rotation, 360.0)
+    wrapped = if wrapped < 0, do: wrapped + 360.0, else: wrapped
+
+    slice = trunc(wrapped / slice_deg)
+    rem(slice, slice_count)
   end
 
   @doc "Candidate map by external_id (for quick lookup)."

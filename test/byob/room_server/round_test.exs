@@ -1,6 +1,8 @@
 defmodule Byob.RoomServer.RoundTest do
   use ExUnit.Case, async: true
 
+  import Bitwise, only: [<<<: 2]
+
   alias Byob.RoomServer.Round
 
   defp candidates(n) do
@@ -35,7 +37,7 @@ defmodule Byob.RoomServer.RoundTest do
       assert r.seed == nil
       # Uses the module's configured roulette duration.
       assert r.expires_at - r.started_at == Round.roulette_duration_ms()
-      assert Round.roulette_duration_ms() == 7_000
+      assert Round.roulette_duration_ms() == 6_500
     end
   end
 
@@ -111,8 +113,33 @@ defmodule Byob.RoomServer.RoundTest do
 
       assert outcome == :winner_chosen
       assert is_integer(resolved.seed)
-      expected = Enum.at(r.candidates, rem(resolved.seed, 6)).external_id
+      # Winner is the physics simulation's landing slice for that seed
+      expected_slice = Round.simulate_landing_slice(resolved.seed, 6)
+      expected = Enum.at(r.candidates, expected_slice).external_id
       assert resolved.winner_external_id == expected
+    end
+  end
+
+  describe "simulate_landing_slice/2" do
+    test "is deterministic for a given seed" do
+      seed = 1_234_567
+      assert Round.simulate_landing_slice(seed, 12) ==
+               Round.simulate_landing_slice(seed, 12)
+    end
+
+    test "returns an index in [0, slice_count)" do
+      for _ <- 1..20 do
+        seed = :rand.uniform(1 <<< 32) - 1
+        s = Round.simulate_landing_slice(seed, 12)
+        assert s >= 0 and s < 12
+      end
+    end
+
+    test "different seeds produce different slices (mostly)" do
+      seeds = for _ <- 1..50, do: :rand.uniform(1 <<< 32) - 1
+      slices = Enum.map(seeds, &Round.simulate_landing_slice(&1, 12))
+      # 50 seeds over 12 slices — expect more than 1 unique slice
+      assert length(Enum.uniq(slices)) > 1
     end
   end
 end

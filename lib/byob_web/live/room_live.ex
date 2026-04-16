@@ -312,6 +312,19 @@ defmodule ByobWeb.RoomLive do
         socket
       end
 
+    # Scroll the round panel into view when there's nothing currently
+    # playing to keep users' attention on (no queue, ended, or fresh room).
+    # Otherwise users who are actively watching don't get yanked around.
+    nothing_playing? =
+      socket.assigns.current_index == nil or socket.assigns.play_state == :ended
+
+    socket =
+      if nothing_playing? do
+        push_event(socket, "round:scroll_into_view", %{})
+      else
+        socket
+      end
+
     {:noreply, socket}
   end
 
