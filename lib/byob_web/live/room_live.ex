@@ -414,6 +414,7 @@ defmodule ByobWeb.RoomLive do
       api_key={@api_key}
       show_comments={@show_comments}
     />
+    <Components.autoplay_help_modal />
 
     <div class={"flex flex-col lg:flex-row gap-3 #{unless @comments_expanded, do: "lg:h-[calc(100vh-3.5rem)]"}"}>
       <%!-- Main content --%>

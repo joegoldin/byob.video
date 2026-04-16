@@ -809,6 +809,7 @@ const VideoPlayer = {
         <svg width="28" height="28" viewBox="0 0 24 24" fill="#000"><polygon points="6,3 20,12 6,21"/></svg>
       </div>
       <span style="color:white;font-size:14px;font-weight:600;text-shadow:0 1px 3px rgba(0,0,0,0.5);">Click to join playback</span>
+      <span style="color:white;opacity:0.8;font-size:11px;text-shadow:0 1px 3px rgba(0,0,0,0.5);">(Tip: enable autoplay to skip this)</span>
     `;
     overlay.appendChild(btn);
 
@@ -821,6 +822,43 @@ const VideoPlayer = {
     }, { once: true });
 
     this.el.appendChild(overlay);
+
+    // Show the help dialog the first time we hit a blocked-autoplay
+    // situation in this browser. User can tick "don't show again" to
+    // silence future prompts.
+    this._maybeShowAutoplayHelp();
+  },
+
+  _maybeShowAutoplayHelp() {
+    try {
+      if (localStorage.getItem("byob_autoplay_help_dismissed") === "1") return;
+    } catch (_) {
+      // localStorage disabled — show once per page load via a session flag
+      if (window.__byob_autoplay_help_shown) return;
+      window.__byob_autoplay_help_shown = true;
+    }
+
+    const dialog = document.getElementById("byob-autoplay-help");
+    if (!dialog || dialog.open) return;
+    try {
+      dialog.showModal();
+    } catch (_) {
+      // <dialog> not supported — bail silently
+      return;
+    }
+
+    // Capture dismissal: if the "don't show again" box is checked (default
+    // true), persist that choice so we don't nag on subsequent blocks.
+    const onClose = () => {
+      const check = document.getElementById("byob-autoplay-help-dont-show");
+      if (check && check.checked) {
+        try {
+          localStorage.setItem("byob_autoplay_help_dismissed", "1");
+        } catch (_) {}
+      }
+      dialog.removeEventListener("close", onClose);
+    };
+    dialog.addEventListener("close", onClose);
   },
 
   // Player abstraction — delegate to unified player interface

@@ -371,6 +371,66 @@ defmodule ByobWeb.RoomLive.Components do
     """
   end
 
+  # ── Autoplay Help Modal ──────────────────────────────────────────
+
+  @doc """
+  A one-time help dialog explaining how to enable autoplay for byob.video.
+  Surfaces when the browser has blocked autoplay and the user's had to
+  click "Click to join playback" — tells them how to make subsequent
+  videos autoplay without clicking.
+  """
+  def autoplay_help_modal(assigns) do
+    ~H"""
+    <dialog id="byob-autoplay-help" class="modal">
+      <div class="modal-box max-w-md">
+        <h3 class="font-bold text-base mb-1">Enable autoplay for byob.video</h3>
+        <p class="text-xs text-base-content/60 mb-4">
+          Your browser blocked the video from starting on its own. Allowing autoplay for this site lets you stay in sync with the room without clicking every video.
+        </p>
+
+        <div class="space-y-3 text-sm">
+          <div>
+            <h4 class="font-semibold text-xs uppercase tracking-wide text-base-content/50 mb-1">Chrome / Edge</h4>
+            <p class="text-xs text-base-content/70">
+              Click the padlock or tune icon in the address bar → <strong>Site settings</strong> → set <strong>Sound</strong> to <em>Allow</em>.
+            </p>
+          </div>
+          <div>
+            <h4 class="font-semibold text-xs uppercase tracking-wide text-base-content/50 mb-1">Firefox</h4>
+            <p class="text-xs text-base-content/70">
+              Click the padlock in the address bar → <strong>Autoplay</strong> → <em>Allow Audio and Video</em>.
+            </p>
+          </div>
+          <div>
+            <h4 class="font-semibold text-xs uppercase tracking-wide text-base-content/50 mb-1">Safari</h4>
+            <p class="text-xs text-base-content/70">
+              Safari menu → <strong>Settings for This Website…</strong> → <em>Auto-Play: Allow All Auto-Play</em>.
+            </p>
+          </div>
+        </div>
+
+        <div class="modal-action mt-5 flex items-center justify-between">
+          <label class="flex items-center gap-2 text-xs text-base-content/60 cursor-pointer">
+            <input
+              type="checkbox"
+              id="byob-autoplay-help-dont-show"
+              class="checkbox checkbox-xs"
+              checked
+            />
+            Don't show this again
+          </label>
+          <form method="dialog">
+            <button class="btn btn-primary btn-sm">Got it</button>
+          </form>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop">
+        <button>close</button>
+      </form>
+    </dialog>
+    """
+  end
+
   # ── URL Preview Dropdown ──────────────────────────────────────────
 
   attr :url_preview_loading, :boolean, required: true
