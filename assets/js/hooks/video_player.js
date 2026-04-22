@@ -537,7 +537,9 @@ const VideoPlayer = {
 
     // If server disagrees with what we expected, adopt server's view. The
     // existing stateCheckInterval will then drive the YouTube player to match.
-    if (expected && this.expectedPlayState !== expected) {
+    // But don't override after video ended — server says "paused" but the
+    // player is in "ended" state; forcing "paused" can restart the video.
+    if (expected && this.expectedPlayState !== expected && !this._endedFired) {
       this.expectedPlayState = expected;
     }
 
