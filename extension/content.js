@@ -477,6 +477,8 @@
     hideBufferingOverlay();
     if (synced && hookedVideo) {
       updateSyncBarStatus(hookedVideo.paused ? SyncStatus.PAUSED : SyncStatus.PLAYING);
+      // Notify server + top frame that buffering ended
+      if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: !hookedVideo.paused });
     }
   }
 
@@ -562,6 +564,10 @@
         isBuffering = false;
         hideBufferingOverlay();
         updateSyncBarStatus(actual === State.PLAYING ? SyncStatus.PLAYING : SyncStatus.PAUSED);
+        // Notify server + top frame that buffering ended
+        if (synced && port) {
+          port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: actual === State.PLAYING });
+        }
       }
     } else {
       // Still mismatched — video is buffering. Show overlay and keep checking.
@@ -632,6 +638,20 @@
         progressWrap.dataset.duration = msg.duration;
         if (msg.duration > 0) {
           progressFill.style.width = ((msg.position / msg.duration) * 100) + "%";
+        }
+      }
+      return;
+    }
+
+    if (msg.type === "byob:local-buffering" && window === window.top) {
+      // Local client (in iframe) is buffering — show/hide overlay in top frame
+      if (msg.buffering) {
+        showBufferingOverlay();
+        updateSyncBarStatus(SyncStatus.BUFFERING);
+      } else {
+        hideBufferingOverlay();
+        if (hookedVideo) {
+          updateSyncBarStatus(hookedVideo.paused ? SyncStatus.PAUSED : SyncStatus.PLAYING);
         }
       }
       return;
@@ -793,12 +813,15 @@
       background: rgba(0,0,0,0.4); display: flex; align-items: center;
       justify-content: center; pointer-events: none;
     `;
-    overlay.innerHTML = `
-      <div style="text-align:center;color:white;font-family:system-ui,sans-serif;">
-        <div style="width:48px;height:48px;border:3px solid rgba(255,255,255,0.3);border-top-color:${Color.PURPLE};border-radius:50%;animation:byob-spin 0.8s linear infinite;margin:0 auto 12px;"></div>
-        <div style="font-size:14px;font-weight:500;">Buffering...</div>
-      </div>
-    `;
+    const inner = document.createElement(Tag.DIV);
+    inner.style.cssText = "text-align:center;color:white;font-family:system-ui,sans-serif;";
+    const spinner = document.createElement(Tag.DIV);
+    spinner.style.cssText = `width:48px;height:48px;border:3px solid rgba(255,255,255,0.3);border-top-color:${Color.PURPLE};border-radius:50%;animation:byob-spin 0.8s linear infinite;margin:0 auto 12px;`;
+    const label = document.createElement(Tag.DIV);
+    label.style.cssText = "font-size:14px;font-weight:500;";
+    label.textContent = "Buffering...";
+    inner.append(spinner, label);
+    overlay.appendChild(inner);
     // Add spin animation
     let styleEl = document.getElementById("byob-buffering-style");
     if (!styleEl) {
@@ -925,7 +948,22 @@
     const usersEl = document.createElement(Tag.SPAN);
     usersEl.id = El.USERS;
     usersEl.style.cssText = "display:none;font-size:12px;flex-shrink:0;gap:4px;align-items:center;font-variant-numeric:tabular-nums;cursor:default";
-    usersEl.innerHTML = `<svg id="byob-users-icon" width="14" height="14" viewBox="0 0 24 24" fill="rgba(255,255,255,0.5)" style="flex-shrink:0"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg><span id="byob-users-count" style="opacity:0.5">0/0</span>`;
+    const svgNS = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNS, "svg");
+    svg.id = "byob-users-icon";
+    svg.setAttribute("width", "14");
+    svg.setAttribute("height", "14");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "rgba(255,255,255,0.5)");
+    svg.style.flexShrink = "0";
+    const path = document.createElementNS(svgNS, "path");
+    path.setAttribute("d", "M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z");
+    svg.appendChild(path);
+    const countSpan = document.createElement(Tag.SPAN);
+    countSpan.id = "byob-users-count";
+    countSpan.style.opacity = "0.5";
+    countSpan.textContent = "0/0";
+    usersEl.append(svg, countSpan);
 
     const collapse = document.createElement(Tag.BUTTON);
     collapse.id = El.COLLAPSE;

@@ -2,6 +2,33 @@
 
 ---
 
+# v4.0.1
+
+- **Buffering overlay fix:** Overlay never appeared on third-party sites because the video runs in an iframe but the overlay only renders in the top frame. Added `byob:local-buffering` relay from iframe → service worker → top frame for instant overlay display.
+- **Buffering field forwarded:** `background.js` was stripping the `buffering` field when relaying `video:state` to the server channel. Other clients never received buffering notifications.
+- **Buffering clear messages:** `onVideoCanPlay` and `resolveCommandGuard` now immediately send `buffering: false` via port so the overlay clears promptly (was waiting up to 500ms for the next state report).
+
+---
+
+# v4.0.0
+
+**Architecture overhaul: replace suppression/cooldowns with SW-level echo prevention + adaptive command guard.**
+
+### Echo prevention
+- **Service worker port filtering:** `broadcastExceptOrigin()` tracks which port originated each play/pause/seek and skips echoing the server response back to that port. Replaces all client-side suppression/cooldown logic.
+- **Adaptive command guard:** After every play/pause/seek command, a 500ms guard blocks outgoing events. After 500ms, checks if video state matches expected state — if mismatched, enters buffering mode and keeps checking every 200ms until resolved.
+
+### Buffering detection
+- **State mismatch approach:** Buffering = "expected playing but video is actually paused." Detected by the adaptive command guard after commands, and by native `waiting`/`canplay` events for mid-stream buffering.
+- **Cross-client overlay:** When one client buffers, a purple spinner overlay appears on all clients. Relayed via `sync:buffering` channel event.
+- **Local buffering relay:** Iframe → service worker → top frame relay ensures overlay displays correctly on sites where video is in an iframe.
+
+### State reconciliation
+- **200ms reconciliation loop:** Continuously compares actual video state against expected play state. After 1s mismatch, attempts correction. If `play()` fails (autoplay policy), drops to gesture-required state.
+- **Constants refactor:** All magic strings in content.js replaced with frozen constant objects (State, SyncStatus, Msg, El, Hosts, Color, Copy, Evt, Tag).
+
+---
+
 # v3.6.3
 
 - **Extension sync fix:** Seek suppression used `suppress(null)` which swallowed ALL subsequent events (play/pause) after a seek. Now uses distinct `"seeked"` state so only seeked events are suppressed.

@@ -161,7 +161,12 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:state":
-      if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing });
+      if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing, buffering: msg.buffering || false });
+      // Relay local buffering state to top frame so it can show/hide overlay
+      // without waiting for server round-trip
+      if (msg.buffering != null) {
+        broadcastToContentScripts({ type: "byob:local-buffering", buffering: !!msg.buffering });
+      }
       break;
 
     case "video:ready":
