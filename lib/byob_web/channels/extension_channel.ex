@@ -208,13 +208,14 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:queue_updated, data}, socket) do
-    push(socket, "queue:updated", data)
+  def handle_info({:queue_updated, %{queue: queue} = data}, socket) do
+    serialized = %{data | queue: Enum.map(queue, &serialize_item/1)}
+    push(socket, "queue:updated", serialized)
     {:noreply, socket}
   end
 
-  def handle_info({:video_changed, data}, socket) do
-    push(socket, "video:change", data)
+  def handle_info({:video_changed, %{media_item: item} = data}, socket) do
+    push(socket, "video:change", %{data | media_item: serialize_item(item)})
     {:noreply, socket}
   end
 
