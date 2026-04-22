@@ -114,7 +114,7 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:ready":
-      if (channel) channel.push("video:ready", {});
+      if (channel) channel.push("video:ready", { tab_id: tabId != null ? String(tabId) : null });
       break;
 
     case "byob:bar-update":
@@ -202,10 +202,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
     .join()
     .receive("ok", (resp) => {
       console.log("[byob] Joined room", roomId, resp);
-      // Send initial sync state so late joiners sync immediately
-      // Store initial state — content scripts will request it after hooking video
       initialRoomState = resp;
-      // Cache ready count from join response
       if (resp.ready_count) {
         lastReadyCount = { type: "byob:ready-count", ready: resp.ready_count.ready, total: resp.ready_count.total };
       }

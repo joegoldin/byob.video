@@ -100,8 +100,9 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
-  def handle_in("video:ready", _payload, socket) do
-    RoomServer.mark_ready(socket.assigns.room_pid, socket.assigns.user_id)
+  def handle_in("video:ready", payload, socket) do
+    tab_id = payload["tab_id"]
+    RoomServer.mark_tab_ready(socket.assigns.room_pid, tab_id)
     {:noreply, socket}
   end
 
@@ -196,21 +197,15 @@ defmodule ByobWeb.ExtensionChannel do
 
     ready_count =
       if has_ext do
-        non_ext =
+        total =
           connected
           |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
-          |> Enum.group_by(fn {_, u} -> u.username end)
+          |> Enum.map(fn {_, u} -> u.username end)
+          |> Enum.uniq()
+          |> length()
 
-        total = map_size(non_ext)
-
-        ready =
-          Enum.count(non_ext, fn {username, _} ->
-            Enum.any?(connected, fn {_, u} ->
-              u.username == username &&
-                Map.get(u, :is_extension, false) &&
-                Map.get(u, :ready, false)
-            end)
-          end)
+        ready_tabs = Map.get(state, :ready_tabs, MapSet.new())
+        ready = min(MapSet.size(ready_tabs), total)
 
         %{ready: ready, total: total}
       else

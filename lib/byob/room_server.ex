@@ -65,8 +65,8 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:leave, user_id})
   end
 
-  def mark_ready(pid, user_id) do
-    GenServer.call(pid, {:mark_ready, user_id})
+  def mark_tab_ready(pid, tab_id) do
+    GenServer.call(pid, {:mark_tab_ready, tab_id})
   end
 
   def get_state(pid) do
@@ -243,8 +243,7 @@ defmodule Byob.RoomServer do
         username: username,
         joined_at: System.monotonic_time(:millisecond),
         connected: true,
-        is_extension: is_extension,
-        ready: !is_extension
+        is_extension: is_extension
       })
       |> maybe_set_host(user_id)
 
@@ -262,14 +261,14 @@ defmodule Byob.RoomServer do
     {:reply, {:ok, snapshot(state)}, state}
   end
 
-  def handle_call({:mark_ready, user_id}, _from, state) do
-    state =
-      case Map.get(state.users, user_id) do
-        nil -> state
-        user -> put_in(state.users[user_id], %{user | ready: true})
-      end
-
+  def handle_call({:mark_tab_ready, tab_id}, _from, state) when is_binary(tab_id) do
+    ready_tabs = Map.get(state, :ready_tabs, MapSet.new())
+    state = Map.put(state, :ready_tabs, MapSet.put(ready_tabs, tab_id))
     broadcast_ready_count(state)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:mark_tab_ready, _}, _from, state) do
     {:reply, :ok, state}
   end
 
@@ -1013,24 +1012,17 @@ defmodule Byob.RoomServer do
 
     # Only broadcast when extension users exist — otherwise the count is meaningless
     if has_extension_users do
-      by_username =
+      # Total = unique non-extension connected users (actual people)
+      total =
         connected
         |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
-        |> Enum.group_by(fn {_, u} -> u.username end)
+        |> Enum.map(fn {_, u} -> u.username end)
+        |> Enum.uniq()
+        |> length()
 
-      total = map_size(by_username)
-
-      # A user is "ready" if they have an extension connection that's marked ready
-      ready =
-        by_username
-        |> Enum.count(fn {username, _} ->
-          connected
-          |> Enum.any?(fn {_, u} ->
-            u.username == username &&
-              Map.get(u, :is_extension, false) &&
-              Map.get(u, :ready, false)
-          end)
-        end)
+      # Ready = number of unique tabs that reported ready (capped at total)
+      ready_tabs = Map.get(state, :ready_tabs, MapSet.new())
+      ready = min(MapSet.size(ready_tabs), total)
 
       broadcast(state, {:ready_count, %{ready: ready, total: total}})
     end
