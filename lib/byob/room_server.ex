@@ -65,6 +65,14 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:leave, user_id})
   end
 
+  def mark_tab_opened(pid, tab_id, ext_user_id) do
+    GenServer.call(pid, {:mark_tab_opened, tab_id, ext_user_id})
+  end
+
+  def clear_tab_opened(pid, tab_id) do
+    GenServer.call(pid, {:clear_tab_opened, tab_id})
+  end
+
   def mark_tab_ready(pid, tab_id, ext_user_id) do
     GenServer.call(pid, {:mark_tab_ready, tab_id, ext_user_id})
   end
@@ -269,7 +277,25 @@ defmodule Byob.RoomServer do
     {:reply, {:ok, snapshot(state)}, state}
   end
 
-  # ready_tabs is a map of %{tab_id => ext_user_id} so we can clear per-user on leave
+  # open_tabs / ready_tabs are maps of %{tab_id => ext_user_id}
+  def handle_call({:mark_tab_opened, tab_id, ext_user_id}, _from, state) when is_binary(tab_id) do
+    open_tabs = Map.get(state, :open_tabs, %{})
+    state = Map.put(state, :open_tabs, Map.put(open_tabs, tab_id, ext_user_id))
+    broadcast_ready_count(state)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:mark_tab_opened, _, _}, _from, state), do: {:reply, :ok, state}
+
+  def handle_call({:clear_tab_opened, tab_id}, _from, state) when is_binary(tab_id) do
+    open_tabs = Map.get(state, :open_tabs, %{})
+    state = Map.put(state, :open_tabs, Map.delete(open_tabs, tab_id))
+    broadcast_ready_count(state)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:clear_tab_opened, _}, _from, state), do: {:reply, :ok, state}
+
   def handle_call({:mark_tab_ready, tab_id, ext_user_id}, _from, state) when is_binary(tab_id) do
     ready_tabs = Map.get(state, :ready_tabs, %{})
     state = Map.put(state, :ready_tabs, Map.put(ready_tabs, tab_id, ext_user_id))
@@ -335,8 +361,10 @@ defmodule Byob.RoomServer do
     state =
       if is_ext do
         ready_tabs = Map.get(state, :ready_tabs, %{})
-        cleaned = ready_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
-        Map.put(state, :ready_tabs, cleaned)
+        open_tabs = Map.get(state, :open_tabs, %{})
+        cleaned_ready = ready_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
+        cleaned_open = open_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
+        state |> Map.put(:ready_tabs, cleaned_ready) |> Map.put(:open_tabs, cleaned_open)
       else
         state
       end
@@ -1077,23 +1105,16 @@ defmodule Byob.RoomServer do
     has_extension_users =
       Enum.any?(connected, fn {_, u} -> Map.get(u, :is_extension, false) end)
 
-    # Only broadcast when extension users exist — otherwise the count is meaningless
-    if has_extension_users do
+    open_tabs = Map.get(state, :open_tabs, %{})
+    ready_tabs = Map.get(state, :ready_tabs, %{})
+
+    # Only broadcast when tabs exist — otherwise the count is meaningless
+    if has_extension_users or map_size(open_tabs) > 0 do
       non_ext = connected |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
       non_ext_usernames = non_ext |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq()
       total = length(non_ext_usernames)
 
-      # Users who have opened the external player tab
-      ext_usernames =
-        connected
-        |> Enum.filter(fn {_, u} -> Map.get(u, :is_extension, false) end)
-        |> Enum.map(fn {_, u} -> u.username end)
-        |> Enum.uniq()
-
-      has_tab = length(ext_usernames)
-
-      # Users who have synced (clicked play on video)
-      ready_tabs = Map.get(state, :ready_tabs, %{})
+      has_tab = min(map_size(open_tabs), total)
       ready = min(map_size(ready_tabs), total)
 
       broadcast(state, {:ready_count, %{ready: ready, has_tab: has_tab, total: total}})

@@ -125,6 +125,18 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
+  def handle_in("video:tab_opened", payload, socket) do
+    tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
+    RoomServer.mark_tab_opened(socket.assigns.room_pid, tab_id, socket.assigns.user_id)
+    {:noreply, socket}
+  end
+
+  def handle_in("video:tab_closed", payload, socket) do
+    tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
+    RoomServer.clear_tab_opened(socket.assigns.room_pid, tab_id)
+    {:noreply, socket}
+  end
+
   def handle_in("video:ready", payload, socket) do
     # Prefix tab_id with ext user_id to make unique across browser instances
     tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
@@ -227,21 +239,15 @@ defmodule ByobWeb.ExtensionChannel do
     connected = state.users |> Enum.filter(fn {_, u} -> u.connected end)
     has_ext = Enum.any?(connected, fn {_, u} -> Map.get(u, :is_extension, false) end)
 
+    open_tabs = Map.get(state, :open_tabs, %{})
+    ready_tabs = Map.get(state, :ready_tabs, %{})
+
     ready_count =
-      if has_ext do
+      if has_ext or map_size(open_tabs) > 0 do
         non_ext = connected |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
         non_ext_usernames = non_ext |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq()
         total = length(non_ext_usernames)
-
-        ext_usernames =
-          connected
-          |> Enum.filter(fn {_, u} -> Map.get(u, :is_extension, false) end)
-          |> Enum.map(fn {_, u} -> u.username end)
-          |> Enum.uniq()
-
-        has_tab = length(ext_usernames)
-
-        ready_tabs = Map.get(state, :ready_tabs, %{})
+        has_tab = min(map_size(open_tabs), total)
         ready = min(map_size(ready_tabs), total)
 
         %{ready: ready, has_tab: has_tab, total: total}

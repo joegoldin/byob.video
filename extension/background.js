@@ -17,6 +17,11 @@ chrome.runtime.onConnect.addListener((port) => {
   const entry = { port, tabId };
   ports.push(entry);
 
+  // Notify server this tab has opened the external player
+  if (tabId != null && channel) {
+    channel.push("video:tab_opened", { tab_id: String(tabId) });
+  }
+
   port.onMessage.addListener((msg) => handleContentMessage(msg, port, tabId));
 
   port.onDisconnect.addListener(() => {
@@ -24,10 +29,11 @@ chrome.runtime.onConnect.addListener((port) => {
     void chrome.runtime.lastError;
     const idx = ports.indexOf(entry);
     if (idx > -1) ports.splice(idx, 1);
-    // If no other port from this tab, mark tab as unready
+    // If no other port from this tab, mark tab as closed + unready
     if (tabId != null && channel) {
       const tabStillConnected = ports.some(e => e.tabId === tabId);
       if (!tabStillConnected) {
+        channel.push("video:tab_closed", { tab_id: String(tabId) });
         channel.push("video:unready", { tab_id: String(tabId) });
       }
     }
