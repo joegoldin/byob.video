@@ -199,8 +199,10 @@
       try { chrome.runtime.sendMessage({ type: "byob:video-hooked" }); } catch (_) {}
     }
 
-    // Update sync bar — but don't overwrite gesture-needed state
-    if (!needsGesture) {
+    // If still waiting for gesture (site replaced video element), re-register
+    if (needsGesture) {
+      waitForNativePlay();
+    } else {
       updateSyncBarStatus("syncing");
     }
 
@@ -226,6 +228,10 @@
     hookedVideo.removeEventListener("pause", onVideoPause);
     hookedVideo.removeEventListener("seeked", onVideoSeeked);
     hookedVideo.removeEventListener("ended", onVideoEnded);
+    if (_nativePlayListener) {
+      hookedVideo.removeEventListener("play", _nativePlayListener);
+      _nativePlayListener = null;
+    }
     hookedVideo = null;
     if (timeReportInterval) {
       clearInterval(timeReportInterval);
@@ -402,7 +408,8 @@
     // we'd just end up showing the toast anyway after the failed tryPlay.
 
     if (!hookedVideo.paused) {
-      // Video is already playing — request sync now
+      // Video is already playing — it has a gesture, sync now
+      needsGesture = false;
       hideJoinToast();
       requestSync();
     } else {
@@ -414,7 +421,6 @@
   }
 
   function requestSync() {
-    needsGesture = false;
     hideJoinToast();
     updateSyncBarStatus("syncing");
     if (port) {
@@ -444,6 +450,8 @@
         hookedVideo?.removeEventListener("play", _nativePlayListener);
         _nativePlayListener = null;
       }
+      // Video is actually playing now — clear gesture requirement
+      needsGesture = false;
       requestSync();
     };
     hookedVideo.addEventListener("play", _nativePlayListener);
