@@ -100,6 +100,11 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
+  def handle_in("video:ready", _payload, socket) do
+    RoomServer.mark_ready(socket.assigns.room_pid, socket.assigns.user_id)
+    {:noreply, socket}
+  end
+
   def handle_in("sync:request_state", _payload, socket) do
     state = RoomServer.get_state(socket.assigns.room_pid)
 
@@ -150,6 +155,11 @@ defmodule ByobWeb.ExtensionChannel do
 
   def handle_info({:autoplay_countdown_cancelled, _data}, socket) do
     push(socket, "autoplay:cancelled", %{})
+    {:noreply, socket}
+  end
+
+  def handle_info({:ready_count, data}, socket) do
+    push(socket, "ready:count", data)
     {:noreply, socket}
   end
 

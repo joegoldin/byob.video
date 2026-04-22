@@ -396,6 +396,13 @@
       if (hookedVideo) {
         updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
       }
+      // Notify server this client is ready
+      if (port) port.postMessage({ type: "video:ready" });
+      return;
+    }
+
+    if (msg.type === "byob:ready-count" && window === window.top) {
+      updateReadyCount(msg.ready, msg.total);
       return;
     }
 
@@ -604,12 +611,18 @@
     time.id = "byob-time";
     time.style.cssText = "font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px;flex-shrink:0";
 
+    // Users ready indicator
+    const usersEl = document.createElement("span");
+    usersEl.id = "byob-users";
+    usersEl.style.cssText = "display:none;font-size:12px;flex-shrink:0;gap:4px;align-items:center;font-variant-numeric:tabular-nums;";
+    usersEl.innerHTML = `<span id="byob-users-icon" style="font-size:14px;opacity:0.5">&#128100;</span><span id="byob-users-count" style="opacity:0.6">0/0</span>`;
+
     const collapse = document.createElement("button");
     collapse.id = "byob-collapse";
     collapse.style.cssText = "background:none;color:white;border:none;cursor:pointer;font-size:14px;opacity:0.5;padding:0 4px;line-height:1;outline:none;-webkit-user-select:none;user-select:none;flex-shrink:0;";
     collapse.textContent = "\u25BC";
 
-    content.append(logo, dot, status, playPauseBtn, progressWrap, time, collapse);
+    content.append(logo, dot, status, playPauseBtn, progressWrap, time, usersEl, collapse);
     bar.appendChild(content);
 
     // Collapse/expand toggle
@@ -646,6 +659,21 @@
     });
 
     document.body.appendChild(bar);
+  }
+
+  function updateReadyCount(ready, total) {
+    const el = document.getElementById("byob-users");
+    const icon = document.getElementById("byob-users-icon");
+    const count = document.getElementById("byob-users-count");
+    if (!el || !icon || !count) return;
+
+    el.style.display = "flex";
+    count.textContent = `${ready}/${total}`;
+
+    const allReady = ready >= total && total > 0;
+    icon.style.opacity = allReady ? "1" : "0.5";
+    icon.style.filter = allReady ? "hue-rotate(90deg) saturate(3) brightness(1.3)" : "none";
+    count.style.color = allReady ? "#00d400" : "rgba(255,255,255,0.6)";
   }
 
   let _countdownInterval = null;

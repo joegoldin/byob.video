@@ -65,6 +65,10 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:leave, user_id})
   end
 
+  def mark_ready(pid, user_id) do
+    GenServer.call(pid, {:mark_ready, user_id})
+  end
+
   def get_state(pid) do
     GenServer.call(pid, :get_state)
   end
@@ -223,7 +227,8 @@ defmodule Byob.RoomServer do
         username: username,
         joined_at: System.monotonic_time(:millisecond),
         connected: true,
-        is_extension: is_extension
+        is_extension: is_extension,
+        ready: !is_extension
       })
       |> maybe_set_host(user_id)
 
@@ -237,7 +242,19 @@ defmodule Byob.RoomServer do
     SyncLog.join(state.room_id, user_id, map_size(state.users))
     SyncLog.snapshot(state.room_id, user_id, state.play_state, current_position(state))
     broadcast(state, {:users_updated, state.users})
+    broadcast_ready_count(state)
     {:reply, {:ok, snapshot(state)}, state}
+  end
+
+  def handle_call({:mark_ready, user_id}, _from, state) do
+    state =
+      case Map.get(state.users, user_id) do
+        nil -> state
+        user -> put_in(state.users[user_id], %{user | ready: true})
+      end
+
+    broadcast_ready_count(state)
+    {:reply, :ok, state}
   end
 
   def handle_call({:leave, user_id}, _from, state) do
@@ -967,6 +984,13 @@ defmodule Byob.RoomServer do
 
   defp broadcast(state, message) do
     Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{state.room_id}", message)
+  end
+
+  defp broadcast_ready_count(state) do
+    connected = state.users |> Enum.filter(fn {_, u} -> u.connected end)
+    total = length(connected)
+    ready = connected |> Enum.count(fn {_, u} -> Map.get(u, :ready, false) end)
+    broadcast(state, {:ready_count, %{ready: ready, total: total}})
   end
 
   @max_history 99

@@ -111,6 +111,10 @@ function handleContentMessage(msg, port, tabId) {
       if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing });
       break;
 
+    case "video:ready":
+      if (channel) channel.push("video:ready", {});
+      break;
+
     case "byob:bar-update":
       // Relay bar updates to all ports (so top frame can update its sync bar)
       broadcastToContentScripts(msg);
@@ -176,6 +180,12 @@ function connectToRoom(roomId, serverUrl, token, username) {
 
   channel.on("autoplay:cancelled", () => broadcastToContentScripts({
     type: "autoplay:cancelled",
+  }));
+
+  channel.on("ready:count", (data) => broadcastToContentScripts({
+    type: "byob:ready-count",
+    ready: data.ready,
+    total: data.total,
   }));
 
   channel.on("video:change", (data) => {
