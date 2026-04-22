@@ -143,6 +143,16 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:autoplay_countdown, data}, socket) do
+    push(socket, "autoplay:countdown", data)
+    {:noreply, socket}
+  end
+
+  def handle_info({:autoplay_countdown_cancelled, _data}, socket) do
+    push(socket, "autoplay:cancelled", %{})
+    {:noreply, socket}
+  end
+
   def handle_info({:queue_updated, data}, socket) do
     push(socket, "queue:updated", data)
     {:noreply, socket}

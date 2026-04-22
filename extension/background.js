@@ -163,6 +163,15 @@ function connectToRoom(roomId, serverUrl, token, username) {
     // For v0, just relay seek if drift is large
   });
 
+  channel.on("autoplay:countdown", (data) => broadcastToContentScripts({
+    type: "autoplay:countdown",
+    duration_ms: data.duration_ms,
+  }));
+
+  channel.on("autoplay:cancelled", () => broadcastToContentScripts({
+    type: "autoplay:cancelled",
+  }));
+
   channel.on("video:change", (data) => {
     // New video selected — content script doesn't need to do anything
     // since the user navigates to the video themselves

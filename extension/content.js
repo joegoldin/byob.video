@@ -372,6 +372,15 @@
       return;
     }
 
+    if (msg.type === "autoplay:countdown" && window === window.top) {
+      startCountdown(msg.duration_ms || 5000);
+      return;
+    }
+    if (msg.type === "autoplay:cancelled" && window === window.top) {
+      clearCountdown();
+      return;
+    }
+
     if (msg.type === "command:initial-state") {
       tryAutoSync();
       return;
@@ -380,12 +389,15 @@
     // Handle synced before hookedVideo/needsGesture guards — the top frame
     // may not have a hooked video (it's in an iframe) but still needs to
     // hide the toast and update the sync bar.
+    // Only accept if this client already initiated sync (needsGesture=false),
+    // otherwise a broadcast from another tab's sync would hide our toast.
     if (msg.type === "command:synced") {
-      synced = true;
-      needsGesture = false;
-      hideJoinToast();
-      if (hookedVideo) {
-        updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+      if (!needsGesture) {
+        synced = true;
+        hideJoinToast();
+        if (hookedVideo) {
+          updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+        }
       }
       return;
     }
@@ -639,6 +651,33 @@
     document.body.appendChild(bar);
   }
 
+  let _countdownInterval = null;
+
+  function startCountdown(durationMs) {
+    clearCountdown();
+    const endTime = Date.now() + durationMs;
+    updateSyncBarStatus("finished");
+
+    const statusEl = document.getElementById("byob-status");
+    const update = () => {
+      const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
+      if (statusEl) {
+        statusEl.textContent = remaining > 0 ? `Finished — next in ${remaining}s` : "Loading next...";
+        statusEl.style.color = "#7c3aed";
+      }
+      if (remaining <= 0) clearCountdown();
+    };
+    update();
+    _countdownInterval = setInterval(update, 500);
+  }
+
+  function clearCountdown() {
+    if (_countdownInterval) {
+      clearInterval(_countdownInterval);
+      _countdownInterval = null;
+    }
+  }
+
   function updateSyncBarStatus(state) {
     const dot = document.getElementById("byob-dot");
     const status = document.getElementById("byob-status");
@@ -651,6 +690,7 @@
       clickjoin: { color: "#ff9900", text: "Click play to sync" },
       playing:   { color: "#00d400", text: "Playing" },
       paused:    { color: "#ff9900", text: "Paused" },
+      finished:  { color: "#7c3aed", text: "Finished" },
     };
     const s = states[state];
     if (!s) return;
