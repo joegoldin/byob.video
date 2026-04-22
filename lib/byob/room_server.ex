@@ -438,12 +438,12 @@ defmodule Byob.RoomServer do
             state
           end
 
-        # Only broadcast on real state transitions — redundant plays are dropped
+        # Always broadcast so all clients sync, even on redundant plays.
+        # State only updates on real transitions (above), but the broadcast
+        # ensures clients whose local state disagrees get corrected.
+        broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
         if was_paused do
-          broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
           SyncLog.play(state.room_id, user_id, current_media_url(state), position, "paused→playing")
-        else
-          SyncLog.redundant(state.room_id, "play", user_id)
         end
 
         {:reply, :ok, state}
@@ -477,12 +477,9 @@ defmodule Byob.RoomServer do
             state
           end
 
-        # Only broadcast on real state transitions — redundant pauses are dropped
+        broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
         if was_playing do
-          broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
           SyncLog.pause(state.room_id, user_id, current_media_url(state), position, "playing→paused")
-        else
-          SyncLog.redundant(state.room_id, "pause", user_id)
         end
 
         {:reply, :ok, state}
