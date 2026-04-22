@@ -413,24 +413,28 @@ const VideoPlayer = {
 
   // Unified YouTube state change handler (called from YouTube player module)
   _onPlayerStateChange(stateName) {
-    // Always let suppression consume events (tracks terminal state)
-    if (stateName && this.suppression.shouldSuppress(stateName)) {
-      return;
-    }
-
     // Buffering is transient — don't push to server, don't update expectedPlayState
     if (stateName === "buffering") {
       return;
     }
 
-    // Mark player as settled on first stable state after load
+    // Mark player as settled on first stable state after load.
+    // Do this BEFORE suppression so that suppressed events (from programmatic
+    // commands like loadVideoById) still mark the player as ready.
     if (!this._playerSettled && (stateName === "playing" || stateName === "paused")) {
       this._playerSettled = true;
       // If we were loading-for-pause, the pause has landed — don't push it
       if (this._loadingPaused && stateName === "paused") {
         this._loadingPaused = false;
+        // Still let suppression consume this event
+        this.suppression.shouldSuppress(stateName);
         return;
       }
+    }
+
+    // Always let suppression consume events (tracks terminal state)
+    if (stateName && this.suppression.shouldSuppress(stateName)) {
+      return;
     }
 
     // Don't push events to server until player is settled after load
