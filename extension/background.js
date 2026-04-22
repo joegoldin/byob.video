@@ -40,20 +40,17 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:hooked":
-      // Don't send position 0 to server - it corrupts the canonical state
-      // Instead, request current state from channel and sync to it
+      // Request current room state and send it to the content script.
+      // The content script will show an autoplay overlay — the user's click
+      // provides the gesture needed to unlock video.play().
       if (channel) {
         channel.push("sync:request_state", {}).receive("ok", (resp) => {
           console.log("[byob] Got current state for sync:", resp);
-          setTimeout(() => {
-            if (resp.play_state === "playing") {
-              port.postMessage({ type: "command:play", position: resp.current_time });
-            } else {
-              port.postMessage({ type: "command:seek", position: resp.current_time });
-              port.postMessage({ type: "command:pause", position: resp.current_time });
-            }
-            port.postMessage({ type: "command:synced" });
-          }, 300);
+          port.postMessage({
+            type: "command:initial-state",
+            play_state: resp.play_state,
+            current_time: resp.current_time,
+          });
         });
       }
       break;

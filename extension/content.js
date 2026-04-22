@@ -241,39 +241,42 @@
     }
   }
 
-  // Suppression (generation counter)
+  // Suppression — time-window based (matches suppression.js in main app)
+  let terminalReached = false;
+  let terminalAt = null;
+
   function suppress(state) {
     suppressGen++;
     suppressUntilGen = suppressGen;
     expectedState = state;
+    terminalReached = false;
+    terminalAt = null;
     if (safetyTimeout) clearTimeout(safetyTimeout);
     safetyTimeout = setTimeout(() => {
       suppressUntilGen = 0;
       expectedState = null;
+      terminalReached = false;
+      terminalAt = null;
     }, 3000);
   }
 
   function shouldSuppress(currentState) {
     if (suppressUntilGen === 0) return false;
-    // Only suppress the event we're expecting (e.g. suppress "playing" after command:play)
-    // Don't suppress other events — user actions like manual pause should go through
-    if (currentState === expectedState) {
-      suppressUntilGen = 0;
-      expectedState = null;
-      if (safetyTimeout) {
-        clearTimeout(safetyTimeout);
-        safetyTimeout = null;
+    if (currentState === expectedState || expectedState === null) {
+      if (!terminalReached) {
+        terminalReached = true;
+        terminalAt = performance.now();
       }
-      return true;
+      if (performance.now() - terminalAt > 200) {
+        suppressUntilGen = 0;
+        expectedState = null;
+        terminalReached = false;
+        terminalAt = null;
+        if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
+      }
     }
-    // Not the expected event — clear suppression and let it through
-    suppressUntilGen = 0;
-    expectedState = null;
-    if (safetyTimeout) {
-      clearTimeout(safetyTimeout);
-      safetyTimeout = null;
-    }
-    return false;
+    // Suppress ALL events while active
+    return true;
   }
 
   // Handle commands from service worker
@@ -303,6 +306,12 @@
           statusEl.textContent = "Paused"; statusEl.style.color = "#ff9900"; dotEl.style.background = "#ff9900";
         }
       }
+      return;
+    }
+
+    if (msg.type === "command:initial-state") {
+      updateSyncBarStatus("clickjoin");
+      showAutoplayOverlay(msg.play_state, msg.current_time);
       return;
     }
 
@@ -340,6 +349,85 @@
         synced = true;
         break;
     }
+  }
+
+  function showAutoplayOverlay(playState, currentTime) {
+    if (!hookedVideo) return;
+    removeAutoplayOverlay();
+
+    const overlay = document.createElement("div");
+    overlay.id = "byob-autoplay-overlay";
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 999998;
+      background: rgba(0,0,0,0.6); display: flex; align-items: center;
+      justify-content: center; cursor: pointer; backdrop-filter: blur(2px);
+    `;
+
+    const btn = document.createElement("div");
+    btn.style.cssText = `
+      background: rgba(0,0,0,0.8); border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 16px; padding: 24px 36px; text-align: center;
+      color: white; font-family: system-ui, sans-serif;
+    `;
+    btn.innerHTML = `
+      <div style="font-size:48px;margin-bottom:12px">&#9654;</div>
+      <div style="font-size:16px;font-weight:bold">Click to join playback</div>
+      <div style="font-size:12px;opacity:0.6;margin-top:4px">Required by browser autoplay policy</div>
+    `;
+
+    overlay.appendChild(btn);
+    document.body.appendChild(overlay);
+
+    overlay.addEventListener("click", () => {
+      removeAutoplayOverlay();
+      activateAfterGesture(playState, currentTime);
+    }, { once: true });
+
+    // Also detect if user clicks play on the native player directly
+    const onNativePlay = () => {
+      if (document.getElementById("byob-autoplay-overlay")) {
+        removeAutoplayOverlay();
+        activateAfterGesture(playState, currentTime);
+      }
+      hookedVideo?.removeEventListener("play", onNativePlay);
+    };
+    hookedVideo.addEventListener("play", onNativePlay);
+  }
+
+  function removeAutoplayOverlay() {
+    const el = document.getElementById("byob-autoplay-overlay");
+    if (el) el.remove();
+  }
+
+  function activateAfterGesture(playState, currentTime) {
+    if (!hookedVideo) return;
+
+    // The click provides the user gesture — play to unlock autoplay
+    suppress("playing");
+    hookedVideo.play().then(() => {
+      // Autoplay is now unlocked. Pause, seek to room position, apply state.
+      suppress("paused");
+      hookedVideo.pause();
+      hookedVideo.currentTime = currentTime;
+
+      if (playState === "playing") {
+        // Small delay to let the seek settle, then play
+        setTimeout(() => {
+          suppress("playing");
+          hookedVideo.play().catch(() => {});
+          synced = true;
+          updateSyncBarStatus("playing");
+        }, 200);
+      } else {
+        synced = true;
+        updateSyncBarStatus("paused");
+      }
+    }).catch(() => {
+      // play() failed even with gesture — very rare, try directly
+      hookedVideo.currentTime = currentTime;
+      synced = true;
+      updateSyncBarStatus(playState === "playing" ? "playing" : "paused");
+    });
   }
 
   function injectSyncBar() {
@@ -431,6 +519,7 @@
       loading:   { color: "#888",    text: "Loading..." },
       searching: { color: "#ff9900", text: "Searching for video..." },
       syncing:   { color: "#ff9900", text: "Syncing..." },
+      clickjoin: { color: "#ff9900", text: "Click video to join playback" },
       playing:   { color: "#00d400", text: "Playing" },
       paused:    { color: "#ff9900", text: "Paused" },
     };
