@@ -73,6 +73,10 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:clear_ready_tab, tab_id})
   end
 
+  def update_current_media(pid, attrs) do
+    GenServer.call(pid, {:update_current_media, attrs})
+  end
+
   def get_state(pid) do
     GenServer.call(pid, :get_state)
   end
@@ -286,6 +290,28 @@ defmodule Byob.RoomServer do
 
   def handle_call({:clear_ready_tab, _}, _from, state) do
     {:reply, :ok, state}
+  end
+
+  def handle_call({:update_current_media, attrs}, _from, state) do
+    case state.current_index do
+      nil ->
+        {:reply, :ok, state}
+
+      idx ->
+        case Enum.at(state.queue, idx) do
+          nil ->
+            {:reply, :ok, state}
+
+          item ->
+            title = attrs[:title] || item.title
+            thumbnail_url = attrs[:thumbnail_url] || item.thumbnail_url
+            updated = %{item | title: title, thumbnail_url: thumbnail_url}
+            queue = List.replace_at(state.queue, idx, updated)
+            state = %{state | queue: queue}
+            broadcast(state, {:queue_updated, %{queue: queue, current_index: idx}})
+            {:reply, :ok, state}
+        end
+    end
   end
 
   def handle_call({:leave, user_id}, _from, state) do

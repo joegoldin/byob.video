@@ -101,13 +101,24 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   def handle_in("video:media_info", payload, socket) do
+    # Update the current media item's title/thumbnail with scraped data
+    title = payload["title"]
+    thumbnail_url = payload["thumbnail_url"]
+
+    if title || thumbnail_url do
+      attrs = %{}
+      attrs = if title, do: Map.put(attrs, :title, title), else: attrs
+      attrs = if thumbnail_url, do: Map.put(attrs, :thumbnail_url, thumbnail_url), else: attrs
+      RoomServer.update_current_media(socket.assigns.room_pid, attrs)
+    end
+
     Phoenix.PubSub.broadcast(
       Byob.PubSub,
       "room:#{socket.assigns.room_id}",
       {:extension_media_info,
        %{
-         title: payload["title"],
-         thumbnail_url: payload["thumbnail_url"]
+         title: title,
+         thumbnail_url: thumbnail_url
        }}
     )
 
