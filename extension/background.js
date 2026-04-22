@@ -141,11 +141,14 @@ function connectToRoom(roomId, serverUrl, token, username) {
   currentRoomId = roomId;
   currentServerUrl = serverUrl;
 
-  // Connect Phoenix Socket with auth token
+  // Connect Phoenix Socket with auth token — disable built-in reconnect
+  // so we don't spam errors when the server is down. The content script's
+  // port reconnect logic handles recovery.
   const wsUrl = serverUrl.replace(/^http/, "ws") + "/extension";
   socket = new Socket(wsUrl, {
     heartbeatIntervalMs: 20000,
     params: token ? { token } : {},
+    reconnectAfterMs: () => null, // disable auto-reconnect
   });
 
   socket.connect();
@@ -195,8 +198,19 @@ function connectToRoom(roomId, serverUrl, token, username) {
   });
 
   socket.onOpen(() => console.log("[byob] WebSocket connected to", wsUrl));
-  socket.onError((err) => console.error("[byob] WebSocket error:", err));
-  socket.onClose(() => console.log("[byob] WebSocket closed"));
+  socket.onError(() => {}); // suppress — onClose handles cleanup
+  socket.onClose(() => {
+    console.log("[byob] WebSocket closed, cleaning up");
+    channel = null;
+    socket = null;
+    currentRoomId = null;
+    lastReadyCount = null;
+    // Disconnect all ports — content scripts will reconnect with backoff
+    for (const entry of [...ports]) {
+      try { entry.port.disconnect(); } catch (_) {}
+    }
+    ports.length = 0;
+  });
 
   channel
     .join()
