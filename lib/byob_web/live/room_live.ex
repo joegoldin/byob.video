@@ -73,7 +73,7 @@ defmodule ByobWeb.RoomLive do
       show_comments = get_connect_params(socket)["show_comments"] != false
 
       socket =
-        assign(socket, user_id: user_id, browser_id: browser_id, show_comments: show_comments)
+        assign(socket, user_id: user_id, username: username, browser_id: browser_id, show_comments: show_comments)
 
       Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
       {:ok, state} = RoomServer.join(pid, user_id, username)
