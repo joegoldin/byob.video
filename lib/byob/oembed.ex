@@ -25,7 +25,15 @@ defmodule Byob.OEmbed do
   end
 
   def fetch_vimeo(url) do
-    case Req.get(@vimeo_oembed, params: [url: url], receive_timeout: 5000) do
+    # Strip query params — Vimeo oEmbed rejects unknown params
+    clean_url =
+      case URI.parse(url) do
+        %URI{scheme: s, host: h, path: p} when is_binary(s) and is_binary(h) ->
+          "#{s}://#{h}#{p}"
+        _ -> url
+      end
+
+    case Req.get(@vimeo_oembed, params: [url: clean_url], receive_timeout: 5000) do
       {:ok, %{status: 200, body: body}} when is_map(body) ->
         {:ok,
          %{

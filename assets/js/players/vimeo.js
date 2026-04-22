@@ -37,19 +37,16 @@ export async function create(el, callbacks, opts) {
   const VimeoPlayer = await loadVimeoSDK();
 
   el.innerHTML = "";
-  el.style.background = "black";
-  el.style.display = "flex";
-  el.style.alignItems = "center";
-  el.style.justifyContent = "center";
   const container = document.createElement("div");
   container.id = "vimeo-player";
   container.style.width = "100%";
-  container.style.background = "black";
+  container.style.height = "100%";
   el.appendChild(container);
 
   const player = new VimeoPlayer(container, {
     id: videoId,
-    responsive: true,
+    width: "100%",
+    height: "100%",
     autoplay: shouldPlay,
     muted: false,
     transparent: false,
@@ -132,11 +129,11 @@ export async function create(el, callbacks, opts) {
   // Wait for player to be ready
   await player.ready();
 
-  // Ensure the responsive wrapper fills the player area
-  const wrapper = container.querySelector("div[style]") || container;
-  wrapper.style.maxHeight = "100%";
+  // Style iframe to fill container like YouTube does
   const iframe = container.querySelector("iframe");
   if (iframe) {
+    iframe.style.width = "100%";
+    iframe.style.height = "100%";
     iframe.style.border = "none";
   }
 
