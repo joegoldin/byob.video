@@ -51,6 +51,8 @@ defmodule Byob.RoomServerTest do
     test "updates state to playing", %{pid: pid, room_id: room_id} do
       {:ok, _} = RoomServer.join(pid, "user1", "Test")
       RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :now)
+      # Pause first so the play is a real state transition (paused → playing)
+      RoomServer.pause(pid, "user1", 0.0)
 
       Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
       :ok = RoomServer.play(pid, "user1", 10.0)
