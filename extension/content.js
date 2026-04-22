@@ -344,16 +344,14 @@
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         suppress("playing");
         if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) > 0.5) {
-          // Seek first, then play once seek completes for accurate sync
           hookedVideo.currentTime = msg.position;
           hookedVideo.addEventListener("seeked", function onSeeked() {
             hookedVideo.removeEventListener("seeked", onSeeked);
-            hookedVideo.play().catch(() => {});
+            tryPlay();
           }, { once: true });
-          // Safety: play anyway after 1s if seeked never fires
-          setTimeout(() => hookedVideo.play().catch(() => {}), 1000);
+          setTimeout(() => tryPlay(), 1000);
         } else {
-          hookedVideo.play().catch(() => {});
+          tryPlay();
         }
         break;
 
@@ -439,6 +437,21 @@
       requestSync();
     };
     hookedVideo.addEventListener("play", onPlay);
+  }
+
+  function tryPlay() {
+    if (!hookedVideo) return;
+    hookedVideo.play().then(() => {
+      // Autoplay worked
+      hideJoinToast();
+    }).catch(() => {
+      // Autoplay blocked — need user gesture. Drop out of synced state
+      // so commands don't keep failing silently, and wait for native play.
+      synced = false;
+      updateSyncBarStatus("clickjoin");
+      showJoinToast("Click play on the video to start syncing");
+      waitForNativePlay();
+    });
   }
 
   function showJoinToast(text) {
