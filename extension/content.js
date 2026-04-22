@@ -401,19 +401,16 @@
   function tryAutoSync() {
     if (!hookedVideo) return;
 
-    // The video element was just hooked. It may or may not be loaded/playing.
-    // If it's already playing (user's click started it during SW round-trip),
-    // request sync immediately. Otherwise, wait for the user to click play.
-    // Don't try to autoplay — it almost always fails without a gesture and
-    // we'd just end up showing the toast anyway after the failed tryPlay.
-
-    if (!hookedVideo.paused) {
-      // Video is already playing — it has a gesture, sync now
+    // If the user already provided a gesture (needsGesture=false), go
+    // straight to sync — don't re-enter the waiting state even if the
+    // video is momentarily paused (e.g. site replaced the video element).
+    if (!needsGesture || !hookedVideo.paused) {
       needsGesture = false;
       hideJoinToast();
       requestSync();
     } else {
-      // Video is paused (loaded or not) — wait for user to click play
+      // First time, video is paused — wait for user to click play
+      needsGesture = true;
       updateSyncBarStatus("clickjoin");
       showJoinToast("Click play on the video to start syncing");
       waitForNativePlay();
