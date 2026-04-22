@@ -353,6 +353,19 @@
       return;
     }
 
+    // Handle synced before hookedVideo/needsGesture guards — the top frame
+    // may not have a hooked video (it's in an iframe) but still needs to
+    // hide the toast and update the sync bar.
+    if (msg.type === "command:synced") {
+      synced = true;
+      needsGesture = false;
+      hideJoinToast();
+      if (hookedVideo) {
+        updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+      }
+      return;
+    }
+
     if (!hookedVideo) return;
 
     // If we're waiting for a user gesture, ignore commands — they'll just fail.
@@ -392,11 +405,6 @@
         hookedVideo.currentTime = msg.position;
         break;
 
-      case "command:synced":
-        synced = true;
-        hideJoinToast();
-        updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
-        break;
     }
   }
 
