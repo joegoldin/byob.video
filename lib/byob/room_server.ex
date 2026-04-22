@@ -1018,6 +1018,8 @@ defmodule Byob.RoomServer do
           end
         end)
 
+      usernames = by_username |> Map.keys() |> Enum.join(", ")
+      SyncLog.redundant(state.room_id, "ready_count=#{ready}/#{total} users=[#{usernames}]", "system")
       broadcast(state, {:ready_count, %{ready: ready, total: total}})
     end
   end
