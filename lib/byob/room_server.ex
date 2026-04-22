@@ -992,22 +992,34 @@ defmodule Byob.RoomServer do
     # A person is "ready" unless they have an extension connection that isn't ready yet.
     connected = state.users |> Enum.filter(fn {_, u} -> u.connected end)
 
-    by_username =
-      connected
-      |> Enum.group_by(fn {_, u} -> u.username end)
+    has_extension_users =
+      Enum.any?(connected, fn {_, u} -> Map.get(u, :is_extension, false) end)
 
-    total = map_size(by_username)
+    # Only broadcast when extension users exist — otherwise the count is meaningless
+    if has_extension_users do
+      by_username =
+        connected
+        |> Enum.group_by(fn {_, u} -> u.username end)
 
-    ready =
-      by_username
-      |> Enum.count(fn {_, entries} ->
-        # Ready if no extension user, or all extension users are ready
-        Enum.all?(entries, fn {_, u} ->
-          !Map.get(u, :is_extension, false) || Map.get(u, :ready, false)
+      total = map_size(by_username)
+
+      ready =
+        by_username
+        |> Enum.count(fn {_, entries} ->
+          has_ext = Enum.any?(entries, fn {_, u} -> Map.get(u, :is_extension, false) end)
+          # Users without an extension connection aren't ready yet (they haven't opened the player)
+          # Users with an extension connection are ready when that connection is marked ready
+          if has_ext do
+            Enum.all?(entries, fn {_, u} ->
+              !Map.get(u, :is_extension, false) || Map.get(u, :ready, false)
+            end)
+          else
+            false
+          end
         end)
-      end)
 
-    broadcast(state, {:ready_count, %{ready: ready, total: total}})
+      broadcast(state, {:ready_count, %{ready: ready, total: total}})
+    end
   end
 
   @max_history 99
