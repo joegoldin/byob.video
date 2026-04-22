@@ -17,11 +17,6 @@ chrome.runtime.onConnect.addListener((port) => {
   const entry = { port, tabId };
   ports.push(entry);
 
-  // Notify server this tab has opened the external player
-  if (tabId != null && channel) {
-    channel.push("video:tab_opened", { tab_id: String(tabId) });
-  }
-
   port.onMessage.addListener((msg) => handleContentMessage(msg, port, tabId));
 
   port.onDisconnect.addListener(() => {
@@ -242,6 +237,14 @@ function connectToRoom(roomId, serverUrl, token, username) {
       }
       broadcastToContentScripts({ type: "byob:channel-ready" });
       if (lastReadyCount) broadcastToContentScripts(lastReadyCount);
+      // Report all currently connected tabs as open
+      const seenTabs = new Set();
+      for (const entry of ports) {
+        if (entry.tabId != null && !seenTabs.has(entry.tabId)) {
+          seenTabs.add(entry.tabId);
+          channel.push("video:tab_opened", { tab_id: String(entry.tabId) });
+        }
+      }
     })
     .receive("error", (resp) => {
       console.error("[byob] Failed to join room", roomId, resp);

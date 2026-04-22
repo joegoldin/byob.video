@@ -722,16 +722,18 @@
     count.style.opacity = allReady ? "1" : "0.5";
     count.style.color = allReady ? "#00d400" : "white";
 
-    // Tooltip — phrase everything as "what's still needed"
+    // Tooltip — show counts matching the display, then what's needed
     const parts = [];
-    parts.push(`${total} user${total !== 1 ? "s" : ""} in room`);
     if (allReady) {
-      parts.push("all synced and ready to play");
+      parts.push(`All ${total} users synced and ready to play`);
     } else {
+      parts.push(`${ready} synced / ${hasTab} player open / ${total} in room`);
       const needTab = total - hasTab;
       const needClick = hasTab - ready;
-      if (needTab > 0) parts.push(`${needTab} need${needTab === 1 ? "s" : ""} to open external player`);
-      if (needClick > 0) parts.push(`${needClick} need${needClick === 1 ? "s" : ""} to click play`);
+      const needs = [];
+      if (needTab > 0) needs.push(`${needTab} need${needTab === 1 ? "s" : ""} to open player`);
+      if (needClick > 0) needs.push(`${needClick} need${needClick === 1 ? "s" : ""} to click play`);
+      if (needs.length) parts.push(needs.join(", "));
     }
     el.title = parts.join(" · ");
   }
