@@ -440,7 +440,7 @@
   // Event handlers — with suppression
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-    if (!synced) return;
+    if (!synced || isBuffering) return;
     expectedPlayState = State.PLAYING;
     mismatchSince = null;
     if (port && hookedVideo) {
@@ -449,7 +449,7 @@
   }
 
   function onVideoPause() {
-    if (!synced) return;
+    if (!synced || isBuffering) return;
     expectedPlayState = State.PAUSED;
     mismatchSince = null;
     if (port && hookedVideo) {
@@ -458,7 +458,7 @@
   }
 
   function onVideoSeeked() {
-    if (!synced) return;
+    if (!synced || isBuffering) return;
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
     }
@@ -542,9 +542,19 @@
     mismatchSince = null;
   }
 
-  // (Suppression and cooldowns removed — echo prevention is now in the
-  // service worker via broadcastExceptOrigin. The reconciliation loop
-  // handles any remaining state mismatches.)
+  // Enter buffering state — shows overlay, blocks outbound events.
+  // Clears automatically when readyState polling detects the video
+  // is actually playing (readyState >= 3 and not paused).
+  function enterBuffering() {
+    if (isBuffering) return;
+    isBuffering = true;
+    showBufferingOverlay();
+    updateSyncBarStatus(SyncStatus.BUFFERING);
+    // Report to server so other clients see buffering too
+    if (synced && port) {
+      port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: hookedVideo?.currentTime || 0, duration: hookedVideo?.duration || 0, playing: false });
+    }
+  }
 
   // Handle commands from service worker
   function handleSWMessage(msg) {
@@ -664,6 +674,7 @@
       case Msg.COMMAND_PLAY:
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         expectedPlayState = State.PLAYING;
+        enterBuffering();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         if (hookedVideo.paused) {
           hookedVideo.play().catch(() => {});
@@ -673,6 +684,7 @@
 
       case Msg.COMMAND_PAUSE:
         expectedPlayState = State.PAUSED;
+        enterBuffering();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.pause();
         // Enforce pause briefly — fights autoplay/delayed play from sites.
@@ -686,6 +698,7 @@
         break;
 
       case Msg.COMMAND_SEEK:
+        enterBuffering();
         hookedVideo.currentTime = msg.position;
         break;
 
