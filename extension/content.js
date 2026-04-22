@@ -247,10 +247,10 @@
     }
   }
 
-  // Suppression — single-shot with short guard window.
-  // HTML5 <video> fires clean single events (unlike YouTube which fires
-  // multi-event sequences), so we clear immediately on terminal state match.
-  // We still suppress ALL events while active to prevent any leaks.
+  // Suppression — single-shot for HTML5 <video> elements.
+  // Unlike YouTube (which fires multi-event sequences like BUFFERING→PLAYING),
+  // HTML5 video fires clean single events. Suppress only the expected event;
+  // let non-matching events through so fast user actions aren't swallowed.
   function suppress(state) {
     suppressGen++;
     suppressUntilGen = suppressGen;
@@ -265,13 +265,18 @@
   function shouldSuppress(currentState) {
     if (suppressUntilGen === 0) return false;
     if (currentState === expectedState || expectedState === null) {
-      // Terminal state reached — clear immediately and swallow this event
+      // Expected event — swallow it and clear suppression
       suppressUntilGen = 0;
       expectedState = null;
       if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
+      return true;
     }
-    // Suppress ALL events while active (catches intermediate states)
-    return true;
+    // Non-matching event (e.g. user quickly paused while we expected "playing")
+    // Clear suppression and let it through — it's a real user action
+    suppressUntilGen = 0;
+    expectedState = null;
+    if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
+    return false;
   }
 
   // Handle commands from service worker
@@ -305,8 +310,7 @@
     }
 
     if (msg.type === "command:initial-state") {
-      updateSyncBarStatus("clickjoin");
-      showAutoplayOverlay();
+      tryAutoSync(msg.play_state, msg.current_time);
       return;
     }
 
@@ -346,67 +350,45 @@
     }
   }
 
-  function showAutoplayOverlay() {
-    if (!hookedVideo) return;
-    removeAutoplayOverlay();
-
-    const overlay = document.createElement("div");
-    overlay.id = "byob-autoplay-overlay";
-    overlay.style.cssText = `
-      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 999998;
-      background: rgba(0,0,0,0.6); display: flex; align-items: center;
-      justify-content: center; cursor: pointer; backdrop-filter: blur(2px);
-    `;
-
-    const btn = document.createElement("div");
-    btn.style.cssText = `
-      background: rgba(0,0,0,0.8); border: 2px solid rgba(255,255,255,0.3);
-      border-radius: 16px; padding: 24px 36px; text-align: center;
-      color: white; font-family: system-ui, sans-serif;
-    `;
-    btn.innerHTML = `
-      <div style="font-size:48px;margin-bottom:12px">&#9654;</div>
-      <div style="font-size:16px;font-weight:bold">Click to join playback</div>
-      <div style="font-size:12px;opacity:0.6;margin-top:4px">Required by browser autoplay policy</div>
-    `;
-
-    overlay.appendChild(btn);
-    document.body.appendChild(overlay);
-
-    overlay.addEventListener("click", () => {
-      removeAutoplayOverlay();
-      activateAfterGesture();
-    }, { once: true });
-
-    // Also detect if user clicks play on the native player directly
-    const onNativePlay = () => {
-      if (document.getElementById("byob-autoplay-overlay")) {
-        removeAutoplayOverlay();
-        activateAfterGesture();
-      }
-      hookedVideo?.removeEventListener("play", onNativePlay);
-    };
-    hookedVideo.addEventListener("play", onNativePlay);
-  }
-
-  function removeAutoplayOverlay() {
-    const el = document.getElementById("byob-autoplay-overlay");
-    if (el) el.remove();
-  }
-
-  function activateAfterGesture() {
+  function tryAutoSync(playState, currentTime) {
     if (!hookedVideo) return;
 
-    // Try to unlock autoplay with the user gesture (play in this call stack).
-    // Then ask the service worker for fresh room state — the position from
-    // command:initial-state may be stale if time passed before the click.
-    suppress("playing");
-    hookedVideo.play().catch(() => {});
+    // Try to sync without requiring an extra click.
+    // Seek to room position first, then try play if room is playing.
+    suppress(playState === "playing" ? "playing" : "paused");
+    hookedVideo.currentTime = currentTime;
 
-    // Request fresh state — SW will send command:play/pause/seek/synced
-    if (port) {
-      port.postMessage({ type: "video:request-sync" });
+    if (playState === "playing") {
+      hookedVideo.play().then(() => {
+        // Autoplay worked — we're synced
+        synced = true;
+        updateSyncBarStatus("playing");
+      }).catch(() => {
+        // Autoplay blocked — wait for user to click play on the native player.
+        // When they do, onVideoPlay will fire and we'll request fresh state.
+        updateSyncBarStatus("clickjoin");
+        waitForNativePlay();
+      });
+    } else {
+      // Room is paused — no gesture needed, just sync position
+      synced = true;
+      updateSyncBarStatus("paused");
     }
+  }
+
+  function waitForNativePlay() {
+    if (!hookedVideo) return;
+    // Listen for the user's natural play click on the site's player.
+    // That play event provides the gesture AND means autoplay is unlocked.
+    const onPlay = () => {
+      hookedVideo?.removeEventListener("play", onPlay);
+      // User clicked play — request fresh state from SW since position
+      // may have changed since initial-state was sent
+      if (port) {
+        port.postMessage({ type: "video:request-sync" });
+      }
+    };
+    hookedVideo.addEventListener("play", onPlay);
   }
 
   function injectSyncBar() {
@@ -498,7 +480,7 @@
       loading:   { color: "#888",    text: "Loading..." },
       searching: { color: "#ff9900", text: "Searching for video..." },
       syncing:   { color: "#ff9900", text: "Syncing..." },
-      clickjoin: { color: "#ff9900", text: "Click video to join playback" },
+      clickjoin: { color: "#ff9900", text: "Click play to sync" },
       playing:   { color: "#00d400", text: "Playing" },
       paused:    { color: "#ff9900", text: "Paused" },
     };

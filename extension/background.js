@@ -58,9 +58,9 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:request-sync":
-      // Overlay was clicked — request fresh state and apply it.
-      // The content script already called play() in the gesture stack
-      // to unlock autoplay, so command:play will work.
+      // User interacted — request fresh state and apply it.
+      // Delay synced flag so the seek/play commands land before the
+      // content script starts sending its own events to the server.
       if (channel) {
         channel.push("sync:request_state", {}).receive("ok", (resp) => {
           console.log("[byob] Fresh state for sync:", resp);
@@ -70,7 +70,11 @@ function handleContentMessage(msg, port, tabId) {
             port.postMessage({ type: "command:seek", position: resp.current_time });
             port.postMessage({ type: "command:pause", position: resp.current_time });
           }
-          port.postMessage({ type: "command:synced" });
+          // Wait for seek to settle before enabling bidirectional sync,
+          // otherwise the content script sends video:play at the old position
+          setTimeout(() => {
+            port.postMessage({ type: "command:synced" });
+          }, 500);
         });
       }
       break;
