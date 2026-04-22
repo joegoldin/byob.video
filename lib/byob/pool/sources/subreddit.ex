@@ -78,21 +78,27 @@ defmodule Byob.Pool.Sources.Subreddit do
   # Enrich entries with YT metadata if available (duration, channel, better title).
   # If API key/quota missing, returns entries as-is.
   defp enrich(entries) do
-    Enum.map(entries, fn entry ->
+    entries
+    |> Enum.map(fn entry ->
       case Videos.fetch(entry.external_id) do
         {:ok, meta} ->
-          %{
-            entry
-            | title: meta[:title] || entry.title,
-              channel: meta[:author_name] || entry.channel,
-              duration_s: meta[:duration] || entry.duration_s,
-              thumbnail_url: meta[:thumbnail_url] || entry.thumbnail_url
-          }
+          if meta[:embeddable] == false do
+            nil
+          else
+            %{
+              entry
+              | title: meta[:title] || entry.title,
+                channel: meta[:author_name] || entry.channel,
+                duration_s: meta[:duration] || entry.duration_s,
+                thumbnail_url: meta[:thumbnail_url] || entry.thumbnail_url
+            }
+          end
 
         _ ->
           entry
       end
     end)
+    |> Enum.reject(&is_nil/1)
   end
 
   # Match the patterns most common on reddit:

@@ -98,7 +98,7 @@ defmodule Byob.YouTube.Videos do
   defp do_fetch(video_id) do
     api_key = Application.get_env(:byob, :youtube_api_key)
 
-    params = [part: "snippet,contentDetails", id: video_id, key: api_key]
+    params = [part: "snippet,contentDetails,status", id: video_id, key: api_key]
 
     case http_get(@api_url, params) do
       {:ok, %{status: 200, body: %{"items" => [item | _]}}} ->
@@ -143,8 +143,9 @@ defmodule Byob.YouTube.Videos do
   # --- Response parsing ---
 
   @doc false
-  def parse_item(%{"snippet" => snippet, "contentDetails" => details}) do
+  def parse_item(%{"snippet" => snippet, "contentDetails" => details} = item) do
     thumbnails = snippet["thumbnails"] || %{}
+    status = item["status"] || %{}
 
     thumb =
       get_in(thumbnails, ["maxres", "url"]) ||
@@ -157,7 +158,8 @@ defmodule Byob.YouTube.Videos do
       author_name: snippet["channelTitle"],
       thumbnail_url: thumb,
       duration: parse_iso_duration(details["duration"]),
-      published_at: snippet["publishedAt"]
+      published_at: snippet["publishedAt"],
+      embeddable: Map.get(status, "embeddable", true)
     }
   end
 
