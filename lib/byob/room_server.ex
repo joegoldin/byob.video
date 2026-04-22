@@ -2,6 +2,7 @@ defmodule Byob.RoomServer do
   use GenServer
 
   alias Byob.RoomServer.Round
+  alias Byob.SyncLog
 
   @default_sb_settings %{
     "sponsor" => "auto_skip",
@@ -230,6 +231,7 @@ defmodule Byob.RoomServer do
     end
 
     state = log_activity(state, :joined, user_id)
+    SyncLog.join(state.room_id, user_id, map_size(state.users))
     broadcast(state, {:users_updated, state.users})
     {:reply, {:ok, snapshot(state)}, state}
   end
@@ -307,6 +309,9 @@ defmodule Byob.RoomServer do
         # Only broadcast on real state transitions — redundant plays are dropped
         if was_paused do
           broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
+          SyncLog.play(state.room_id, user_id, current_media_url(state), position, "paused→playing")
+        else
+          SyncLog.redundant(state.room_id, "play", user_id)
         end
 
         {:reply, :ok, state}
@@ -343,6 +348,9 @@ defmodule Byob.RoomServer do
         # Only broadcast on real state transitions — redundant pauses are dropped
         if was_playing do
           broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
+          SyncLog.pause(state.room_id, user_id, current_media_url(state), position, "playing→paused")
+        else
+          SyncLog.redundant(state.room_id, "pause", user_id)
         end
 
         {:reply, :ok, state}
@@ -380,6 +388,7 @@ defmodule Byob.RoomServer do
           state
         end
 
+      SyncLog.seek(state.room_id, user_id, current_media_url(state), position)
       broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
       {:reply, :ok, state}
     end
@@ -824,6 +833,7 @@ defmodule Byob.RoomServer do
   def handle_info(:state_heartbeat, state) do
     now = System.monotonic_time(:millisecond)
     position = current_position(state)
+    SyncLog.heartbeat(state.room_id, state.play_state, position)
 
     broadcast(
       state,
@@ -1136,6 +1146,15 @@ defmodule Byob.RoomServer do
       idx ->
         item = Enum.at(state.queue, idx)
         if item, do: item.added_by_name, else: nil
+    end
+  end
+
+  defp current_media_url(state) do
+    case state.current_index do
+      nil -> nil
+      idx ->
+        item = Enum.at(state.queue, idx)
+        if item, do: item.url, else: nil
     end
   end
 
