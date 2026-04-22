@@ -220,6 +220,22 @@ defmodule Byob.RoomServer do
   def handle_call({:join, user_id, username, opts}, _from, state) do
     is_extension = Keyword.get(opts, :is_extension, false)
 
+    # Clean up stale extension users with the same username (SW reconnections
+    # create new user IDs, leaving orphaned entries)
+    state =
+      if is_extension do
+        stale_ids =
+          state.users
+          |> Enum.filter(fn {uid, u} ->
+            uid != user_id && u.username == username && Map.get(u, :is_extension, false)
+          end)
+          |> Enum.map(fn {uid, _} -> uid end)
+
+        %{state | users: Map.drop(state.users, stale_ids)}
+      else
+        state
+      end
+
     state =
       state
       |> cancel_cleanup()
