@@ -1017,21 +1017,22 @@ defmodule Byob.RoomServer do
         connected
         |> Enum.group_by(fn {_, u} -> u.username end)
 
-      total = map_size(by_username)
+      # Only count users who have extension connections — users on byob.video
+      # without extension are watching normally and shouldn't affect the count
+      ext_usernames =
+        by_username
+        |> Enum.filter(fn {_, entries} ->
+          Enum.any?(entries, fn {_, u} -> Map.get(u, :is_extension, false) end)
+        end)
+
+      total = length(ext_usernames)
 
       ready =
-        by_username
+        ext_usernames
         |> Enum.count(fn {_, entries} ->
-          has_ext = Enum.any?(entries, fn {_, u} -> Map.get(u, :is_extension, false) end)
-          # Users without an extension connection aren't ready yet (they haven't opened the player)
-          # Users with an extension connection are ready when that connection is marked ready
-          if has_ext do
-            Enum.all?(entries, fn {_, u} ->
-              !Map.get(u, :is_extension, false) || Map.get(u, :ready, false)
-            end)
-          else
-            false
-          end
+          Enum.all?(entries, fn {_, u} ->
+            !Map.get(u, :is_extension, false) || Map.get(u, :ready, false)
+          end)
         end)
 
       broadcast(state, {:ready_count, %{ready: ready, total: total}})
