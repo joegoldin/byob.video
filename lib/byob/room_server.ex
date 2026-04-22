@@ -65,8 +65,8 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:leave, user_id})
   end
 
-  def mark_tab_ready(pid, tab_id) do
-    GenServer.call(pid, {:mark_tab_ready, tab_id})
+  def mark_tab_ready(pid, tab_id, ext_user_id) do
+    GenServer.call(pid, {:mark_tab_ready, tab_id, ext_user_id})
   end
 
   def clear_ready_tab(pid, tab_id) do
@@ -265,20 +265,21 @@ defmodule Byob.RoomServer do
     {:reply, {:ok, snapshot(state)}, state}
   end
 
-  def handle_call({:mark_tab_ready, tab_id}, _from, state) when is_binary(tab_id) do
-    ready_tabs = Map.get(state, :ready_tabs, MapSet.new())
-    state = Map.put(state, :ready_tabs, MapSet.put(ready_tabs, tab_id))
+  # ready_tabs is a map of %{tab_id => ext_user_id} so we can clear per-user on leave
+  def handle_call({:mark_tab_ready, tab_id, ext_user_id}, _from, state) when is_binary(tab_id) do
+    ready_tabs = Map.get(state, :ready_tabs, %{})
+    state = Map.put(state, :ready_tabs, Map.put(ready_tabs, tab_id, ext_user_id))
     broadcast_ready_count(state)
     {:reply, :ok, state}
   end
 
-  def handle_call({:mark_tab_ready, _}, _from, state) do
+  def handle_call({:mark_tab_ready, _, _}, _from, state) do
     {:reply, :ok, state}
   end
 
   def handle_call({:clear_ready_tab, tab_id}, _from, state) when is_binary(tab_id) do
-    ready_tabs = Map.get(state, :ready_tabs, MapSet.new())
-    state = Map.put(state, :ready_tabs, MapSet.delete(ready_tabs, tab_id))
+    ready_tabs = Map.get(state, :ready_tabs, %{})
+    state = Map.put(state, :ready_tabs, Map.delete(ready_tabs, tab_id))
     broadcast_ready_count(state)
     {:reply, :ok, state}
   end
@@ -290,10 +291,18 @@ defmodule Byob.RoomServer do
   def handle_call({:leave, user_id}, _from, state) do
     state = log_activity(state, :left, user_id)
 
-    # If this is an extension user leaving, clear all ready tabs they managed.
+    # If this is an extension user leaving, clear only their ready tabs.
     # When the SW dies, it can't send video:unready — this is the fallback.
     is_ext = get_in(state, [Access.key(:users), user_id, Access.key(:is_extension)])
-    state = if is_ext, do: Map.put(state, :ready_tabs, MapSet.new()), else: state
+
+    state =
+      if is_ext do
+        ready_tabs = Map.get(state, :ready_tabs, %{})
+        cleaned = ready_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
+        Map.put(state, :ready_tabs, cleaned)
+      else
+        state
+      end
 
     # Mark as disconnected instead of removing
     state =
@@ -1042,8 +1051,8 @@ defmodule Byob.RoomServer do
         |> length()
 
       # Ready = number of unique tabs that reported ready (capped at total)
-      ready_tabs = Map.get(state, :ready_tabs, MapSet.new())
-      ready = min(MapSet.size(ready_tabs), total)
+      ready_tabs = Map.get(state, :ready_tabs, %{})
+      ready = min(map_size(ready_tabs), total)
 
       broadcast(state, {:ready_count, %{ready: ready, total: total}})
     end

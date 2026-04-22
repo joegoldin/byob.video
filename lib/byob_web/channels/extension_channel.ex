@@ -102,7 +102,7 @@ defmodule ByobWeb.ExtensionChannel do
 
   def handle_in("video:ready", payload, socket) do
     tab_id = payload["tab_id"]
-    RoomServer.mark_tab_ready(socket.assigns.room_pid, tab_id)
+    RoomServer.mark_tab_ready(socket.assigns.room_pid, tab_id, socket.assigns.user_id)
     {:noreply, socket}
   end
 
@@ -210,8 +210,8 @@ defmodule ByobWeb.ExtensionChannel do
           |> Enum.uniq()
           |> length()
 
-        ready_tabs = Map.get(state, :ready_tabs, MapSet.new())
-        ready = min(MapSet.size(ready_tabs), total)
+        ready_tabs = Map.get(state, :ready_tabs, %{})
+        ready = min(map_size(ready_tabs), total)
 
         %{ready: ready, total: total}
       else
