@@ -708,32 +708,22 @@
     const allReady = ready >= total && total > 0;
     const allHaveTab = hasTab >= total;
 
-    // Dynamic format: collapse tiers that are equal
-    // All same: just show "2/2"
-    // Tab == total but not all ready: "1/2" (ready/total)
-    // All different: "1/1/2" (ready/hasTab/total)
-    if (allHaveTab) {
-      count.textContent = `${ready}/${total}`;
-    } else {
-      count.textContent = `${ready}/${hasTab}/${total}`;
-    }
+    count.textContent = `${ready}/${total}`;
 
     icon.setAttribute("fill", allReady ? "#00d400" : "rgba(255,255,255,0.5)");
     count.style.opacity = allReady ? "1" : "0.5";
     count.style.color = allReady ? "#00d400" : "white";
 
-    // Tooltip — show counts matching the display, then what's needed
+    // Tooltip — detailed breakdown
     const parts = [];
     if (allReady) {
       parts.push(`All ${total} users synced and ready to play`);
     } else {
-      parts.push(`${ready} synced / ${hasTab} player open / ${total} in room`);
+      parts.push(`${ready} of ${total} ready`);
       const needTab = total - hasTab;
       const needClick = hasTab - ready;
-      const needs = [];
-      if (needTab > 0) needs.push(`${needTab} need${needTab === 1 ? "s" : ""} to open player`);
-      if (needClick > 0) needs.push(`${needClick} need${needClick === 1 ? "s" : ""} to click play`);
-      if (needs.length) parts.push(needs.join(", "));
+      if (needTab > 0) parts.push(`${needTab} need${needTab === 1 ? "s" : ""} to open external player`);
+      if (needClick > 0) parts.push(`${needClick} need${needClick === 1 ? "s" : ""} to click play`);
     }
     el.title = parts.join(" · ");
   }
