@@ -462,11 +462,11 @@
     toast.id = "byob-join-toast";
     toast.style.cssText = `
       position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%);
-      z-index: 999999; background: rgba(0,0,0,0.9); color: white;
-      font-family: system-ui, sans-serif; font-size: 15px; font-weight: 500;
-      padding: 12px 24px; border-radius: 10px;
-      border: 1px solid rgba(255,255,255,0.2);
-      backdrop-filter: blur(10px); pointer-events: none;
+      z-index: 999999; background: #7c3aed; color: white;
+      font-family: system-ui, sans-serif; font-size: 15px; font-weight: 600;
+      padding: 14px 28px; border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15);
+      pointer-events: none;
       animation: byob-toast-pulse 2s ease-in-out infinite;
     `;
     toast.textContent = text;
@@ -476,8 +476,8 @@
     style.id = "byob-toast-style";
     style.textContent = `
       @keyframes byob-toast-pulse {
-        0%, 100% { opacity: 0.9; }
-        50% { opacity: 0.6; }
+        0%, 100% { opacity: 1; box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15); }
+        50% { opacity: 0.85; box-shadow: 0 4px 32px rgba(124, 58, 237, 0.7), 0 0 0 1px rgba(255,255,255,0.25); }
       }
     `;
     document.head.appendChild(style);
