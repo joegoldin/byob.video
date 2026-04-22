@@ -278,6 +278,8 @@
 
   // Event handlers — with suppression
   function onVideoPlay() {
+    // User played — cancel any pause enforcer that's fighting them
+    if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced) return;
     if (shouldSuppress("playing")) return;
     if (port && hookedVideo) {
@@ -466,11 +468,12 @@
         suppress("paused");
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.pause();
-        // Enforce pause for 2s — fights autoplay/delayed play from sites
+        // Enforce pause briefly — fights autoplay/delayed play from sites.
+        // Don't re-suppress in the enforcer (it would reset suppression
+        // state and swallow the user's next play/pause).
         if (pauseEnforcer) clearInterval(pauseEnforcer);
         pauseEnforcer = setInterval(() => {
           if (hookedVideo && !hookedVideo.paused) {
-            suppress("paused");
             hookedVideo.pause();
           }
         }, 200);
