@@ -42,7 +42,7 @@ function handleContentMessage(msg, port, tabId) {
         // Already connected — just notify this port it's ready
         port.postMessage({ type: "byob:channel-ready" });
       } else {
-        connectToRoom(msg.room_id, msg.server_url, msg.token);
+        connectToRoom(msg.room_id, msg.server_url, msg.token, msg.username);
       }
       break;
 
@@ -111,7 +111,7 @@ function handleContentMessage(msg, port, tabId) {
   }
 }
 
-function connectToRoom(roomId, serverUrl, token) {
+function connectToRoom(roomId, serverUrl, token, username) {
   // Don't reconnect if already connected to this room
   if (currentRoomId === roomId && channel) return;
 
@@ -138,7 +138,8 @@ function connectToRoom(roomId, serverUrl, token) {
   socket.connect();
 
   channel = socket.channel(`extension:${roomId}`, {
-    username: "ExtensionUser",
+    username: username || "ExtensionUser",
+    is_extension: true,
   });
 
   channel.on("sync:play", (data) => broadcastToContentScripts({

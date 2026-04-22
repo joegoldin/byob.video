@@ -57,8 +57,8 @@ defmodule Byob.RoomServer do
     GenServer.start_link(__MODULE__, opts, name: name)
   end
 
-  def join(pid, user_id, username) do
-    GenServer.call(pid, {:join, user_id, username})
+  def join(pid, user_id, username, opts \\ []) do
+    GenServer.call(pid, {:join, user_id, username, opts})
   end
 
   def leave(pid, user_id) do
@@ -213,14 +213,17 @@ defmodule Byob.RoomServer do
   end
 
   @impl true
-  def handle_call({:join, user_id, username}, _from, state) do
+  def handle_call({:join, user_id, username, opts}, _from, state) do
+    is_extension = Keyword.get(opts, :is_extension, false)
+
     state =
       state
       |> cancel_cleanup()
       |> put_in([Access.key(:users), user_id], %{
         username: username,
         joined_at: System.monotonic_time(:millisecond),
-        connected: true
+        connected: true,
+        is_extension: is_extension
       })
       |> maybe_set_host(user_id)
 

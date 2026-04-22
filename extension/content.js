@@ -35,6 +35,7 @@
             server_url: e.data.server_url,
             target_url: e.data.url,
             token: e.data.token,
+            username: e.data.username,
             timestamp: Date.now(),
           },
         });
@@ -48,7 +49,7 @@
       try {
         const config = await chrome.storage.local.get("watchparty_config");
         if (config.watchparty_config) {
-          const { room_id, server_url, target_url, token, timestamp } = config.watchparty_config;
+          const { room_id, server_url, target_url, token, username, timestamp } = config.watchparty_config;
           const age = Date.now() - (timestamp || 0);
           if (age < 30 * 60 * 1000) {
             // Don't activate extension sync on our own domain — the main
@@ -60,7 +61,7 @@
             // In nested iframes (video player embeds), always activate
             const isTopFrame = window === window.top;
             if (!isTopFrame) {
-              activate(room_id, server_url, token);
+              activate(room_id, server_url, token, username);
               return;
             }
             // In top frame, match URL
@@ -68,7 +69,7 @@
               const targetBase = new URL(target_url).origin + new URL(target_url).pathname;
               const currentBase = window.location.origin + window.location.pathname;
               if (currentBase.startsWith(targetBase) || targetBase.startsWith(currentBase)) {
-                activate(room_id, server_url, token);
+                activate(room_id, server_url, token, username);
                 return;
               }
             }
@@ -82,12 +83,12 @@
 
   let activateArgs = null; // saved for reconnection
 
-  function activate(roomId, serverUrl, token) {
-    activateArgs = { roomId, serverUrl, token };
-    connectToSW(roomId, serverUrl, token);
+  function activate(roomId, serverUrl, token, username) {
+    activateArgs = { roomId, serverUrl, token, username };
+    connectToSW(roomId, serverUrl, token, username);
   }
 
-  function connectToSW(roomId, serverUrl, token) {
+  function connectToSW(roomId, serverUrl, token, username) {
     // Show sync bar immediately in top frame with "Loading..." status
     if (window === window.top) {
       injectSyncBar();
@@ -99,7 +100,7 @@
       port = chrome.runtime.connect({ name: "watchparty" });
     } catch (e) {
       // Service worker not available — retry after a delay
-      setTimeout(() => connectToSW(roomId, serverUrl, token), 2000);
+      setTimeout(() => connectToSW(roomId, serverUrl, token, username), 2000);
       return;
     }
 
@@ -108,6 +109,7 @@
       room_id: roomId,
       server_url: serverUrl,
       token: token,
+      username: username,
     });
 
     port.onMessage.addListener(handleSWMessage);
@@ -124,8 +126,8 @@
       // If SW was terminated (Chrome MV3 lifecycle), reconnect after a delay
       if (activateArgs) {
         setTimeout(() => {
-          const { roomId: r, serverUrl: s, token: t } = activateArgs;
-          connectToSW(r, s, t);
+          const { roomId: r, serverUrl: s, token: t, username: u } = activateArgs;
+          connectToSW(r, s, t, u);
         }, 1000);
       } else {
         cleanup();

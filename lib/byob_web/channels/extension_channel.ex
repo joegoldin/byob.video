@@ -17,7 +17,7 @@ defmodule ByobWeb.ExtensionChannel do
     user_id = socket.assigns.user_id
     username = (params["username"] || "ExtensionUser") |> String.slice(0, 30)
 
-    {:ok, state} = RoomServer.join(pid, user_id, username)
+    {:ok, state} = RoomServer.join(pid, user_id, username, is_extension: true)
     SyncLog.ext_join(room_id, user_id)
     Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
 

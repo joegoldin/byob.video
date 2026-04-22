@@ -466,6 +466,7 @@ defmodule ByobWeb.RoomLive do
             data-room-id={@room_id}
             data-server-url={ByobWeb.Endpoint.url()}
             data-token={ByobWeb.ExtensionSocket.generate_token(@room_id)}
+            data-username={@username}
             class="btn btn-primary btn-sm"
           >
             Open Player Window

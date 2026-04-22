@@ -950,7 +950,7 @@ defmodule ByobWeb.RoomLive.Components do
         <h3 class="card-title text-sm">
           Users
           <span class="badge badge-sm">
-            {@users |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq() |> length()}
+            {@users |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end) |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq() |> length()}
           </span>
         </h3>
         <ul class="space-y-2 mt-1 max-h-48 overflow-y-auto">
@@ -1096,6 +1096,7 @@ defmodule ByobWeb.RoomLive.Components do
 
   def dedup_users(users, my_user_id) do
     users
+    |> Enum.reject(fn {_id, u} -> Map.get(u, :is_extension, false) end)
     |> Enum.sort_by(fn {id, u} ->
       {if(is_self_user(id, my_user_id), do: 0, else: 1), if(u.connected, do: 0, else: 1)}
     end)
