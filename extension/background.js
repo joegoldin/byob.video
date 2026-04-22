@@ -24,6 +24,13 @@ chrome.runtime.onConnect.addListener((port) => {
     void chrome.runtime.lastError;
     const idx = ports.indexOf(entry);
     if (idx > -1) ports.splice(idx, 1);
+    // If no other port from this tab, mark tab as unready
+    if (tabId != null && channel) {
+      const tabStillConnected = ports.some(e => e.tabId === tabId);
+      if (!tabStillConnected) {
+        channel.push("video:unready", { tab_id: String(tabId) });
+      }
+    }
     if (ports.length === 0 && channel) {
       // All external player windows closed — pause so next joiner doesn't autoplay
       channel.push("video:all_closed", {});

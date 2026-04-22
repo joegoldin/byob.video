@@ -69,6 +69,10 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:mark_tab_ready, tab_id})
   end
 
+  def clear_ready_tab(pid, tab_id) do
+    GenServer.call(pid, {:clear_ready_tab, tab_id})
+  end
+
   def get_state(pid) do
     GenServer.call(pid, :get_state)
   end
@@ -269,6 +273,17 @@ defmodule Byob.RoomServer do
   end
 
   def handle_call({:mark_tab_ready, _}, _from, state) do
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:clear_ready_tab, tab_id}, _from, state) when is_binary(tab_id) do
+    ready_tabs = Map.get(state, :ready_tabs, MapSet.new())
+    state = Map.put(state, :ready_tabs, MapSet.delete(ready_tabs, tab_id))
+    broadcast_ready_count(state)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:clear_ready_tab, _}, _from, state) do
     {:reply, :ok, state}
   end
 
