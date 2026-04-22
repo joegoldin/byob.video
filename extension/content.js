@@ -389,15 +389,12 @@
     // Handle synced before hookedVideo/needsGesture guards — the top frame
     // may not have a hooked video (it's in an iframe) but still needs to
     // hide the toast and update the sync bar.
-    // Only accept if this client already initiated sync (needsGesture=false),
-    // otherwise a broadcast from another tab's sync would hide our toast.
     if (msg.type === "command:synced") {
-      if (!needsGesture) {
-        synced = true;
-        hideJoinToast();
-        if (hookedVideo) {
-          updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
-        }
+      synced = true;
+      needsGesture = false;
+      hideJoinToast();
+      if (hookedVideo) {
+        updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
       }
       return;
     }
