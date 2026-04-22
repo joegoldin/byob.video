@@ -477,8 +477,8 @@
     if (!dot || !status) return;
 
     const states = {
-      loading:   { color: "#888",    text: "Loading..." },
-      searching: { color: "#ff9900", text: "Searching for video..." },
+      loading:   { color: "#888",    text: "Connecting..." },
+      searching: { color: "#ff9900", text: "Play the video to start syncing" },
       syncing:   { color: "#ff9900", text: "Syncing..." },
       clickjoin: { color: "#ff9900", text: "Click play to sync" },
       playing:   { color: "#00d400", text: "Playing" },
