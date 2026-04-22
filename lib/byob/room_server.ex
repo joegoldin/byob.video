@@ -1042,19 +1042,24 @@ defmodule Byob.RoomServer do
 
     # Only broadcast when extension users exist — otherwise the count is meaningless
     if has_extension_users do
-      # Total = unique non-extension connected users (actual people)
-      total =
+      non_ext = connected |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
+      non_ext_usernames = non_ext |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq()
+      total = length(non_ext_usernames)
+
+      # Users who have opened the external player tab
+      ext_usernames =
         connected
-        |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
+        |> Enum.filter(fn {_, u} -> Map.get(u, :is_extension, false) end)
         |> Enum.map(fn {_, u} -> u.username end)
         |> Enum.uniq()
-        |> length()
 
-      # Ready = number of unique tabs that reported ready (capped at total)
+      has_tab = length(ext_usernames)
+
+      # Users who have synced (clicked play on video)
       ready_tabs = Map.get(state, :ready_tabs, %{})
       ready = min(map_size(ready_tabs), total)
 
-      broadcast(state, {:ready_count, %{ready: ready, total: total}})
+      broadcast(state, {:ready_count, %{ready: ready, has_tab: has_tab, total: total}})
     end
   end
 

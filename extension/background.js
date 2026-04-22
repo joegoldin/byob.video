@@ -197,7 +197,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
   }));
 
   channel.on("ready:count", (data) => {
-    lastReadyCount = { type: "byob:ready-count", ready: data.ready, total: data.total };
+    lastReadyCount = { type: "byob:ready-count", ready: data.ready, has_tab: data.has_tab, total: data.total };
     broadcastToContentScripts(lastReadyCount);
   });
 
@@ -227,7 +227,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
       console.log("[byob] Joined room", roomId, resp);
       initialRoomState = resp;
       if (resp.ready_count) {
-        lastReadyCount = { type: "byob:ready-count", ready: resp.ready_count.ready, total: resp.ready_count.total };
+        lastReadyCount = { type: "byob:ready-count", ready: resp.ready_count.ready, has_tab: resp.ready_count.has_tab, total: resp.ready_count.total };
       }
       broadcastToContentScripts({ type: "byob:channel-ready" });
       if (lastReadyCount) broadcastToContentScripts(lastReadyCount);

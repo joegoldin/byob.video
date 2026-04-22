@@ -406,7 +406,7 @@
     }
 
     if (msg.type === "byob:ready-count" && window === window.top) {
-      updateReadyCount(msg.ready, msg.total);
+      updateReadyCount(msg.ready, msg.has_tab, msg.total);
       return;
     }
 
@@ -665,24 +665,46 @@
     document.body.appendChild(bar);
   }
 
-  function updateReadyCount(ready, total) {
+  function updateReadyCount(ready, hasTab, total) {
     const el = document.getElementById("byob-users");
     const icon = document.getElementById("byob-users-icon");
     const count = document.getElementById("byob-users-count");
     if (!el || !icon || !count) return;
 
     el.style.display = "flex";
-    count.textContent = `${ready}/${total}`;
 
     const allReady = ready >= total && total > 0;
+    const allHaveTab = hasTab >= total;
+
+    // Dynamic format: collapse tiers that are equal
+    // All same: just show "2/2"
+    // Tab == total but not all ready: "1/2" (ready/total)
+    // All different: "1/1/2" (ready/hasTab/total)
+    if (allHaveTab) {
+      count.textContent = `${ready}/${total}`;
+    } else {
+      count.textContent = `${ready}/${hasTab}/${total}`;
+    }
+
     icon.setAttribute("fill", allReady ? "#00d400" : "rgba(255,255,255,0.5)");
     count.style.opacity = allReady ? "1" : "0.5";
     count.style.color = allReady ? "#00d400" : "white";
 
-    const waiting = total - ready;
-    el.title = allReady
-      ? `All ${total} users have their player synced`
-      : `${ready} of ${total} users synced — waiting for ${waiting} to click play`;
+    // Tooltip
+    const parts = [];
+    parts.push(`${total} user${total !== 1 ? "s" : ""} in room`);
+    if (!allHaveTab) {
+      parts.push(`${hasTab} opened external player`);
+    }
+    if (allReady) {
+      parts.push("all synced and ready to play");
+    } else {
+      const needClick = hasTab - ready;
+      const needTab = total - hasTab;
+      if (needClick > 0) parts.push(`${needClick} need${needClick === 1 ? "s" : ""} to click play`);
+      if (needTab > 0) parts.push(`${needTab} need${needTab === 1 ? "s" : ""} to open player`);
+    }
+    el.title = parts.join(" · ");
   }
 
   let _countdownInterval = null;

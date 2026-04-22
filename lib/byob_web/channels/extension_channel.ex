@@ -204,17 +204,22 @@ defmodule ByobWeb.ExtensionChannel do
 
     ready_count =
       if has_ext do
-        total =
+        non_ext = connected |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
+        non_ext_usernames = non_ext |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq()
+        total = length(non_ext_usernames)
+
+        ext_usernames =
           connected
-          |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
+          |> Enum.filter(fn {_, u} -> Map.get(u, :is_extension, false) end)
           |> Enum.map(fn {_, u} -> u.username end)
           |> Enum.uniq()
-          |> length()
+
+        has_tab = length(ext_usernames)
 
         ready_tabs = Map.get(state, :ready_tabs, %{})
         ready = min(map_size(ready_tabs), total)
 
-        %{ready: ready, total: total}
+        %{ready: ready, has_tab: has_tab, total: total}
       else
         nil
       end
