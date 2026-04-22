@@ -17,6 +17,11 @@ chrome.runtime.onConnect.addListener((port) => {
   const entry = { port, tabId };
   ports.push(entry);
 
+  // If channel already connected, report this tab as open immediately
+  if (tabId != null && channel) {
+    channel.push("video:tab_opened", { tab_id: String(tabId) });
+  }
+
   port.onMessage.addListener((msg) => handleContentMessage(msg, port, tabId));
 
   port.onDisconnect.addListener(() => {
