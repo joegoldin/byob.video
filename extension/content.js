@@ -13,6 +13,7 @@
   let expectedState = null;
   let safetyTimeout = null;
   let timeReportInterval = null;
+  let commandCooldown = null; // blocks ALL outbound events briefly after a server command
 
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
@@ -280,7 +281,7 @@
   function onVideoPlay() {
     // Cancel any pause enforcer that's fighting the user's play
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-    if (!synced) return;
+    if (!synced || commandCooldown) return;
     if (shouldSuppress("playing")) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -291,7 +292,7 @@
   }
 
   function onVideoPause() {
-    if (!synced) return;
+    if (!synced || commandCooldown) return;
     if (shouldSuppress("paused")) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -302,7 +303,7 @@
   }
 
   function onVideoSeeked() {
-    if (!synced) return;
+    if (!synced || commandCooldown) return;
     if (shouldSuppress("seeked")) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -317,6 +318,14 @@
     if (port) {
       port.postMessage({ type: "video:ended" });
     }
+  }
+
+  // Command cooldown — blocks ALL outbound events for 500ms after a server
+  // command. Prevents echo loops where a failed play() or seek-triggered pause
+  // leaks back to the server.
+  function startCommandCooldown() {
+    if (commandCooldown) clearTimeout(commandCooldown);
+    commandCooldown = setTimeout(() => { commandCooldown = null; }, 500);
   }
 
   // Suppression — single-shot for HTML5 <video> elements.
@@ -453,11 +462,7 @@
     switch (msg.type) {
       case "command:play":
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-        suppress("playing");
-        // Seek if needed, then play. Don't use tryPlay() here — if the user
-        // already clicked play (requestSync flow), the video is playing and
-        // we just need to adjust position. play() on an already-playing video
-        // resolves immediately without needing a gesture.
+        startCommandCooldown();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         if (hookedVideo.paused) {
           hookedVideo.play().catch(() => {});
@@ -465,12 +470,10 @@
         break;
 
       case "command:pause":
-        suppress("paused");
+        startCommandCooldown();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.pause();
         // Enforce pause briefly — fights autoplay/delayed play from sites.
-        // Don't re-suppress in the enforcer (resets suppression state,
-        // swallows user's next play/pause).
         if (pauseEnforcer) clearInterval(pauseEnforcer);
         pauseEnforcer = setInterval(() => {
           if (hookedVideo && !hookedVideo.paused) {
@@ -481,7 +484,7 @@
         break;
 
       case "command:seek":
-        suppress("seeked");
+        startCommandCooldown();
         hookedVideo.currentTime = msg.position;
         break;
 
