@@ -304,7 +304,11 @@ defmodule Byob.RoomServer do
             state
           end
 
-        broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
+        # Only broadcast on real state transitions — redundant plays are dropped
+        if was_paused do
+          broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
+        end
+
         {:reply, :ok, state}
     end
   end
@@ -336,7 +340,11 @@ defmodule Byob.RoomServer do
             state
           end
 
-        broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
+        # Only broadcast on real state transitions — redundant pauses are dropped
+        if was_playing do
+          broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
+        end
+
         {:reply, :ok, state}
     end
   end
