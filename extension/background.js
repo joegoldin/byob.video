@@ -9,6 +9,36 @@ let lastReadyCount = null;
 let currentServerUrl = null;
 let initialRoomState = null;
 
+// Echo prevention: track which port originated the last play/pause/seek
+// so we can skip relaying the server's echo back to that port.
+let lastEventPort = null;
+let lastEventType = null;
+let lastEventTimer = null;
+
+function markOrigin(port, type) {
+  lastEventPort = port;
+  lastEventType = type;
+  if (lastEventTimer) clearTimeout(lastEventTimer);
+  // Clear after 2s — if the echo hasn't arrived by then, it never will
+  lastEventTimer = setTimeout(() => { lastEventPort = null; lastEventType = null; }, 2000);
+}
+
+function clearOrigin() {
+  lastEventPort = null;
+  lastEventType = null;
+  if (lastEventTimer) { clearTimeout(lastEventTimer); lastEventTimer = null; }
+}
+
+// Broadcast to all ports EXCEPT the origin of the current echo
+function broadcastExceptOrigin(msg, echoType) {
+  const skipPort = (lastEventType === echoType) ? lastEventPort : null;
+  if (skipPort) clearOrigin(); // consumed
+  for (const entry of ports) {
+    if (entry.port === skipPort) continue;
+    try { entry.port.postMessage(msg); } catch (_) {}
+  }
+}
+
 // Listen for port connections from content scripts
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "watchparty") return;
@@ -112,14 +142,17 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:play":
+      markOrigin(port, "play");
       if (channel) channel.push("video:play", { position: msg.position });
       break;
 
     case "video:pause":
+      markOrigin(port, "pause");
       if (channel) channel.push("video:pause", { position: msg.position });
       break;
 
     case "video:seek":
+      markOrigin(port, "seek");
       if (channel) channel.push("video:seek", { position: msg.position });
       break;
 
@@ -178,20 +211,20 @@ function connectToRoom(roomId, serverUrl, token, username) {
     is_extension: true,
   });
 
-  channel.on("sync:play", (data) => broadcastToContentScripts({
+  channel.on("sync:play", (data) => broadcastExceptOrigin({
     type: "command:play",
     position: data.time,
-  }));
+  }, "play"));
 
-  channel.on("sync:pause", (data) => broadcastToContentScripts({
+  channel.on("sync:pause", (data) => broadcastExceptOrigin({
     type: "command:pause",
     position: data.time,
-  }));
+  }, "pause"));
 
-  channel.on("sync:seek", (data) => broadcastToContentScripts({
+  channel.on("sync:seek", (data) => broadcastExceptOrigin({
     type: "command:seek",
     position: data.time,
-  }));
+  }, "seek"));
 
   channel.on("sync:correction", (data) => {
     // Could implement drift correction in extension too

@@ -148,13 +148,7 @@
   let synced = false; // Don't send events until initial sync is done
   let needsGesture = true; // True until video actually plays — blocks commands
   let pauseEnforcer = null;
-  let suppressGen = 0;
-  let suppressUntilGen = 0;
-  let expectedState = null;
-  let safetyTimeout = null;
   let timeReportInterval = null;
-  let commandCooldown = null; // blocks ALL outbound events briefly after a server command
-  let seekCooldown = null; // blocks outbound play/pause briefly after a user seek
   let expectedPlayState = null; // "playing" or "paused" — what the server wants
   let stateCheckInterval = null;
   let mismatchSince = null;
@@ -393,7 +387,6 @@
     // Send periodic state updates (position, duration, playing) for relay to room + sync bar
     timeReportInterval = setInterval(() => {
       if (!hookedVideo) return;
-      lastKnownPosition = hookedVideo.currentTime;
       const msg = {
         type: Msg.VIDEO_STATE,
         position: hookedVideo.currentTime,
@@ -432,56 +425,28 @@
 
   // Event handlers — with suppression
   function onVideoPlay() {
-    // Cancel any pause enforcer that's fighting the user's play
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-    if (!synced || commandCooldown || seekCooldown) return;
-    if (shouldSuppress(State.PLAYING)) return;
+    if (!synced) return;
     expectedPlayState = State.PLAYING;
     mismatchSince = null;
     if (port && hookedVideo) {
-      port.postMessage({
-        type: Msg.VIDEO_PLAY,
-        position: hookedVideo.currentTime,
-      });
+      port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
     }
   }
 
-  let lastKnownPosition = 0;
-
   function onVideoPause() {
-    if (!synced || commandCooldown || seekCooldown) return;
-    if (shouldSuppress(State.PAUSED)) return;
-
-    // If the position jumped significantly, this is a seek-triggered pause
-    // (site pauses → seeks → resumes). Don't send it — the seeked handler
-    // will send the seek event instead.
-    if (hookedVideo && Math.abs(hookedVideo.currentTime - lastKnownPosition) > 1) {
-      return;
-    }
-
+    if (!synced) return;
     expectedPlayState = State.PAUSED;
     mismatchSince = null;
     if (port && hookedVideo) {
-      port.postMessage({
-        type: Msg.VIDEO_PAUSE,
-        position: hookedVideo.currentTime,
-      });
+      port.postMessage({ type: Msg.VIDEO_PAUSE, position: hookedVideo.currentTime });
     }
   }
 
   function onVideoSeeked() {
-    if (!synced || commandCooldown) return;
-    if (shouldSuppress(State.SEEKED)) return;
+    if (!synced) return;
     if (port && hookedVideo) {
-      port.postMessage({
-        type: Msg.VIDEO_SEEK,
-        position: hookedVideo.currentTime,
-      });
-      // Suppress outbound play/pause for 500ms — the site's player fires
-      // pause→seeked→play as a burst during seek. Only the seek matters;
-      // the surrounding play/pause are player behavior, not user intent.
-      if (seekCooldown) clearTimeout(seekCooldown);
-      seekCooldown = setTimeout(() => { seekCooldown = null; }, 500);
+      port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
     }
   }
 
@@ -520,7 +485,7 @@
     mismatchSince = null;
 
     stateCheckInterval = setInterval(() => {
-      if (!hookedVideo || !synced || !expectedPlayState || commandCooldown) return;
+      if (!hookedVideo || !synced || !expectedPlayState) return;
 
       const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
 
@@ -530,7 +495,6 @@
         } else if (performance.now() - mismatchSince > 1000) {
           // Mismatch persisted for 1s — try to correct
           mismatchSince = null;
-          startCommandCooldown(); // prevent echo from correction
 
           if (expectedPlayState === State.PLAYING) {
             hookedVideo.play().then(() => {
@@ -564,45 +528,9 @@
     mismatchSince = null;
   }
 
-  // Command cooldown — blocks ALL outbound events for 500ms after a server
-  // command. Prevents echo loops where a failed play() or seek-triggered pause
-  // leaks back to the server.
-  function startCommandCooldown() {
-    if (commandCooldown) clearTimeout(commandCooldown);
-    commandCooldown = setTimeout(() => { commandCooldown = null; }, 500);
-  }
-
-  // Suppression — single-shot for HTML5 <video> elements.
-  // Unlike YouTube (which fires multi-event sequences like BUFFERING→PLAYING),
-  // HTML5 video fires clean single events. Suppress only the expected event;
-  // let non-matching events through so fast user actions aren't swallowed.
-  function suppress(state) {
-    suppressGen++;
-    suppressUntilGen = suppressGen;
-    expectedState = state;
-    if (safetyTimeout) clearTimeout(safetyTimeout);
-    safetyTimeout = setTimeout(() => {
-      suppressUntilGen = 0;
-      expectedState = null;
-    }, 1500);
-  }
-
-  function shouldSuppress(currentState) {
-    if (suppressUntilGen === 0) return false;
-    if (currentState === expectedState) {
-      // Expected event — swallow it and clear suppression
-      suppressUntilGen = 0;
-      expectedState = null;
-      if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
-      return true;
-    }
-    // Non-matching event (e.g. user quickly paused while we expected "playing")
-    // Clear suppression and let it through — it's a real user action
-    suppressUntilGen = 0;
-    expectedState = null;
-    if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
-    return false;
-  }
+  // (Suppression and cooldowns removed — echo prevention is now in the
+  // service worker via broadcastExceptOrigin. The reconciliation loop
+  // handles any remaining state mismatches.)
 
   // Handle commands from service worker
   function handleSWMessage(msg) {
@@ -722,7 +650,6 @@
       case Msg.COMMAND_PLAY:
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         expectedPlayState = State.PLAYING;
-        startCommandCooldown();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         if (hookedVideo.paused) {
           hookedVideo.play().catch(() => {});
@@ -732,7 +659,6 @@
 
       case Msg.COMMAND_PAUSE:
         expectedPlayState = State.PAUSED;
-        startCommandCooldown();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.pause();
         // Enforce pause briefly — fights autoplay/delayed play from sites.
@@ -746,7 +672,6 @@
         break;
 
       case Msg.COMMAND_SEEK:
-        startCommandCooldown();
         hookedVideo.currentTime = msg.position;
         break;
 
