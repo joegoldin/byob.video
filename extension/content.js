@@ -153,6 +153,7 @@
   let safetyTimeout = null;
   let timeReportInterval = null;
   let commandCooldown = null; // blocks ALL outbound events briefly after a server command
+  let seekCooldown = null; // blocks outbound play/pause briefly after a user seek
   let expectedPlayState = null; // "playing" or "paused" — what the server wants
   let stateCheckInterval = null;
   let mismatchSince = null;
@@ -389,6 +390,7 @@
     // Send periodic state updates (position, duration, playing) for relay to room + sync bar
     timeReportInterval = setInterval(() => {
       if (!hookedVideo) return;
+      lastKnownPosition = hookedVideo.currentTime;
       const msg = {
         type: Msg.VIDEO_STATE,
         position: hookedVideo.currentTime,
@@ -424,7 +426,7 @@
   function onVideoPlay() {
     // Cancel any pause enforcer that's fighting the user's play
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-    if (!synced || commandCooldown) return;
+    if (!synced || commandCooldown || seekCooldown) return;
     if (shouldSuppress(State.PLAYING)) return;
     expectedPlayState = State.PLAYING;
     mismatchSince = null;
@@ -436,9 +438,19 @@
     }
   }
 
+  let lastKnownPosition = 0;
+
   function onVideoPause() {
-    if (!synced || commandCooldown) return;
+    if (!synced || commandCooldown || seekCooldown) return;
     if (shouldSuppress(State.PAUSED)) return;
+
+    // If the position jumped significantly, this is a seek-triggered pause
+    // (site pauses → seeks → resumes). Don't send it — the seeked handler
+    // will send the seek event instead.
+    if (hookedVideo && Math.abs(hookedVideo.currentTime - lastKnownPosition) > 1) {
+      return;
+    }
+
     expectedPlayState = State.PAUSED;
     mismatchSince = null;
     if (port && hookedVideo) {
@@ -457,6 +469,11 @@
         type: Msg.VIDEO_SEEK,
         position: hookedVideo.currentTime,
       });
+      // Suppress outbound play/pause for 500ms — the site's player fires
+      // pause→seeked→play as a burst during seek. Only the seek matters;
+      // the surrounding play/pause are player behavior, not user intent.
+      if (seekCooldown) clearTimeout(seekCooldown);
+      seekCooldown = setTimeout(() => { seekCooldown = null; }, 500);
     }
   }
 
