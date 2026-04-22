@@ -336,13 +336,33 @@
       const timeEl = document.getElementById("byob-time");
       const statusEl = document.getElementById("byob-status");
       const dotEl = document.getElementById("byob-dot");
+      const playPauseBtn = document.getElementById("byob-playpause");
+      const progressWrap = document.getElementById("byob-progress-wrap");
+      const progressFill = document.getElementById("byob-progress-fill");
+
       if (timeEl && msg.duration > 0) timeEl.textContent = fmt(msg.position) + " / " + fmt(msg.duration);
       else if (timeEl) timeEl.textContent = fmt(msg.position);
+
       if (statusEl && dotEl) {
         if (msg.playing) {
           statusEl.textContent = "Playing"; statusEl.style.color = "#00d400"; dotEl.style.background = "#00d400";
         } else {
           statusEl.textContent = "Paused"; statusEl.style.color = "#ff9900"; dotEl.style.background = "#ff9900";
+        }
+      }
+
+      // Show and update play/pause button + progress bar
+      if (playPauseBtn) {
+        playPauseBtn.style.display = "";
+        playPauseBtn.textContent = msg.playing ? "⏸" : "▶";
+        playPauseBtn.dataset.playing = msg.playing;
+        playPauseBtn.dataset.position = msg.position;
+      }
+      if (progressWrap && progressFill) {
+        progressWrap.style.display = "";
+        progressWrap.dataset.duration = msg.duration;
+        if (msg.duration > 0) {
+          progressFill.style.width = ((msg.position / msg.duration) * 100) + "%";
         }
       }
       return;
@@ -520,10 +540,10 @@
 
     const content = document.createElement("div");
     content.id = "byob-bar-content";
-    content.style.cssText = "display:flex;align-items:center;gap:12px;padding:6px 16px;";
+    content.style.cssText = "display:flex;align-items:center;gap:10px;padding:6px 16px;";
 
     const logo = document.createElement("span");
-    logo.style.cssText = "font-weight:bold;font-size:14px;opacity:0.7";
+    logo.style.cssText = "font-weight:bold;font-size:14px;opacity:0.7;flex-shrink:0";
     logo.textContent = "byob";
 
     const dot = document.createElement("span");
@@ -532,22 +552,51 @@
 
     const status = document.createElement("span");
     status.id = "byob-status";
-    status.style.cssText = "color:#888;font-size:12px";
+    status.style.cssText = "color:#888;font-size:12px;flex-shrink:0";
     status.textContent = "Loading...";
 
-    const spacer = document.createElement("div");
-    spacer.style.flex = "1";
+    // Play/pause button — hidden until synced
+    const playPauseBtn = document.createElement("button");
+    playPauseBtn.id = "byob-playpause";
+    playPauseBtn.style.cssText = "display:none;background:none;border:none;color:white;cursor:pointer;font-size:16px;padding:0 2px;line-height:1;opacity:0.8;flex-shrink:0;outline:none;-webkit-user-select:none;user-select:none;";
+    playPauseBtn.textContent = "▶";
+    playPauseBtn.addEventListener("click", () => {
+      if (port) {
+        if (playPauseBtn.dataset.playing === "true") {
+          port.postMessage({ type: "video:pause", position: parseFloat(playPauseBtn.dataset.position || 0) });
+        } else {
+          port.postMessage({ type: "video:play", position: parseFloat(playPauseBtn.dataset.position || 0) });
+        }
+      }
+    });
+
+    // Progress bar — hidden until synced
+    const progressWrap = document.createElement("div");
+    progressWrap.id = "byob-progress-wrap";
+    progressWrap.style.cssText = "display:none;flex:1;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;cursor:pointer;position:relative;min-width:60px;";
+    const progressFill = document.createElement("div");
+    progressFill.id = "byob-progress-fill";
+    progressFill.style.cssText = "height:100%;background:#7c3aed;border-radius:2px;width:0%;transition:width 0.3s linear;pointer-events:none;";
+    progressWrap.appendChild(progressFill);
+    progressWrap.addEventListener("click", (e) => {
+      const rect = progressWrap.getBoundingClientRect();
+      const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const dur = parseFloat(progressWrap.dataset.duration || 0);
+      if (dur > 0 && port) {
+        port.postMessage({ type: "video:seek", position: frac * dur });
+      }
+    });
 
     const time = document.createElement("span");
     time.id = "byob-time";
-    time.style.cssText = "font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px";
+    time.style.cssText = "font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px;flex-shrink:0";
 
     const collapse = document.createElement("button");
     collapse.id = "byob-collapse";
-    collapse.style.cssText = "background:none;color:white;border:none;cursor:pointer;font-size:14px;opacity:0.5;padding:0 4px;line-height:1;outline:none;-webkit-user-select:none;user-select:none;";
+    collapse.style.cssText = "background:none;color:white;border:none;cursor:pointer;font-size:14px;opacity:0.5;padding:0 4px;line-height:1;outline:none;-webkit-user-select:none;user-select:none;flex-shrink:0;";
     collapse.textContent = "\u25BC";
 
-    content.append(logo, dot, status, spacer, time, collapse);
+    content.append(logo, dot, status, playPauseBtn, progressWrap, time, collapse);
     bar.appendChild(content);
 
     // Collapse/expand toggle
@@ -563,7 +612,7 @@
         bar.style.border = "1px solid rgba(255,255,255,0.15)";
         bar.style.borderTop = "1px solid rgba(255,255,255,0.15)";
         bar.querySelector("#byob-bar-content").style.cssText = "display:flex;align-items:center;gap:6px;padding:4px 10px;";
-        bar.querySelectorAll("#byob-dot, #byob-status, #byob-time, #byob-bar-content > div").forEach(el => el.style.display = "none");
+        bar.querySelectorAll("#byob-dot, #byob-status, #byob-time, #byob-playpause, #byob-progress-wrap").forEach(el => el.style.display = "none");
         bar.querySelector("#byob-collapse").textContent = "▲";
       } else {
         // Expand to full bar
@@ -573,8 +622,12 @@
         bar.style.borderRadius = "0";
         bar.style.border = "none";
         bar.style.borderTop = "1px solid rgba(255,255,255,0.15)";
-        bar.querySelector("#byob-bar-content").style.cssText = "display:flex;align-items:center;gap:12px;padding:6px 16px;";
-        bar.querySelectorAll("#byob-dot, #byob-status, #byob-time, #byob-bar-content > div").forEach(el => el.style.display = "");
+        bar.querySelector("#byob-bar-content").style.cssText = "display:flex;align-items:center;gap:10px;padding:6px 16px;";
+        bar.querySelectorAll("#byob-dot, #byob-status, #byob-time").forEach(el => el.style.display = "");
+        // Only show controls if synced
+        if (synced) {
+          bar.querySelectorAll("#byob-playpause, #byob-progress-wrap").forEach(el => el.style.display = "");
+        }
         bar.querySelector("#byob-collapse").textContent = "▼";
       }
     });
