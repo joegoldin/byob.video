@@ -697,7 +697,7 @@ defmodule ByobWeb.RoomLive.Components do
             <span
               :if={show_url?(now_playing)}
               title={now_playing.url}
-              class="block text-xs text-base-content/50 truncate"
+              class="block text-xs text-base-content/50 line-clamp-2 break-all"
             >
               {now_playing.url}
             </span>
