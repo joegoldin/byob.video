@@ -380,7 +380,8 @@
       if (timeEl && msg.duration > 0) timeEl.textContent = fmt(msg.position) + " / " + fmt(msg.duration);
       else if (timeEl) timeEl.textContent = fmt(msg.position);
 
-      if (statusEl && dotEl) {
+      // Don't overwrite "Finished — next in Xs" countdown with "Paused"
+      if (statusEl && dotEl && !_countdownInterval) {
         if (msg.playing) {
           statusEl.textContent = "Playing"; statusEl.style.color = "#00d400"; dotEl.style.background = "#00d400";
           statusEl.title = "Video is playing in sync with the room";
@@ -790,7 +791,7 @@
 
     // Only update status when synced — before that, status is managed by
     // tryAutoSync/tryPlay/waitForNativePlay
-    if (synced) {
+    if (synced && !_countdownInterval) {
       updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
     }
   }, 250);
