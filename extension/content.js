@@ -73,6 +73,7 @@
               const targetBase = new URL(target_url).origin + new URL(target_url).pathname;
               const currentBase = window.location.origin + window.location.pathname;
               if (currentBase.startsWith(targetBase) || targetBase.startsWith(currentBase)) {
+                showJoinToast("Loading byob sync...");
                 activate(room_id, server_url, token, username);
                 return;
               }
