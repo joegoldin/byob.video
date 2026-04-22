@@ -553,10 +553,10 @@ defmodule Byob.RoomServer do
 
         Task.start(fn ->
           result =
-            if item.source_type == :youtube do
-              fetch_youtube_meta(item.source_id, url)
-            else
-              Byob.OEmbed.fetch_opengraph(url)
+            case item.source_type do
+              :youtube -> fetch_youtube_meta(item.source_id, url)
+              :vimeo -> Byob.OEmbed.fetch_vimeo(url)
+              _ -> Byob.OEmbed.fetch_opengraph(url)
             end
 
           case result do

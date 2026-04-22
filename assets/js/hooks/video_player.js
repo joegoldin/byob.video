@@ -2,6 +2,7 @@ import { ClockSync } from "../sync/clock_sync";
 import { Suppression } from "../sync/suppression";
 import { Reconcile } from "../sync/reconcile";
 import * as YouTubePlayer from "../players/youtube";
+import * as VimeoPlayer from "../players/vimeo";
 import * as DirectPlayer from "../players/direct";
 import * as ExtensionPlayer from "../players/extension";
 import { handleYTError } from "../players/youtube_error";
@@ -276,6 +277,8 @@ const VideoPlayer = {
 
     if (sourceType === "youtube") {
       await this._loadYouTube(sourceId, shouldPlay, startSeconds);
+    } else if (sourceType === "vimeo") {
+      await this._loadVimeo(sourceId, shouldPlay, startSeconds);
     } else if (sourceType === "direct_url") {
       this._loadDirectUrl(url);
     } else {
@@ -337,6 +340,32 @@ const VideoPlayer = {
         reuse: null,
       });
     }
+  },
+
+  async _loadVimeo(videoId, shouldPlay, startSeconds = 0) {
+    // Destroy existing player if switching source types
+    if (this.player && this.player.destroy) {
+      try { this.player.destroy(); } catch (_) {}
+    }
+    this.player = null;
+    this.isReady = false;
+
+    const callbacks = {
+      onReady: (player) => {
+        if (player) this.player = player;
+        this.isReady = true;
+        this._applyPendingState();
+        this._startSeekDetector();
+      },
+      onStateChange: (name) => this._onPlayerStateChange(name),
+      onLoadStart: () => {},
+    };
+
+    this.player = await VimeoPlayer.create(this.el, callbacks, {
+      videoId,
+      shouldPlay,
+      startSeconds,
+    });
   },
 
   _loadDirectUrl(url) {
