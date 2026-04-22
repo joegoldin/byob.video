@@ -182,11 +182,11 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   @impl true
-  def terminate(_reason, socket) do
-    if socket.assigns[:room_pid] do
-      RoomServer.leave(socket.assigns.room_pid, socket.assigns.user_id)
-    end
-
+  def terminate(_reason, _socket) do
+    # Don't call leave — the extension may reconnect shortly (Chrome MV3
+    # kills service workers on inactivity). The user's LiveView connection
+    # still exists. If the extension reconnects, it rejoins as the same user.
+    # Room cleanup handles truly abandoned rooms via the empty timeout.
     :ok
   end
 

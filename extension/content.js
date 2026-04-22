@@ -390,14 +390,15 @@
     // may not have a hooked video (it's in an iframe) but still needs to
     // hide the toast and update the sync bar.
     if (msg.type === "command:synced") {
+      const wasAlreadySynced = synced;
       synced = true;
       needsGesture = false;
       hideJoinToast();
       if (hookedVideo) {
         updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+        // Only send video:ready once, from the frame that has the video
+        if (!wasAlreadySynced && port) port.postMessage({ type: "video:ready" });
       }
-      // Notify server this client is ready
-      if (port) port.postMessage({ type: "video:ready" });
       return;
     }
 
