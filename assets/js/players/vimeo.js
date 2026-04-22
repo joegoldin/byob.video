@@ -47,9 +47,10 @@ export async function create(el, callbacks, opts) {
 
   const player = new VimeoPlayer(container, {
     id: videoId,
-    width: "100%",
+    responsive: true,
     autoplay: shouldPlay,
     muted: false,
+    transparent: false,
   });
 
   // Internal state tracking (Vimeo SDK is promise-based, not sync)
@@ -129,17 +130,13 @@ export async function create(el, callbacks, opts) {
   // Wait for player to be ready
   await player.ready();
 
-  // Style the iframe to fill the player area
+  // Ensure the responsive wrapper fills the player area
+  const wrapper = container.querySelector("div[style]") || container;
+  wrapper.style.maxHeight = "100%";
   const iframe = container.querySelector("iframe");
   if (iframe) {
-    iframe.style.width = "100%";
-    iframe.style.height = "100%";
     iframe.style.border = "none";
-    iframe.style.background = "black";
   }
-  container.style.width = "100%";
-  container.style.height = "100%";
-  container.style.background = "black";
 
   // Get initial duration
   try { duration = await player.getDuration(); } catch (_) {}
