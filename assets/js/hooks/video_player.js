@@ -16,6 +16,7 @@ const VideoPlayer = {
       this.pushEvent(event, payload)
     );
     this.suppression = new Suppression();
+    this._playerSettled = true;
     this.reconcile = new Reconcile({
       getCurrentTime: () => this._getCurrentTime(),
       seekTo: (t) => this._seekTo(t),
@@ -206,12 +207,29 @@ const VideoPlayer = {
     } else if (state.play_state === "paused") {
       this.expectedPlayState = "paused";
       this.suppression.suppress("paused");
-      // Use cueVideoById to show thumbnail at the right position without playing
-      if (this.sourceType === "youtube" && this.player?.cueVideoById) {
-        this.player.cueVideoById({
+      if (this.sourceType === "youtube" && this.player?.loadVideoById) {
+        // Load fully (not cue) so the video is ready to play instantly on resume.
+        // _loadingPaused flag tells _onPlayerStateChange to swallow the pause event
+        // once the load completes, rather than echoing it to the server.
+        this._loadingPaused = true;
+        this.player.loadVideoById({
           videoId: this.sourceId,
           startSeconds: state.current_time,
         });
+        // Pause as soon as YouTube starts loading
+        const pauseOnLoad = () => {
+          const s = this.player?.getState?.();
+          if (s === "playing" || s === "buffering") {
+            this._pause();
+            return;
+          }
+          if (this._loadPauseAttempts < 10) {
+            this._loadPauseAttempts = (this._loadPauseAttempts || 0) + 1;
+            setTimeout(pauseOnLoad, 100);
+          }
+        };
+        this._loadPauseAttempts = 0;
+        setTimeout(pauseOnLoad, 100);
       } else {
         this._seekTo(state.current_time);
       }
@@ -219,6 +237,7 @@ const VideoPlayer = {
   },
 
   async _loadVideo(sourceType, sourceId, url, mediaItem) {
+    this._playerSettled = false;
     this.sourceType = sourceType;
     this.sourceId = sourceId;
     this._lastTitle = mediaItem?.title || url;
@@ -394,7 +413,28 @@ const VideoPlayer = {
 
   // Unified YouTube state change handler (called from YouTube player module)
   _onPlayerStateChange(stateName) {
+    // Always let suppression consume events (tracks terminal state)
     if (stateName && this.suppression.shouldSuppress(stateName)) {
+      return;
+    }
+
+    // Buffering is transient — don't push to server, don't update expectedPlayState
+    if (stateName === "buffering") {
+      return;
+    }
+
+    // Mark player as settled on first stable state after load
+    if (!this._playerSettled && (stateName === "playing" || stateName === "paused")) {
+      this._playerSettled = true;
+      // If we were loading-for-pause, the pause has landed — don't push it
+      if (this._loadingPaused && stateName === "paused") {
+        this._loadingPaused = false;
+        return;
+      }
+    }
+
+    // Don't push events to server until player is settled after load
+    if (!this._playerSettled) {
       return;
     }
 
