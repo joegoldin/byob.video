@@ -75,10 +75,11 @@ function handleContentMessage(msg, port, tabId) {
             port.postMessage({ type: "command:seek", position: resp.current_time });
             port.postMessage({ type: "command:pause", position: resp.current_time });
           }
-          // Wait for seek to settle before enabling bidirectional sync,
-          // otherwise the content script sends video:play at the old position
+          // Wait for seek to settle before enabling bidirectional sync.
+          // Broadcast to ALL ports (not just the requester) so the top frame
+          // can hide the toast — the video may be in an iframe.
           setTimeout(() => {
-            port.postMessage({ type: "command:synced" });
+            broadcastToContentScripts({ type: "command:synced" });
           }, 500);
         });
       }
