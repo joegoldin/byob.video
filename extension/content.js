@@ -50,6 +50,12 @@
           const { room_id, server_url, target_url, token, timestamp } = config.watchparty_config;
           const age = Date.now() - (timestamp || 0);
           if (age < 30 * 60 * 1000) {
+            // Don't activate extension sync on our own domain — the main
+            // site handles sync via LiveView. Extension only sets the
+            // data-byob-extension attribute there (done above).
+            const host = window.location.hostname;
+            if (host === "byob.video" || host === "localhost") return;
+
             // In nested iframes (video player embeds), always activate
             const isTopFrame = window === window.top;
             if (!isTopFrame) {
