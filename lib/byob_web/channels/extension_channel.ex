@@ -101,13 +101,14 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   def handle_in("video:ready", payload, socket) do
-    tab_id = payload["tab_id"]
+    # Prefix tab_id with ext user_id to make unique across browser instances
+    tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
     RoomServer.mark_tab_ready(socket.assigns.room_pid, tab_id, socket.assigns.user_id)
     {:noreply, socket}
   end
 
   def handle_in("video:unready", payload, socket) do
-    tab_id = payload["tab_id"]
+    tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
     RoomServer.clear_ready_tab(socket.assigns.room_pid, tab_id)
     {:noreply, socket}
   end

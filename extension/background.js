@@ -121,7 +121,9 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:ready":
-      if (channel) channel.push("video:ready", { tab_id: tabId != null ? String(tabId) : null });
+      if (channel && tabId != null) {
+        channel.push("video:ready", { tab_id: String(tabId) });
+      }
       break;
 
     case "byob:bar-update":
