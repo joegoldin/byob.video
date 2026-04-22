@@ -452,7 +452,7 @@ defmodule ByobWeb.RoomLive.Components do
         </div>
       </div>
       <div
-        :if={@url_preview && @url_preview.source_type == :youtube}
+        :if={@url_preview && @url_preview.source_type in [:youtube, :vimeo]}
         class="flex items-center gap-2 p-3"
       >
         <div :if={@url_preview.thumbnail_url} class="relative flex-shrink-0">
@@ -468,7 +468,7 @@ defmodule ByobWeb.RoomLive.Components do
           </span>
         </div>
         <div class="flex-1 min-w-0">
-          <p class="text-sm font-medium line-clamp-3">{@url_preview.title || "YouTube video"}</p>
+          <p class="text-sm font-medium line-clamp-3">{@url_preview.title || "Video"}</p>
           <p :if={@url_preview.author_name} class="text-xs text-base-content/50">
             {@url_preview.author_name}
             <%= if format_relative_date(@url_preview[:published_at]) do %>
