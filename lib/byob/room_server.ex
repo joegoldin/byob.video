@@ -232,6 +232,7 @@ defmodule Byob.RoomServer do
 
     state = log_activity(state, :joined, user_id)
     SyncLog.join(state.room_id, user_id, map_size(state.users))
+    SyncLog.snapshot(state.room_id, user_id, state.play_state, current_position(state))
     broadcast(state, {:users_updated, state.users})
     {:reply, {:ok, snapshot(state)}, state}
   end
