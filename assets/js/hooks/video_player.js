@@ -179,10 +179,12 @@ const VideoPlayer = {
       this.reconcile.pauseFor(2000);
       this.reconcile.start();
 
-      // Retry play if autoplay was blocked, then show click-to-play overlay
+      // Retry play if autoplay was blocked, then show click-to-play overlay.
+      // Stop retrying once the player has settled (already playing successfully)
+      // to avoid re-arming suppression and blocking user events.
       const checkAndRetry = (attempt) => {
         setTimeout(() => {
-          if (this._embedBlocked) return; // Don't retry if embed was blocked
+          if (this._embedBlocked || this._playerSettled) return;
           let isPlaying = false;
           if (this.sourceType === "youtube") {
             isPlaying = this.player?.getState?.() === "playing" ||
