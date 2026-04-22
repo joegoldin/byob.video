@@ -6,7 +6,7 @@ byob - Bring Your Own Binge
 
 ## Summary
 
-Watch videos together in sync with byob.video — synchronized playback for YouTube, direct video files, and any streaming site with the extension.
+Watch videos together in sync with byob.video — synchronized playback for YouTube, Vimeo, direct video files, and any streaming site with the extension.
 
 ## Description
 
@@ -14,13 +14,16 @@ byob (Bring Your Own Binge) is a free, open-source another sync extension altern
 
 **What the extension does:**
 
-- Syncs non-YouTube streaming sites (Crunchyroll, anime sites, etc.) by hooking into `<video>` elements
+- Syncs non-YouTube/Vimeo streaming sites (Crunchyroll, anime sites, etc.) by hooking into `<video>` elements
+- Shows a sync bar with play/pause controls, progress bar, time counter, and ready count on external player pages
+- Displays a "Play the video to start syncing" toast to guide users through the autoplay gesture
 - Shows SponsorBlock segment colors on YouTube's embedded seek bar
-- Displays a sync status bar on external player pages (Playing/Paused with timestamps)
+- Scrapes page metadata (title, thumbnail) from external sites for display in the room
 
 **What byob.video supports (with or without the extension):**
 
 - Synchronized YouTube playback — play, pause, seek in real-time
+- Vimeo — native embedded player with full sync support
 - Direct video file URLs (.mp4, .webm, .ogg, .mov, .mkv) with a built-in synced HTML5 player
 - Video queue with drag-to-reorder and auto-advance
 - SponsorBlock integration with per-room category settings (auto-skip or show in bar)

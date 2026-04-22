@@ -2,6 +2,17 @@
 
 ---
 
+# v3.6.1
+
+**Bugfixes + embeddable filter.**
+
+- **Auto-pause on empty room:** When all users disconnect (including non-clean exits like killing the browser), the room auto-pauses and freezes the position. No more video "playing" in the background GenServer with nobody watching.
+- **Non-embeddable video filter:** YouTube Data API now requests the `status` part to check the `embeddable` flag. Non-embeddable videos are filtered during pool ingestion so they don't appear in roulette/voting.
+- **Vimeo preview card:** URL bar now shows Vimeo preview (was only matching YouTube). Homepage and URL dropdown list Vimeo as a supported source.
+- **Queue scroll fix:** Queue panel wrapper was missing flex layout classes, preventing overflow scroll.
+
+---
+
 # v3.6.0
 
 **Extension sync overhaul, Vimeo support, debug logging.**

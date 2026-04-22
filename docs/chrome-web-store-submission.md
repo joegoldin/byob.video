@@ -2,7 +2,7 @@
 
 ## Single purpose
 
-Synchronizes video playback with byob.video watch party rooms. The extension detects video elements on streaming sites and relays play/pause/seek events to the byob server so all room members watch in sync. It also injects SponsorBlock segment indicators into YouTube's embedded seek bar.
+Synchronizes video playback with byob.video watch party rooms. The extension detects video elements on streaming sites and relays play/pause/seek events to the byob server so all room members watch in sync. It provides an on-page sync bar with playback controls, ready count indicator, and autoplay countdown. It also injects SponsorBlock segment indicators into YouTube's embedded seek bar.
 
 ## Permission justification
 
@@ -26,7 +26,7 @@ All JavaScript is bundled in the extension package. The only vendored dependency
 
 The extension does not collect personally identifiable information, health information, financial information, authentication information, personal communications, location data, web history, user activity, or website content.
 
-The only data transmitted is video playback state (play/pause/seek position, video duration) sent to the user's own byob server instance for synchronization with other room members. No data is sent to any third party.
+The only data transmitted is video playback state (play/pause/seek position, video duration) and page metadata (title, thumbnail URL for display in the room) sent to the user's own byob server instance for synchronization with other room members. No data is sent to any third party.
 
 ### Certifications
 

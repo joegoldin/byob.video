@@ -917,9 +917,9 @@ const VideoPlayer = {
           const localState = this.player?.getState?.();
           const pos = this._getCurrentTime();
           if (localState === "playing") {
-            this.pushEvent("video:play", { time: pos });
+            this.pushEvent("video:play", { position: pos });
           } else if (localState === "paused") {
-            this.pushEvent("video:pause", { time: pos });
+            this.pushEvent("video:pause", { position: pos });
           }
         } catch (_) {}
       }, 200);
