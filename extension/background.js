@@ -1,7 +1,7 @@
 // WatchParty service worker — holds content script ports + Phoenix Channel connection
 import { Socket } from "./lib/phoenix.mjs";
 
-const ports = []; // all connected ports
+const ports = []; // all connected ports — each entry is { port, tabId }
 let socket = null;
 let channel = null;
 let currentRoomId = null;
@@ -12,14 +12,16 @@ let initialRoomState = null;
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "watchparty") return;
 
-  ports.push(port);
+  const tabId = port.sender?.tab?.id;
+  const entry = { port, tabId };
+  ports.push(entry);
 
-  port.onMessage.addListener((msg) => handleContentMessage(msg, port));
+  port.onMessage.addListener((msg) => handleContentMessage(msg, port, tabId));
 
   port.onDisconnect.addListener(() => {
     // Clear lastError to suppress "port moved into bfcache" noise
     void chrome.runtime.lastError;
-    const idx = ports.indexOf(port);
+    const idx = ports.indexOf(entry);
     if (idx > -1) ports.splice(idx, 1);
     if (ports.length === 0 && channel) {
       // All external player windows closed — pause so next joiner doesn't autoplay
@@ -76,10 +78,14 @@ function handleContentMessage(msg, port, tabId) {
             port.postMessage({ type: "command:pause", position: resp.current_time });
           }
           // Wait for seek to settle before enabling bidirectional sync.
-          // Broadcast to ALL ports (not just the requester) so the top frame
-          // can hide the toast — the video may be in an iframe.
+          // Broadcast to same-tab ports only (top frame + iframe) so the
+          // top frame can hide the toast without affecting other tabs.
           setTimeout(() => {
-            broadcastToContentScripts({ type: "command:synced" });
+            if (tabId != null) {
+              broadcastToTab(tabId, { type: "command:synced" });
+            } else {
+              broadcastToContentScripts({ type: "command:synced" });
+            }
           }, 500);
         });
       }
@@ -206,11 +212,21 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 function broadcastToContentScripts(msg) {
-  for (const port of ports) {
+  for (const entry of ports) {
     try {
-      port.postMessage(msg);
+      entry.port.postMessage(msg);
     } catch (e) {
       // Port may have disconnected
+    }
+  }
+}
+
+function broadcastToTab(tabId, msg) {
+  for (const entry of ports) {
+    if (entry.tabId === tabId) {
+      try {
+        entry.port.postMessage(msg);
+      } catch (e) {}
     }
   }
 }
