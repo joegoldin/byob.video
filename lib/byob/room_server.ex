@@ -307,7 +307,18 @@ defmodule Byob.RoomServer do
             thumbnail_url = attrs[:thumbnail_url] || item.thumbnail_url
             updated = %{item | title: title, thumbnail_url: thumbnail_url}
             queue = List.replace_at(state.queue, idx, updated)
-            state = %{state | queue: queue}
+
+            # Also update the matching history entry
+            history =
+              Enum.map(state.history, fn entry ->
+                if entry.item.id == item.id do
+                  %{entry | item: %{entry.item | title: title, thumbnail_url: thumbnail_url}}
+                else
+                  entry
+                end
+              end)
+
+            state = %{state | queue: queue, history: history}
             broadcast(state, {:queue_updated, %{queue: queue, current_index: idx}})
             {:reply, :ok, state}
         end

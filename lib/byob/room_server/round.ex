@@ -31,9 +31,9 @@ defmodule Byob.RoomServer.Round do
   # for ~3.5s landing + 0.5s settle + 2.5s pie countdown = ~6.5s post-reveal.
   @roulette_duration_ms 6_500
   @reveal_delay_voting_ms 1_500
-  @reveal_delay_roulette_ms 6_500
-  # Must be >= MAX_LANDING_MS + SETTLE_MS + FINALIZE_PIE_MS in the JS hook,
-  # otherwise the server will finalize before the client finishes animating.
+  @reveal_delay_roulette_ms 8_000
+  # Must be >= POST_PREROLL_PAUSE + MAX_LANDING_MS + SETTLE_MS + FINALIZE_PIE_MS
+  # in the JS hook (300 + 3600 + 500 + 2500 = 6900ms), plus network latency buffer.
 
   def vote_duration_ms, do: @vote_duration_ms
   def roulette_duration_ms, do: @roulette_duration_ms
