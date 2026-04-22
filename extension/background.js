@@ -55,6 +55,24 @@ function handleContentMessage(msg, port, tabId) {
       }
       break;
 
+    case "video:request-sync":
+      // Overlay was clicked — request fresh state and apply it.
+      // The content script already called play() in the gesture stack
+      // to unlock autoplay, so command:play will work.
+      if (channel) {
+        channel.push("sync:request_state", {}).receive("ok", (resp) => {
+          console.log("[byob] Fresh state for sync:", resp);
+          if (resp.play_state === "playing") {
+            port.postMessage({ type: "command:play", position: resp.current_time });
+          } else {
+            port.postMessage({ type: "command:seek", position: resp.current_time });
+            port.postMessage({ type: "command:pause", position: resp.current_time });
+          }
+          port.postMessage({ type: "command:synced" });
+        });
+      }
+      break;
+
     case "video:play":
       if (channel) channel.push("video:play", { position: msg.position });
       break;

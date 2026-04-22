@@ -247,41 +247,30 @@
     }
   }
 
-  // Suppression — time-window based (matches suppression.js in main app)
-  let terminalReached = false;
-  let terminalAt = null;
-
+  // Suppression — single-shot with short guard window.
+  // HTML5 <video> fires clean single events (unlike YouTube which fires
+  // multi-event sequences), so we clear immediately on terminal state match.
+  // We still suppress ALL events while active to prevent any leaks.
   function suppress(state) {
     suppressGen++;
     suppressUntilGen = suppressGen;
     expectedState = state;
-    terminalReached = false;
-    terminalAt = null;
     if (safetyTimeout) clearTimeout(safetyTimeout);
     safetyTimeout = setTimeout(() => {
       suppressUntilGen = 0;
       expectedState = null;
-      terminalReached = false;
-      terminalAt = null;
-    }, 3000);
+    }, 1500);
   }
 
   function shouldSuppress(currentState) {
     if (suppressUntilGen === 0) return false;
     if (currentState === expectedState || expectedState === null) {
-      if (!terminalReached) {
-        terminalReached = true;
-        terminalAt = performance.now();
-      }
-      if (performance.now() - terminalAt > 200) {
-        suppressUntilGen = 0;
-        expectedState = null;
-        terminalReached = false;
-        terminalAt = null;
-        if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
-      }
+      // Terminal state reached — clear immediately and swallow this event
+      suppressUntilGen = 0;
+      expectedState = null;
+      if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
     }
-    // Suppress ALL events while active
+    // Suppress ALL events while active (catches intermediate states)
     return true;
   }
 
@@ -317,7 +306,7 @@
 
     if (msg.type === "command:initial-state") {
       updateSyncBarStatus("clickjoin");
-      showAutoplayOverlay(msg.play_state, msg.current_time);
+      showAutoplayOverlay();
       return;
     }
 
@@ -357,7 +346,7 @@
     }
   }
 
-  function showAutoplayOverlay(playState, currentTime) {
+  function showAutoplayOverlay() {
     if (!hookedVideo) return;
     removeAutoplayOverlay();
 
@@ -386,14 +375,14 @@
 
     overlay.addEventListener("click", () => {
       removeAutoplayOverlay();
-      activateAfterGesture(playState, currentTime);
+      activateAfterGesture();
     }, { once: true });
 
     // Also detect if user clicks play on the native player directly
     const onNativePlay = () => {
       if (document.getElementById("byob-autoplay-overlay")) {
         removeAutoplayOverlay();
-        activateAfterGesture(playState, currentTime);
+        activateAfterGesture();
       }
       hookedVideo?.removeEventListener("play", onNativePlay);
     };
@@ -405,29 +394,18 @@
     if (el) el.remove();
   }
 
-  function activateAfterGesture(playState, currentTime) {
+  function activateAfterGesture() {
     if (!hookedVideo) return;
 
-    // Don't do play-pause-play to "unlock" autoplay — that breaks DRM players
-    // (e.g. Crunchyroll). Instead, use the gesture directly for what we need:
-    // seek to position, then play if room is playing.
-    suppress(playState === "playing" ? "playing" : "paused");
-    hookedVideo.currentTime = currentTime;
+    // Try to unlock autoplay with the user gesture (play in this call stack).
+    // Then ask the service worker for fresh room state — the position from
+    // command:initial-state may be stale if time passed before the click.
+    suppress("playing");
+    hookedVideo.play().catch(() => {});
 
-    if (playState === "playing") {
-      // The click gesture is still active in this call stack — play() should work
-      hookedVideo.play().then(() => {
-        synced = true;
-        updateSyncBarStatus("playing");
-      }).catch(() => {
-        // Autoplay still blocked or DRM not ready — enable sync anyway
-        // so that when the user manually hits play, it syncs
-        synced = true;
-        updateSyncBarStatus("paused");
-      });
-    } else {
-      synced = true;
-      updateSyncBarStatus("paused");
+    // Request fresh state — SW will send command:play/pause/seek/synced
+    if (port) {
+      port.postMessage({ type: "video:request-sync" });
     }
   }
 
