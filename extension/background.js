@@ -38,7 +38,12 @@ chrome.runtime.onConnect.addListener((port) => {
 function handleContentMessage(msg, port, tabId) {
   switch (msg.type) {
     case "connect":
-      connectToRoom(msg.room_id, msg.server_url, msg.token);
+      if (currentRoomId === msg.room_id && channel) {
+        // Already connected — just notify this port it's ready
+        port.postMessage({ type: "byob:channel-ready" });
+      } else {
+        connectToRoom(msg.room_id, msg.server_url, msg.token);
+      }
       break;
 
     case "video:hooked":

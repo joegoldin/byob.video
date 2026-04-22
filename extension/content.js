@@ -6,6 +6,7 @@
   let port = null;
   let hookedVideo = null;
   let synced = false; // Don't send events until initial sync is done
+  let needsGesture = false; // True when play() failed — blocks command:synced
   let pauseEnforcer = null;
   let suppressGen = 0;
   let suppressUntilGen = 0;
@@ -384,8 +385,12 @@
         break;
 
       case "command:synced":
-        synced = true;
-        hideJoinToast();
+        // Don't override gesture requirement — if tryPlay failed,
+        // we need user to click play before enabling sync
+        if (!needsGesture) {
+          synced = true;
+          hideJoinToast();
+        }
         break;
     }
   }
@@ -416,6 +421,7 @@
   }
 
   function requestSync() {
+    needsGesture = false;
     hideJoinToast();
     if (port) {
       port.postMessage({ type: "video:request-sync" });
@@ -443,11 +449,13 @@
     if (!hookedVideo) return;
     hookedVideo.play().then(() => {
       // Autoplay worked
+      needsGesture = false;
       hideJoinToast();
     }).catch(() => {
       // Autoplay blocked — need user gesture. Drop out of synced state
       // so commands don't keep failing silently, and wait for native play.
       synced = false;
+      needsGesture = true;
       updateSyncBarStatus("clickjoin");
       showJoinToast("Click play on the video to start syncing");
       waitForNativePlay();
