@@ -149,6 +149,7 @@
   let needsGesture = true; // True until video actually plays — blocks commands
   let pauseEnforcer = null;
   let timeReportInterval = null;
+  let commandGuard = null; // brief echo prevention when executing a server command
   let expectedPlayState = null; // "playing" or "paused" — what the server wants
   let stateCheckInterval = null;
   let mismatchSince = null;
@@ -440,7 +441,7 @@
   // Event handlers — with suppression
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-    if (!synced || isBuffering) return;
+    if (!synced || commandGuard || isBuffering) return;
     expectedPlayState = State.PLAYING;
     mismatchSince = null;
     if (port && hookedVideo) {
@@ -449,7 +450,7 @@
   }
 
   function onVideoPause() {
-    if (!synced || isBuffering) return;
+    if (!synced || commandGuard || isBuffering) return;
     expectedPlayState = State.PAUSED;
     mismatchSince = null;
     if (port && hookedVideo) {
@@ -458,7 +459,7 @@
   }
 
   function onVideoSeeked() {
-    if (!synced || isBuffering) return;
+    if (!synced || commandGuard) return;
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
     }
@@ -542,18 +543,12 @@
     mismatchSince = null;
   }
 
-  // Enter buffering state — shows overlay, blocks outbound events.
-  // Clears automatically when readyState polling detects the video
-  // is actually playing (readyState >= 3 and not paused).
-  function enterBuffering() {
-    if (isBuffering) return;
-    isBuffering = true;
-    showBufferingOverlay();
-    updateSyncBarStatus(SyncStatus.BUFFERING);
-    // Report to server so other clients see buffering too
-    if (synced && port) {
-      port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: hookedVideo?.currentTime || 0, duration: hookedVideo?.duration || 0, playing: false });
-    }
+  // Brief echo guard — prevents the video element's reaction to a
+  // programmatic play()/pause()/seek() from echoing back to the server.
+  // Clears after 500ms. Separate from buffering (which is detected via readyState).
+  function startCommandGuard() {
+    if (commandGuard) clearTimeout(commandGuard);
+    commandGuard = setTimeout(() => { commandGuard = null; }, 500);
   }
 
   // Handle commands from service worker
@@ -674,7 +669,7 @@
       case Msg.COMMAND_PLAY:
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         expectedPlayState = State.PLAYING;
-        enterBuffering();
+        startCommandGuard();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         if (hookedVideo.paused) {
           hookedVideo.play().catch(() => {});
@@ -684,7 +679,7 @@
 
       case Msg.COMMAND_PAUSE:
         expectedPlayState = State.PAUSED;
-        enterBuffering();
+        startCommandGuard();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.pause();
         // Enforce pause briefly — fights autoplay/delayed play from sites.
@@ -698,7 +693,7 @@
         break;
 
       case Msg.COMMAND_SEEK:
-        enterBuffering();
+        startCommandGuard();
         hookedVideo.currentTime = msg.position;
         break;
 
