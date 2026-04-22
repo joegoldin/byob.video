@@ -380,6 +380,17 @@ defmodule Byob.RoomServer do
 
     state =
       if connected_count == 0 do
+        # Auto-pause when everyone leaves so video doesn't keep "playing"
+        # in the background. When someone reconnects, they'll see it paused.
+        state =
+          if state.play_state == :playing do
+            %{state | play_state: :paused, current_time: current_position(state),
+              last_sync_at: System.monotonic_time(:millisecond)}
+            |> cancel_sync_correction()
+          else
+            state
+          end
+
         schedule_cleanup(state)
       else
         broadcast(state, {:users_updated, state.users})
