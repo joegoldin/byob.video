@@ -4,6 +4,8 @@
 
 # v3.6.3
 
+- **Extension sync fix:** Seek suppression used `suppress(null)` which swallowed ALL subsequent events (play/pause) after a seek. Now uses distinct `"seeked"` state so only seeked events are suppressed.
+- **Extension pause enforcer fix:** Enforcer no longer calls `suppress()` on each tick, which was resetting suppression every 200ms and swallowing user play/pause events. Play cancels the enforcer immediately.
 - Deduplicate activity log entries (same user+action within 2s is suppressed — fixes double "joined" from longpoll→websocket upgrade)
 - Removed favicon from all header bars (root layout + room nav)
 

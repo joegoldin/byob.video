@@ -278,6 +278,8 @@
 
   // Event handlers — with suppression
   function onVideoPlay() {
+    // Cancel any pause enforcer that's fighting the user's play
+    if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced) return;
     if (shouldSuppress("playing")) return;
     if (port && hookedVideo) {
@@ -301,7 +303,7 @@
 
   function onVideoSeeked() {
     if (!synced) return;
-    if (shouldSuppress(null)) return;
+    if (shouldSuppress("seeked")) return;
     if (port && hookedVideo) {
       port.postMessage({
         type: "video:seek",
@@ -334,7 +336,7 @@
 
   function shouldSuppress(currentState) {
     if (suppressUntilGen === 0) return false;
-    if (currentState === expectedState || expectedState === null) {
+    if (currentState === expectedState) {
       // Expected event — swallow it and clear suppression
       suppressUntilGen = 0;
       expectedState = null;
@@ -466,11 +468,12 @@
         suppress("paused");
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.pause();
-        // Enforce pause for 2s — fights autoplay/delayed play from sites
+        // Enforce pause briefly — fights autoplay/delayed play from sites.
+        // Don't re-suppress in the enforcer (resets suppression state,
+        // swallows user's next play/pause).
         if (pauseEnforcer) clearInterval(pauseEnforcer);
         pauseEnforcer = setInterval(() => {
           if (hookedVideo && !hookedVideo.paused) {
-            suppress("paused");
             hookedVideo.pause();
           }
         }, 200);
@@ -478,7 +481,7 @@
         break;
 
       case "command:seek":
-        suppress(null);
+        suppress("seeked");
         hookedVideo.currentTime = msg.position;
         break;
 
