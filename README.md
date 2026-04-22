@@ -10,6 +10,7 @@ Create a room, share the link, paste video URLs, watch together. Play, pause, an
 
 **Supports:**
 - YouTube — embedded player with [SponsorBlock](https://sponsor.ajay.app) integration
+- Vimeo — native embedded player
 - Direct video files — .mp4, .webm, .ogg, .mov, .mkv
 - Any streaming site — via browser extension (Crunchyroll, anime sites, etc.)
 

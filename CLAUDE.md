@@ -19,7 +19,7 @@ byob (bring your own binge) is a self-hosted another sync extension clone. Users
 
 - `lib/byob/room_server.ex` — GenServer per room. Canonical playback state, queue, history, activity log. All sync goes through here.
 - `lib/byob_web/live/room_live.ex` — Main LiveView. Large file (~1100 lines). Handles all room UI, events, PubSub.
-- `assets/js/hooks/video_player.js` — YouTube IFrame API + direct video + sync engine. Clock sync, reconcile, suppression, seek detection.
+- `assets/js/hooks/video_player.js` — YouTube IFrame API + Vimeo Player SDK + direct video + sync engine. Clock sync, reconcile, suppression, seek detection.
 - `extension/content.js` — Runs on all pages. MutationObserver for `<video>` elements. Sync bar overlay.
 - `extension/background.js` — Service worker. Phoenix Channel WebSocket to server. Routes events between content scripts and server.
 

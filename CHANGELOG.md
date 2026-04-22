@@ -4,19 +4,30 @@
 
 # v3.6.0
 
-**Extension sync overhaul + debug logging.**
+**Extension sync overhaul, Vimeo support, debug logging.**
 
-- **Extension autoplay fix:** Third-party sites (Crunchyroll, Dailymotion, etc.) blocked programmatic `video.play()`. Extension now shows a "Play the video to start syncing" toast and waits for the user's natural play click as the gesture. One-click flow, no blocking overlay. DRM-safe.
-- **YouTube stutter fix:** Joining a paused room used `cueVideoById` (thumbnail only); resuming caused load-from-scratch → buffering → echo loop. Now uses `loadVideoById` + immediate pause. Player readiness gate prevents outbound events during load. Time-window suppression handles YouTube's multi-event state sequences.
-- **Redundant broadcast fix:** Server only broadcasts `sync:play`/`sync:pause` on real state transitions. Eliminates echo amplification from clients re-echoing already-playing state.
-- **Extension sync bar:** Play/pause button, clickable progress bar, time counter. Only visible after sync. Purple brand color for progress fill.
-- **Ready count indicator:** Shows `ready/hasTab/total` (collapses tiers when equal). Per-tab tracking via tab IDs on the server. Green when all synced, gray otherwise. Tooltips explain each tier.
-- **Autoplay countdown:** Extension bar shows "Finished — next in 5s" counting down when video ends.
-- **Page metadata scraping:** Extension scrapes title/thumbnail from third-party pages (Crunchyroll-specific selectors + generic OG fallback) and sends to byob.video for display.
-- **Debug logging:** New `Byob.SyncLog` module with privacy-safe structured logging. Video URLs SHA-256 hashed (12-char prefix). Logs play/pause/seek/join/heartbeat transitions. Extension channel events logged.
-- **Extension stability:** Auto-reconnect on SW restart, bfcache error suppression, stale extension user cleanup on rejoin, tab-scoped `command:synced`.
-- **HTML entity fix:** OEmbed title extraction now decodes `&#039;`, `&amp;`, etc.
-- **Extension user hidden:** Extension connections use real username and are hidden from the room user list.
+### Vimeo embed support
+- **Vimeo player:** Paste a Vimeo URL and it embeds natively — play, pause, seek, sync, duration, thumbnails. Uses the Vimeo Player SDK. URL preview shows title, thumbnail, and duration in the search bar.
+- **Vimeo oEmbed:** Server-side metadata fetch via `vimeo.com/api/oembed.json`. Query params stripped to avoid Vimeo API rejections.
+
+### Extension sync overhaul
+- **Autoplay gesture flow:** Third-party sites (Crunchyroll, Dailymotion, etc.) blocked programmatic `video.play()`. Extension now shows a purple "Play the video to start syncing" toast and waits for the user's natural play click. One-click flow, DRM-safe.
+- **Sync bar controls:** Play/pause button, clickable progress bar with purple fill, time counter. Only visible after sync. "Finished — next in 5s" countdown on video end.
+- **Ready count indicator:** Shows `ready/total` with person icon (gray → green). Per-tab tracking via explicit `video:tab_opened`/`video:tab_closed`/`video:ready` messages. Tooltip details: "1 of 2 ready · 1 needs to click play".
+- **Page metadata scraping:** Extension scrapes title/thumbnail from external pages (Crunchyroll-specific selectors + generic OG fallback), updates queue/history items on byob.video.
+- **Stability:** Auto-reconnect on Chrome MV3 service worker restart. Tab-scoped `command:synced` (iframe → top frame, not cross-tab). Stale extension user cleanup on rejoin. bfcache error suppression.
+- **Extension user hidden:** Extension connections use real username and are filtered from the room user list and count.
+
+### YouTube sync fixes
+- **Stutter fix:** Joining a paused room used `cueVideoById` (thumbnail only); resuming caused load-from-scratch → buffering → echo loop. Now uses `loadVideoById` + immediate pause.
+- **Suppression overhaul:** Time-window suppression auto-clears via setTimeout 200ms after terminal state (was stuck for 3s safety timeout). Player readiness gate (`_playerSettled`) set before suppression check so events aren't blocked during load. `checkAndRetry` stops once player settles.
+- **Ended state:** Heartbeat no longer overrides `expectedPlayState` after video ended, preventing restart during autoplay countdown.
+
+### Infrastructure
+- **Debug logging:** New `Byob.SyncLog` module. Video URLs SHA-256 hashed (12-char prefix). Logs play/pause/seek/join/heartbeat. Extension channel events logged. Dev logger set to info level with timestamps.
+- **HTML entity fix:** OEmbed title extraction decodes `&#039;`, `&amp;`, numeric entities.
+- **Voting fix:** Votes broadcast immediately (removed throttle). Early-close excludes extension users. Roulette winner text hidden until animation completes; reveal delay increased to 8s.
+- **Queue scroll fix:** Queue panel wrapper missing flex layout classes, preventing scroll.
 
 ---
 

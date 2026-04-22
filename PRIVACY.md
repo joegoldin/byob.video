@@ -14,7 +14,7 @@
 byob uses [PostHog](https://posthog.com) for anonymous usage analytics on the hosted instance (byob.video). We track:
 
 - Room creation and join events
-- Video source types used (youtube, direct URL, extension, youtube age-restricted — NOT the actual video URLs or titles)
+- Video source types used (youtube, vimeo, direct URL, extension, youtube age-restricted — NOT the actual video URLs or titles)
 - Playback actions (play, pause, seek, skip — NOT timestamps or content)
 - Embed-blocked events (when a YouTube video can't be embedded — only the fact it was blocked, not the video)
 - Whether the browser extension is installed (detected from the web page, NOT from extension code)
