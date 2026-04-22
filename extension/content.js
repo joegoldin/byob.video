@@ -387,11 +387,25 @@
     // Send periodic state updates (position, duration, playing) for relay to room + sync bar
     timeReportInterval = setInterval(() => {
       if (!hookedVideo) return;
+
+      // Detect buffering via readyState — more reliable than waiting/canplay events
+      // readyState < 3 (HAVE_FUTURE_DATA) while not paused = buffering
+      const actuallyBuffering = !hookedVideo.paused && hookedVideo.readyState < 3;
+      if (actuallyBuffering && !isBuffering) {
+        isBuffering = true;
+        showBufferingOverlay();
+        updateSyncBarStatus(SyncStatus.BUFFERING);
+      } else if (!actuallyBuffering && isBuffering) {
+        isBuffering = false;
+        hideBufferingOverlay();
+        if (synced) updateSyncBarStatus(hookedVideo.paused ? SyncStatus.PAUSED : SyncStatus.PLAYING);
+      }
+
       const msg = {
         type: Msg.VIDEO_STATE,
         position: hookedVideo.currentTime,
         duration: hookedVideo.duration || 0,
-        playing: !hookedVideo.paused,
+        playing: !hookedVideo.paused && !isBuffering,
         buffering: isBuffering,
       };
       // Only send state to server when synced (prevents corrupting canonical state)
