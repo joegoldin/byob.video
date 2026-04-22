@@ -315,8 +315,10 @@
   // Handle commands from service worker
   function handleSWMessage(msg) {
     if (msg.type === "byob:channel-ready" && window === window.top) {
-      updateSyncBarStatus("searching");
-      showJoinToast("Play the video to start syncing");
+      if (!synced && needsGesture) {
+        updateSyncBarStatus("searching");
+        showJoinToast("Play the video to start syncing");
+      }
       return;
     }
     if (msg.type === "byob:video-hooked" && window === window.top) {
@@ -433,6 +435,7 @@
     // If video is already playing (race: site autoplayed during SW round-trip),
     // sync immediately instead of waiting for a click that already happened.
     if (!hookedVideo.paused) {
+      needsGesture = false;
       requestSync();
       return;
     }
