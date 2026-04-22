@@ -5,6 +5,7 @@ const ports = []; // all connected ports — each entry is { port, tabId }
 let socket = null;
 let channel = null;
 let currentRoomId = null;
+let lastReadyCount = null;
 let currentServerUrl = null;
 let initialRoomState = null;
 
@@ -43,6 +44,7 @@ function handleContentMessage(msg, port, tabId) {
       if (currentRoomId === msg.room_id && channel) {
         // Already connected — just notify this port it's ready
         port.postMessage({ type: "byob:channel-ready" });
+        if (lastReadyCount) port.postMessage(lastReadyCount);
       } else {
         connectToRoom(msg.room_id, msg.server_url, msg.token, msg.username);
       }
@@ -182,11 +184,10 @@ function connectToRoom(roomId, serverUrl, token, username) {
     type: "autoplay:cancelled",
   }));
 
-  channel.on("ready:count", (data) => broadcastToContentScripts({
-    type: "byob:ready-count",
-    ready: data.ready,
-    total: data.total,
-  }));
+  channel.on("ready:count", (data) => {
+    lastReadyCount = { type: "byob:ready-count", ready: data.ready, total: data.total };
+    broadcastToContentScripts(lastReadyCount);
+  });
 
   channel.on("video:change", (data) => {
     // New video selected — content script doesn't need to do anything

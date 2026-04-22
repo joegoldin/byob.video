@@ -572,7 +572,7 @@
 
     const status = document.createElement("span");
     status.id = "byob-status";
-    status.style.cssText = "color:#888;font-size:12px;flex-shrink:0";
+    status.style.cssText = "color:#888;font-size:12px;flex-shrink:0;cursor:default";
     status.textContent = "Loading...";
 
     // Play/pause button — hidden until synced
@@ -614,7 +614,7 @@
     // Users ready indicator
     const usersEl = document.createElement("span");
     usersEl.id = "byob-users";
-    usersEl.style.cssText = "display:none;font-size:12px;flex-shrink:0;gap:4px;align-items:center;font-variant-numeric:tabular-nums;";
+    usersEl.style.cssText = "display:none;font-size:12px;flex-shrink:0;gap:4px;align-items:center;font-variant-numeric:tabular-nums;cursor:default";
     usersEl.innerHTML = `<svg id="byob-users-icon" width="14" height="14" viewBox="0 0 24 24" fill="rgba(255,255,255,0.5)" style="flex-shrink:0"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg><span id="byob-users-count" style="opacity:0.5">0/0</span>`;
 
     const collapse = document.createElement("button");
@@ -674,6 +674,11 @@
     icon.setAttribute("fill", allReady ? "#00d400" : "rgba(255,255,255,0.5)");
     count.style.opacity = allReady ? "1" : "0.5";
     count.style.color = allReady ? "#00d400" : "white";
+
+    const waiting = total - ready;
+    el.title = allReady
+      ? `All ${total} users have their player synced`
+      : `${ready} of ${total} users synced — waiting for ${waiting} to click play`;
   }
 
   let _countdownInterval = null;
@@ -709,19 +714,20 @@
     if (!dot || !status) return;
 
     const states = {
-      loading:   { color: "#888",    text: "Connecting..." },
-      searching: { color: "#ff9900", text: "Play the video to start syncing" },
-      syncing:   { color: "#ff9900", text: "Syncing..." },
-      clickjoin: { color: "#ff9900", text: "Click play to sync" },
-      playing:   { color: "#00d400", text: "Playing" },
-      paused:    { color: "#ff9900", text: "Paused" },
-      finished:  { color: "#7c3aed", text: "Finished" },
+      loading:   { color: "#888",    text: "Connecting...", tip: "Connecting to the byob room server" },
+      searching: { color: "#ff9900", text: "Play the video to start syncing", tip: "Waiting for a video element on this page" },
+      syncing:   { color: "#ff9900", text: "Syncing...", tip: "Applying room state to this player" },
+      clickjoin: { color: "#ff9900", text: "Click play to sync", tip: "Click play on the video player above to start syncing with the room" },
+      playing:   { color: "#00d400", text: "Playing", tip: "Video is playing in sync with the room" },
+      paused:    { color: "#ff9900", text: "Paused", tip: "Video is paused — synced with room" },
+      finished:  { color: "#7c3aed", text: "Finished", tip: "Video ended — next video loading" },
     };
     const s = states[state];
     if (!s) return;
     dot.style.background = s.color;
     status.style.color = s.color;
     status.textContent = s.text;
+    status.title = s.tip;
   }
 
   // Update time display on the sync bar
