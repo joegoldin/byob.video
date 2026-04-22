@@ -3,6 +3,145 @@
 (() => {
   "use strict";
 
+  // --- Constants (avoid magic strings) ---
+  const State = Object.freeze({
+    PLAYING: "playing",
+    PAUSED: "paused",
+    BUFFERING: "buffering",
+    ENDED: "ended",
+    SEEKED: "seeked",
+  });
+
+  const SyncStatus = Object.freeze({
+    LOADING: "loading",
+    SEARCHING: "searching",
+    SYNCING: "syncing",
+    CLICKJOIN: "clickjoin",
+    PLAYING: "playing",
+    PAUSED: "paused",
+    FINISHED: "finished",
+  });
+
+  // Message types
+  const Msg = Object.freeze({
+    // Outbound (content → SW)
+    CONNECT: "connect",
+    VIDEO_HOOKED: "video:hooked",
+    VIDEO_PLAY: "video:play",
+    VIDEO_PAUSE: "video:pause",
+    VIDEO_SEEK: "video:seek",
+    VIDEO_ENDED: "video:ended",
+    VIDEO_STATE: "video:state",
+    VIDEO_READY: "video:ready",
+    VIDEO_REQUEST_SYNC: "video:request-sync",
+    BAR_UPDATE: "byob:bar-update",
+    // Inbound (SW → content)
+    CHANNEL_READY: "byob:channel-ready",
+    VIDEO_HOOKED_BROADCAST: "byob:video-hooked",
+    READY_COUNT: "byob:ready-count",
+    COMMAND_PLAY: "command:play",
+    COMMAND_PAUSE: "command:pause",
+    COMMAND_SEEK: "command:seek",
+    COMMAND_SYNCED: "command:synced",
+    COMMAND_INITIAL_STATE: "command:initial-state",
+    AUTOPLAY_COUNTDOWN: "autoplay:countdown",
+    AUTOPLAY_CANCELLED: "autoplay:cancelled",
+    // Window messages
+    CLEAR_EXTERNAL: "byob:clear-external",
+    OPEN_EXTERNAL: "byob:open-external",
+    RELAY: "byob:relay",
+  });
+
+  // DOM element IDs
+  const El = Object.freeze({
+    SYNC_BAR: "byob-sync-bar",
+    BAR_CONTENT: "byob-bar-content",
+    DOT: "byob-dot",
+    STATUS: "byob-status",
+    TIME: "byob-time",
+    PLAYPAUSE: "byob-playpause",
+    PROGRESS_WRAP: "byob-progress-wrap",
+    PROGRESS_FILL: "byob-progress-fill",
+    USERS: "byob-users",
+    USERS_ICON: "byob-users-icon",
+    USERS_COUNT: "byob-users-count",
+    COLLAPSE: "byob-collapse",
+    JOIN_TOAST: "byob-join-toast",
+    TOAST_STYLE: "byob-toast-style",
+    AUTOPLAY_OVERLAY: "byob-autoplay-overlay",
+  });
+
+  // Hosts
+  const Hosts = Object.freeze({
+    BYOB: "byob.video",
+    LOCALHOST: "localhost",
+    YOUTUBE: "youtube.com",
+    CRUNCHYROLL: "crunchyroll.com",
+  });
+
+  // Colors
+  const Color = Object.freeze({
+    GREEN: "#00d400",
+    ORANGE: "#ff9900",
+    GRAY: "#888",
+    PURPLE: "#7c3aed",
+    WHITE_50: "rgba(255,255,255,0.5)",
+    WHITE_60: "rgba(255,255,255,0.6)",
+    // SponsorBlock segment colors
+    SB_SPONSOR: "#00d400",
+    SB_SELFPROMO: "#ffff00",
+    SB_INTERACTION: "#cc00ff",
+    SB_INTRO: "#00ffff",
+    SB_OUTRO: "#0202ed",
+    SB_PREVIEW: "#008fd6",
+    SB_MUSIC_OFFTOPIC: "#ff9900",
+    SB_FILLER: "#7300FF",
+  });
+
+  // UI copy
+  const Copy = Object.freeze({
+    CONNECTING: "Connecting...",
+    PLAY_TO_SYNC: "Play the video to start syncing",
+    SYNCING: "Syncing...",
+    CLICK_PLAY: "Click play to sync",
+    PLAYING: "Playing",
+    PAUSED: "Paused",
+    FINISHED: "Finished",
+    LOADING_NEXT: "Loading next...",
+    LOADING_SYNC: "Loading byob sync...",
+    CLICK_PLAY_TOAST: "Click play on the video to start syncing",
+    TIP_CONNECTING: "Connecting to the byob room server",
+    TIP_SEARCHING: "Waiting for a video element on this page",
+    TIP_SYNCING: "Applying room state to this player",
+    TIP_CLICKJOIN: "Click play on the video player above to start syncing with the room",
+    TIP_PLAYING: "Video is playing in sync with the room",
+    TIP_PAUSED: "Video is paused — synced with room",
+    TIP_FINISHED: "Video ended — next video loading",
+  });
+
+  // DOM events
+  const Evt = Object.freeze({
+    CLICK: "click",
+    PLAY: "play",
+    PAUSE: "pause",
+    SEEKED: "seeked",
+    ENDED: "ended",
+    MESSAGE: "message",
+  });
+
+  // HTML tags
+  const Tag = Object.freeze({
+    DIV: "div",
+    SPAN: "span",
+    BUTTON: "button",
+    STYLE: "style",
+  });
+
+  // Storage keys
+  const STORAGE_KEY = "watchparty_config";
+  const PORT_NAME = "watchparty";
+  const EXT_ATTR = "data-byob-extension";
+
   let port = null;
   let hookedVideo = null;
   let synced = false; // Don't send events until initial sync is done
@@ -19,23 +158,23 @@
   let mismatchSince = null;
 
   // Signal extension is installed — only on our domain so other sites can't detect it
-  if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
-    document.documentElement.setAttribute("data-byob-extension", "true");
+  if (window.location.hostname === Hosts.BYOB || window.location.hostname === Hosts.LOCALHOST) {
+    document.documentElement.setAttribute(EXT_ATTR, "true");
   }
 
   // Check if we should activate on this page
   async function init() {
     // Listen for room page messages — only accept from our own origin
-    window.addEventListener("message", (e) => {
+    window.addEventListener(Evt.MESSAGE, (e) => {
       if (e.origin !== window.location.origin) return;
       try {
-        if (e.data?.type === "byob:clear-external") {
-          chrome.storage.local.remove("watchparty_config");
+        if (e.data?.type === Msg.CLEAR_EXTERNAL) {
+          chrome.storage.local.remove(STORAGE_KEY);
           return;
         }
-        if (e.data?.type === "byob:open-external") {
+        if (e.data?.type === Msg.OPEN_EXTERNAL) {
           chrome.storage.local.set({
-            watchparty_config: {
+            [STORAGE_KEY]: {
               room_id: e.data.room_id,
               server_url: e.data.server_url,
               target_url: e.data.url,
@@ -55,16 +194,16 @@
     const tryActivate = async (attempt) => {
       if (attempt > 5) return;
       try {
-        const config = await chrome.storage.local.get("watchparty_config");
-        if (config.watchparty_config) {
-          const { room_id, server_url, target_url, token, username, timestamp } = config.watchparty_config;
+        const config = await chrome.storage.local.get(STORAGE_KEY);
+        if (config[STORAGE_KEY]) {
+          const { room_id, server_url, target_url, token, username, timestamp } = config[STORAGE_KEY];
           const age = Date.now() - (timestamp || 0);
           if (age < 30 * 60 * 1000) {
             // Don't activate extension sync on our own domain — the main
             // site handles sync via LiveView. Extension only sets the
             // data-byob-extension attribute there (done above).
             const host = window.location.hostname;
-            if (host === "byob.video" || host === "localhost") return;
+            if (host === Hosts.BYOB || host === Hosts.LOCALHOST) return;
 
             // In nested iframes (video player embeds), always activate
             const isTopFrame = window === window.top;
@@ -77,7 +216,7 @@
               const targetBase = new URL(target_url).origin + new URL(target_url).pathname;
               const currentBase = window.location.origin + window.location.pathname;
               if (currentBase.startsWith(targetBase) || targetBase.startsWith(currentBase)) {
-                showJoinToast("Loading byob sync...");
+                showJoinToast(Copy.LOADING_SYNC);
                 activate(room_id, server_url, token, username);
                 return;
               }
@@ -101,12 +240,12 @@
     // Show sync bar immediately in top frame with "Loading..." status
     if (window === window.top) {
       injectSyncBar();
-      updateSyncBarStatus("loading");
+      updateSyncBarStatus(SyncStatus.LOADING);
     }
 
     // Connect port to service worker
     try {
-      port = chrome.runtime.connect({ name: "watchparty" });
+      port = chrome.runtime.connect({ name: PORT_NAME });
     } catch (e) {
       // Service worker not available — retry after a delay
       setTimeout(() => connectToSW(roomId, serverUrl, token, username), 2000);
@@ -114,7 +253,7 @@
     }
 
     port.postMessage({
-      type: "connect",
+      type: Msg.CONNECT,
       room_id: roomId,
       server_url: serverUrl,
       token: token,
@@ -124,8 +263,8 @@
     port.onMessage.addListener(handleSWMessage);
 
     // Relay messages from nested iframes to the SW port
-    window.addEventListener("message", (e) => {
-      if (e.data?.type === "byob:relay" && e.data.payload && port) {
+    window.addEventListener(Evt.MESSAGE, (e) => {
+      if (e.data?.type === Msg.RELAY && e.data.payload && port) {
         port.postMessage(e.data.payload);
       }
     });
@@ -190,7 +329,7 @@
       const host = window.location.hostname;
 
       // Crunchyroll
-      if (host.includes("crunchyroll.com")) {
+      if (host.includes(Hosts.CRUNCHYROLL)) {
         const showEl = document.querySelector("[data-t='show-title-link'] h4, .show-title-link h4");
         const epEl = document.querySelector(".title, h1.title");
         const thumbEl = document.querySelector("meta[property='og:image']");
@@ -224,34 +363,34 @@
 
     hookedVideo = video;
 
-    video.addEventListener("play", onVideoPlay);
-    video.addEventListener("pause", onVideoPause);
-    video.addEventListener("seeked", onVideoSeeked);
-    video.addEventListener("ended", onVideoEnded);
+    video.addEventListener(Evt.PLAY, onVideoPlay);
+    video.addEventListener(Evt.PAUSE, onVideoPause);
+    video.addEventListener(Evt.SEEKED, onVideoSeeked);
+    video.addEventListener(Evt.ENDED, onVideoEnded);
 
     // Report that we found a video — include page metadata for byob display
     const meta = scrapePageMetadata();
-    const reportHooked = { type: "video:hooked", duration: video.duration || 0, ...meta };
+    const reportHooked = { type: Msg.VIDEO_HOOKED, duration: video.duration || 0, ...meta };
     if (port) {
       port.postMessage(reportHooked);
     }
     // Notify top frame via extension messaging (works cross-origin, no postMessage("*"))
-    if (!window.location.hostname.includes("youtube.com")) {
-      try { chrome.runtime.sendMessage({ type: "byob:video-hooked" }); } catch (_) {}
+    if (!window.location.hostname.includes(Hosts.YOUTUBE)) {
+      try { chrome.runtime.sendMessage({ type: Msg.VIDEO_HOOKED_BROADCAST }); } catch (_) {}
     }
 
     // If still waiting for gesture (site replaced video element), re-register
     if (needsGesture) {
       waitForNativePlay();
     } else {
-      updateSyncBarStatus("syncing");
+      updateSyncBarStatus(SyncStatus.SYNCING);
     }
 
     // Send periodic state updates (position, duration, playing) for relay to room + sync bar
     timeReportInterval = setInterval(() => {
       if (!hookedVideo) return;
       const msg = {
-        type: "video:state",
+        type: Msg.VIDEO_STATE,
         position: hookedVideo.currentTime,
         duration: hookedVideo.duration || 0,
         playing: !hookedVideo.paused,
@@ -259,19 +398,19 @@
       // Only send state to server when synced (prevents corrupting canonical state)
       if (synced && port) port.postMessage(msg);
       // Always send bar update via port so background can relay to top frame
-      if (port) port.postMessage({ type: "byob:bar-update", position: msg.position, duration: msg.duration, playing: msg.playing });
+      if (port) port.postMessage({ type: Msg.BAR_UPDATE, position: msg.position, duration: msg.duration, playing: msg.playing });
     }, 500);
   }
 
   function unhookVideo() {
     if (!hookedVideo) return;
     stopStateCheck();
-    hookedVideo.removeEventListener("play", onVideoPlay);
-    hookedVideo.removeEventListener("pause", onVideoPause);
-    hookedVideo.removeEventListener("seeked", onVideoSeeked);
-    hookedVideo.removeEventListener("ended", onVideoEnded);
+    hookedVideo.removeEventListener(Evt.PLAY, onVideoPlay);
+    hookedVideo.removeEventListener(Evt.PAUSE, onVideoPause);
+    hookedVideo.removeEventListener(Evt.SEEKED, onVideoSeeked);
+    hookedVideo.removeEventListener(Evt.ENDED, onVideoEnded);
     if (_nativePlayListener) {
-      hookedVideo.removeEventListener("play", _nativePlayListener);
+      hookedVideo.removeEventListener(Evt.PLAY, _nativePlayListener);
       _nativePlayListener = null;
     }
     hookedVideo = null;
@@ -286,12 +425,12 @@
     // Cancel any pause enforcer that's fighting the user's play
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced || commandCooldown) return;
-    if (shouldSuppress("playing")) return;
-    expectedPlayState = "playing";
+    if (shouldSuppress(State.PLAYING)) return;
+    expectedPlayState = State.PLAYING;
     mismatchSince = null;
     if (port && hookedVideo) {
       port.postMessage({
-        type: "video:play",
+        type: Msg.VIDEO_PLAY,
         position: hookedVideo.currentTime,
       });
     }
@@ -299,12 +438,12 @@
 
   function onVideoPause() {
     if (!synced || commandCooldown) return;
-    if (shouldSuppress("paused")) return;
-    expectedPlayState = "paused";
+    if (shouldSuppress(State.PAUSED)) return;
+    expectedPlayState = State.PAUSED;
     mismatchSince = null;
     if (port && hookedVideo) {
       port.postMessage({
-        type: "video:pause",
+        type: Msg.VIDEO_PAUSE,
         position: hookedVideo.currentTime,
       });
     }
@@ -312,10 +451,10 @@
 
   function onVideoSeeked() {
     if (!synced || commandCooldown) return;
-    if (shouldSuppress("seeked")) return;
+    if (shouldSuppress(State.SEEKED)) return;
     if (port && hookedVideo) {
       port.postMessage({
-        type: "video:seek",
+        type: Msg.VIDEO_SEEK,
         position: hookedVideo.currentTime,
       });
     }
@@ -324,7 +463,7 @@
   function onVideoEnded() {
     if (!synced) return;
     if (port) {
-      port.postMessage({ type: "video:ended" });
+      port.postMessage({ type: Msg.VIDEO_ENDED });
     }
   }
 
@@ -338,7 +477,7 @@
     stateCheckInterval = setInterval(() => {
       if (!hookedVideo || !synced || !expectedPlayState || commandCooldown) return;
 
-      const actual = hookedVideo.paused ? "paused" : "playing";
+      const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
 
       if (actual !== expectedPlayState) {
         if (!mismatchSince) {
@@ -348,7 +487,7 @@
           mismatchSince = null;
           startCommandCooldown(); // prevent echo from correction
 
-          if (expectedPlayState === "playing") {
+          if (expectedPlayState === State.PLAYING) {
             hookedVideo.play().then(() => {
               // Worked — state will match on next tick
             }).catch(() => {
@@ -358,8 +497,8 @@
               needsGesture = true;
               expectedPlayState = null;
               stopStateCheck();
-              updateSyncBarStatus("clickjoin");
-              showJoinToast("Click play on the video to start syncing");
+              updateSyncBarStatus(SyncStatus.CLICKJOIN);
+              showJoinToast(Copy.CLICK_PLAY_TOAST);
               waitForNativePlay();
             });
           } else {
@@ -422,31 +561,31 @@
 
   // Handle commands from service worker
   function handleSWMessage(msg) {
-    if (msg.type === "byob:channel-ready" && window === window.top) {
+    if (msg.type === Msg.CHANNEL_READY && window === window.top) {
       if (!synced && needsGesture) {
-        updateSyncBarStatus("searching");
-        showJoinToast("Play the video to start syncing");
+        updateSyncBarStatus(SyncStatus.SEARCHING);
+        showJoinToast(Copy.PLAY_TO_SYNC);
       }
       return;
     }
-    if (msg.type === "byob:video-hooked" && window === window.top) {
+    if (msg.type === Msg.VIDEO_HOOKED_BROADCAST && window === window.top) {
       // Only inject the sync bar if not already present — don't update
       // status here since it would overwrite per-client states like
       // "Click play to sync" across all tabs. Status is managed by
       // tryAutoSync/tryPlay/command:synced for each client individually.
-      if (!window.location.hostname.includes("youtube.com")) {
+      if (!window.location.hostname.includes(Hosts.YOUTUBE)) {
         injectSyncBar();
       }
       return;
     }
-    if (msg.type === "byob:bar-update" && window === window.top && synced) {
+    if (msg.type === Msg.BAR_UPDATE && window === window.top && synced) {
       const fmt = (s) => Math.floor(s / 60) + ":" + Math.floor(s % 60).toString().padStart(2, "0");
-      const timeEl = document.getElementById("byob-time");
-      const statusEl = document.getElementById("byob-status");
-      const dotEl = document.getElementById("byob-dot");
-      const playPauseBtn = document.getElementById("byob-playpause");
-      const progressWrap = document.getElementById("byob-progress-wrap");
-      const progressFill = document.getElementById("byob-progress-fill");
+      const timeEl = document.getElementById(El.TIME);
+      const statusEl = document.getElementById(El.STATUS);
+      const dotEl = document.getElementById(El.DOT);
+      const playPauseBtn = document.getElementById(El.PLAYPAUSE);
+      const progressWrap = document.getElementById(El.PROGRESS_WRAP);
+      const progressFill = document.getElementById(El.PROGRESS_FILL);
 
       if (timeEl && msg.duration > 0) timeEl.textContent = fmt(msg.position) + " / " + fmt(msg.duration);
       else if (timeEl) timeEl.textContent = fmt(msg.position);
@@ -454,11 +593,11 @@
       // Don't overwrite "Finished — next in Xs" countdown with "Paused"
       if (statusEl && dotEl && !_countdownInterval) {
         if (msg.playing) {
-          statusEl.textContent = "Playing"; statusEl.style.color = "#00d400"; dotEl.style.background = "#00d400";
-          statusEl.title = "Video is playing in sync with the room";
+          statusEl.textContent = Copy.PLAYING; statusEl.style.color = Color.GREEN; dotEl.style.background = Color.GREEN;
+          statusEl.title = Copy.TIP_PLAYING;
         } else {
-          statusEl.textContent = "Paused"; statusEl.style.color = "#ff9900"; dotEl.style.background = "#ff9900";
-          statusEl.title = "Video is paused — synced with room";
+          statusEl.textContent = Copy.PAUSED; statusEl.style.color = Color.ORANGE; dotEl.style.background = Color.ORANGE;
+          statusEl.title = Copy.TIP_PAUSED;
         }
       }
 
@@ -479,16 +618,16 @@
       return;
     }
 
-    if (msg.type === "autoplay:countdown" && window === window.top) {
+    if (msg.type === Msg.AUTOPLAY_COUNTDOWN && window === window.top) {
       startCountdown(msg.duration_ms || 5000);
       return;
     }
-    if (msg.type === "autoplay:cancelled" && window === window.top) {
+    if (msg.type === Msg.AUTOPLAY_CANCELLED && window === window.top) {
       clearCountdown();
       return;
     }
 
-    if (msg.type === "command:initial-state") {
+    if (msg.type === Msg.COMMAND_INITIAL_STATE) {
       tryAutoSync();
       return;
     }
@@ -496,20 +635,20 @@
     // Handle synced before hookedVideo/needsGesture guards — the top frame
     // may not have a hooked video (it's in an iframe) but still needs to
     // hide the toast and update the sync bar.
-    if (msg.type === "command:synced") {
+    if (msg.type === Msg.COMMAND_SYNCED) {
       const wasAlreadySynced = synced;
       synced = true;
       needsGesture = false;
       hideJoinToast();
       if (hookedVideo) {
-        updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+        updateSyncBarStatus(hookedVideo.paused ? State.PAUSED : State.PLAYING);
         // Only send video:ready once, from the frame that has the video
-        if (!wasAlreadySynced && port) port.postMessage({ type: "video:ready" });
+        if (!wasAlreadySynced && port) port.postMessage({ type: Msg.VIDEO_READY });
       }
       return;
     }
 
-    if (msg.type === "byob:ready-count" && window === window.top) {
+    if (msg.type === Msg.READY_COUNT && window === window.top) {
       updateReadyCount(msg.ready, msg.has_tab, msg.total);
       return;
     }
@@ -520,9 +659,9 @@
     if (needsGesture) return;
 
     switch (msg.type) {
-      case "command:play":
+      case Msg.COMMAND_PLAY:
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-        expectedPlayState = "playing";
+        expectedPlayState = State.PLAYING;
         startCommandCooldown();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         if (hookedVideo.paused) {
@@ -531,8 +670,8 @@
         startStateCheck();
         break;
 
-      case "command:pause":
-        expectedPlayState = "paused";
+      case Msg.COMMAND_PAUSE:
+        expectedPlayState = State.PAUSED;
         startCommandCooldown();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.pause();
@@ -546,7 +685,7 @@
         setTimeout(() => { clearInterval(pauseEnforcer); pauseEnforcer = null; }, 2000);
         break;
 
-      case "command:seek":
+      case Msg.COMMAND_SEEK:
         startCommandCooldown();
         hookedVideo.currentTime = msg.position;
         break;
@@ -567,17 +706,17 @@
     } else {
       // First time, video is paused — wait for user to click play
       needsGesture = true;
-      updateSyncBarStatus("clickjoin");
-      showJoinToast("Click play on the video to start syncing");
+      updateSyncBarStatus(SyncStatus.CLICKJOIN);
+      showJoinToast(Copy.CLICK_PLAY_TOAST);
       waitForNativePlay();
     }
   }
 
   function requestSync() {
     hideJoinToast();
-    updateSyncBarStatus("syncing");
+    updateSyncBarStatus(SyncStatus.SYNCING);
     if (port) {
-      port.postMessage({ type: "video:request-sync" });
+      port.postMessage({ type: Msg.VIDEO_REQUEST_SYNC });
     }
   }
 
@@ -596,45 +735,45 @@
 
     // Remove any existing listener to prevent stacking
     if (_nativePlayListener) {
-      hookedVideo.removeEventListener("play", _nativePlayListener);
+      hookedVideo.removeEventListener(Evt.PLAY, _nativePlayListener);
     }
 
     _nativePlayListener = () => {
       if (_nativePlayListener) {
-        hookedVideo?.removeEventListener("play", _nativePlayListener);
+        hookedVideo?.removeEventListener(Evt.PLAY, _nativePlayListener);
         _nativePlayListener = null;
       }
       // Video is actually playing now — clear gesture requirement
       needsGesture = false;
       requestSync();
     };
-    hookedVideo.addEventListener("play", _nativePlayListener);
+    hookedVideo.addEventListener(Evt.PLAY, _nativePlayListener);
   }
 
   function showJoinToast(text) {
     if (window !== window.top) return;
     hideJoinToast();
 
-    const toast = document.createElement("div");
-    toast.id = "byob-join-toast";
+    const toast = document.createElement(Tag.DIV);
+    toast.id = El.JOIN_TOAST;
     toast.style.cssText = `
       position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%);
-      z-index: 999999; background: #7c3aed; color: white;
+      z-index: 999999; background: ${Color.PURPLE}; color: white;
       font-family: system-ui, sans-serif; font-size: 15px; font-weight: 600;
       padding: 14px 28px; border-radius: 12px;
-      box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15);
+      box-shadow: 0 4px 24px rgba(124,58,237, 0.5), 0 0 0 1px rgba(255,255,255,0.15);
       pointer-events: none;
       animation: byob-toast-pulse 2s ease-in-out infinite;
     `;
     toast.textContent = text;
 
     // Add pulse animation
-    const style = document.createElement("style");
-    style.id = "byob-toast-style";
+    const style = document.createElement(Tag.STYLE);
+    style.id = El.TOAST_STYLE;
     style.textContent = `
       @keyframes byob-toast-pulse {
-        0%, 100% { opacity: 1; box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15); }
-        50% { opacity: 0.85; box-shadow: 0 4px 32px rgba(124, 58, 237, 0.7), 0 0 0 1px rgba(255,255,255,0.25); }
+        0%, 100% { opacity: 1; box-shadow: 0 4px 24px rgba(124,58,237, 0.5), 0 0 0 1px rgba(255,255,255,0.15); }
+        50% { opacity: 0.85; box-shadow: 0 4px 32px rgba(124,58,237, 0.7), 0 0 0 1px rgba(255,255,255,0.25); }
       }
     `;
     document.head.appendChild(style);
@@ -642,19 +781,19 @@
   }
 
   function hideJoinToast() {
-    const toast = document.getElementById("byob-join-toast");
+    const toast = document.getElementById(El.JOIN_TOAST);
     if (toast) toast.remove();
-    const style = document.getElementById("byob-toast-style");
+    const style = document.getElementById(El.TOAST_STYLE);
     if (style) style.remove();
   }
 
   function injectSyncBar() {
-    if (document.getElementById("byob-sync-bar")) return;
+    if (document.getElementById(El.SYNC_BAR)) return;
 
     // Try to insert after the video player area, not fixed to viewport
     // This avoids covering video controls
-    const bar = document.createElement("div");
-    bar.id = "byob-sync-bar";
+    const bar = document.createElement(Tag.DIV);
+    bar.id = El.SYNC_BAR;
 
     bar.style.cssText = `
       position: fixed; bottom: 0; left: 0; right: 0; z-index: 999999;
@@ -664,67 +803,67 @@
       transition: all 0.2s ease;
     `;
 
-    const content = document.createElement("div");
-    content.id = "byob-bar-content";
+    const content = document.createElement(Tag.DIV);
+    content.id = El.BAR_CONTENT;
     content.style.cssText = "display:flex;align-items:center;gap:10px;padding:6px 16px;";
 
-    const logo = document.createElement("span");
+    const logo = document.createElement(Tag.SPAN);
     logo.style.cssText = "font-weight:bold;font-size:14px;opacity:0.7;flex-shrink:0";
     logo.textContent = "byob";
 
-    const dot = document.createElement("span");
-    dot.id = "byob-dot";
+    const dot = document.createElement(Tag.SPAN);
+    dot.id = El.DOT;
     dot.style.cssText = "width:6px;height:6px;border-radius:50%;background:#888;flex-shrink:0";
 
-    const status = document.createElement("span");
-    status.id = "byob-status";
+    const status = document.createElement(Tag.SPAN);
+    status.id = El.STATUS;
     status.style.cssText = "color:#888;font-size:12px;flex-shrink:0;cursor:default";
     status.textContent = "Loading...";
 
     // Play/pause button — hidden until synced
-    const playPauseBtn = document.createElement("button");
-    playPauseBtn.id = "byob-playpause";
+    const playPauseBtn = document.createElement(Tag.BUTTON);
+    playPauseBtn.id = El.PLAYPAUSE;
     playPauseBtn.style.cssText = "display:none;background:none;border:none;color:white;cursor:pointer;font-size:14px;padding:0;margin:0;line-height:1;opacity:0.8;flex-shrink:0;outline:none;-webkit-user-select:none;user-select:none;vertical-align:middle;";
     playPauseBtn.textContent = "▶";
-    playPauseBtn.addEventListener("click", () => {
+    playPauseBtn.addEventListener(Evt.CLICK, () => {
       if (port) {
         if (playPauseBtn.dataset.playing === "true") {
-          port.postMessage({ type: "video:pause", position: parseFloat(playPauseBtn.dataset.position || 0) });
+          port.postMessage({ type: Msg.VIDEO_PAUSE, position: parseFloat(playPauseBtn.dataset.position || 0) });
         } else {
-          port.postMessage({ type: "video:play", position: parseFloat(playPauseBtn.dataset.position || 0) });
+          port.postMessage({ type: Msg.VIDEO_PLAY, position: parseFloat(playPauseBtn.dataset.position || 0) });
         }
       }
     });
 
     // Progress bar — hidden until synced
-    const progressWrap = document.createElement("div");
-    progressWrap.id = "byob-progress-wrap";
+    const progressWrap = document.createElement(Tag.DIV);
+    progressWrap.id = El.PROGRESS_WRAP;
     progressWrap.style.cssText = "display:none;flex:1;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;cursor:pointer;position:relative;min-width:60px;";
-    const progressFill = document.createElement("div");
-    progressFill.id = "byob-progress-fill";
+    const progressFill = document.createElement(Tag.DIV);
+    progressFill.id = El.PROGRESS_FILL;
     progressFill.style.cssText = "height:100%;background:#7c3aed;border-radius:2px;width:0%;transition:width 0.3s linear;pointer-events:none;";
     progressWrap.appendChild(progressFill);
-    progressWrap.addEventListener("click", (e) => {
+    progressWrap.addEventListener(Evt.CLICK, (e) => {
       const rect = progressWrap.getBoundingClientRect();
       const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const dur = parseFloat(progressWrap.dataset.duration || 0);
       if (dur > 0 && port) {
-        port.postMessage({ type: "video:seek", position: frac * dur });
+        port.postMessage({ type: Msg.VIDEO_SEEK, position: frac * dur });
       }
     });
 
-    const time = document.createElement("span");
-    time.id = "byob-time";
+    const time = document.createElement(Tag.SPAN);
+    time.id = El.TIME;
     time.style.cssText = "font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px;flex-shrink:0";
 
     // Users ready indicator
-    const usersEl = document.createElement("span");
-    usersEl.id = "byob-users";
+    const usersEl = document.createElement(Tag.SPAN);
+    usersEl.id = El.USERS;
     usersEl.style.cssText = "display:none;font-size:12px;flex-shrink:0;gap:4px;align-items:center;font-variant-numeric:tabular-nums;cursor:default";
     usersEl.innerHTML = `<svg id="byob-users-icon" width="14" height="14" viewBox="0 0 24 24" fill="rgba(255,255,255,0.5)" style="flex-shrink:0"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg><span id="byob-users-count" style="opacity:0.5">0/0</span>`;
 
-    const collapse = document.createElement("button");
-    collapse.id = "byob-collapse";
+    const collapse = document.createElement(Tag.BUTTON);
+    collapse.id = El.COLLAPSE;
     collapse.style.cssText = "background:none;color:white;border:none;cursor:pointer;font-size:14px;opacity:0.5;padding:0 4px;line-height:1;outline:none;-webkit-user-select:none;user-select:none;flex-shrink:0;";
     collapse.textContent = "\u25BC";
 
@@ -733,7 +872,7 @@
 
     // Collapse/expand toggle
     let collapsed = false;
-    bar.querySelector("#byob-collapse").addEventListener("click", () => {
+    bar.querySelector("#" + El.COLLAPSE).addEventListener(Evt.CLICK, () => {
       collapsed = !collapsed;
       if (collapsed) {
         // Shrink to small pill on the right
@@ -743,9 +882,9 @@
         bar.style.borderRadius = "6px";
         bar.style.border = "1px solid rgba(255,255,255,0.15)";
         bar.style.borderTop = "1px solid rgba(255,255,255,0.15)";
-        bar.querySelector("#byob-bar-content").style.cssText = "display:flex;align-items:center;gap:6px;padding:4px 10px;";
+        bar.querySelector("#" + El.BAR_CONTENT).style.cssText = "display:flex;align-items:center;gap:6px;padding:4px 10px;";
         bar.querySelectorAll("#byob-dot, #byob-status, #byob-time, #byob-playpause, #byob-progress-wrap").forEach(el => el.style.display = "none");
-        bar.querySelector("#byob-collapse").textContent = "▲";
+        bar.querySelector("#" + El.COLLAPSE).textContent = "▲";
       } else {
         // Expand to full bar
         bar.style.left = "0";
@@ -754,13 +893,13 @@
         bar.style.borderRadius = "0";
         bar.style.border = "none";
         bar.style.borderTop = "1px solid rgba(255,255,255,0.15)";
-        bar.querySelector("#byob-bar-content").style.cssText = "display:flex;align-items:center;gap:10px;padding:6px 16px;";
+        bar.querySelector("#" + El.BAR_CONTENT).style.cssText = "display:flex;align-items:center;gap:10px;padding:6px 16px;";
         bar.querySelectorAll("#byob-dot, #byob-status, #byob-time").forEach(el => el.style.display = "");
         // Only show controls if synced
         if (synced) {
           bar.querySelectorAll("#byob-playpause, #byob-progress-wrap").forEach(el => el.style.display = "");
         }
-        bar.querySelector("#byob-collapse").textContent = "▼";
+        bar.querySelector("#" + El.COLLAPSE).textContent = "▼";
       }
     });
 
@@ -768,9 +907,9 @@
   }
 
   function updateReadyCount(ready, hasTab, total) {
-    const el = document.getElementById("byob-users");
-    const icon = document.getElementById("byob-users-icon");
-    const count = document.getElementById("byob-users-count");
+    const el = document.getElementById(El.USERS);
+    const icon = document.getElementById(El.USERS_ICON);
+    const count = document.getElementById(El.USERS_COUNT);
     if (!el || !icon || !count) return;
 
     el.style.display = "flex";
@@ -780,9 +919,9 @@
 
     count.textContent = `${ready}/${total}`;
 
-    icon.setAttribute("fill", allReady ? "#00d400" : "rgba(255,255,255,0.5)");
+    icon.setAttribute("fill", allReady ? Color.GREEN : Color.WHITE_50);
     count.style.opacity = allReady ? "1" : "0.5";
-    count.style.color = allReady ? "#00d400" : "white";
+    count.style.color = allReady ? Color.GREEN : "white";
 
     // Tooltip — detailed breakdown
     const parts = [];
@@ -803,14 +942,14 @@
   function startCountdown(durationMs) {
     clearCountdown();
     const endTime = Date.now() + durationMs;
-    updateSyncBarStatus("finished");
+    updateSyncBarStatus(SyncStatus.FINISHED);
 
-    const statusEl = document.getElementById("byob-status");
+    const statusEl = document.getElementById(El.STATUS);
     const update = () => {
       const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
       if (statusEl) {
-        statusEl.textContent = remaining > 0 ? `Finished — next in ${remaining}s` : "Loading next...";
-        statusEl.style.color = "#7c3aed";
+        statusEl.textContent = remaining > 0 ? `${Copy.FINISHED} — next in ${remaining}s` : Copy.LOADING_NEXT;
+        statusEl.style.color = Color.PURPLE;
       }
       if (remaining <= 0) clearCountdown();
     };
@@ -826,18 +965,18 @@
   }
 
   function updateSyncBarStatus(state) {
-    const dot = document.getElementById("byob-dot");
-    const status = document.getElementById("byob-status");
+    const dot = document.getElementById(El.DOT);
+    const status = document.getElementById(El.STATUS);
     if (!dot || !status) return;
 
     const states = {
-      loading:   { color: "#888",    text: "Connecting...", tip: "Connecting to the byob room server" },
-      searching: { color: "#ff9900", text: "Play the video to start syncing", tip: "Waiting for a video element on this page" },
-      syncing:   { color: "#ff9900", text: "Syncing...", tip: "Applying room state to this player" },
-      clickjoin: { color: "#ff9900", text: "Click play to sync", tip: "Click play on the video player above to start syncing with the room" },
-      playing:   { color: "#00d400", text: "Playing", tip: "Video is playing in sync with the room" },
-      paused:    { color: "#ff9900", text: "Paused", tip: "Video is paused — synced with room" },
-      finished:  { color: "#7c3aed", text: "Finished", tip: "Video ended — next video loading" },
+      loading:   { color: Color.GRAY,    text: Copy.CONNECTING, tip: Copy.TIP_CONNECTING },
+      searching: { color: Color.ORANGE, text: Copy.PLAY_TO_SYNC, tip: Copy.TIP_SEARCHING },
+      syncing:   { color: Color.ORANGE, text: Copy.SYNCING, tip: Copy.TIP_SYNCING },
+      clickjoin: { color: Color.ORANGE, text: Copy.CLICK_PLAY, tip: Copy.TIP_CLICKJOIN },
+      playing:   { color: Color.GREEN, text: Copy.PLAYING, tip: Copy.TIP_PLAYING },
+      paused:    { color: Color.ORANGE, text: Copy.PAUSED, tip: Copy.TIP_PAUSED },
+      finished:  { color: Color.PURPLE, text: Copy.FINISHED, tip: Copy.TIP_FINISHED },
     };
     const s = states[state];
     if (!s) return;
@@ -850,7 +989,7 @@
   // Update time display on the sync bar
   setInterval(() => {
     if (!hookedVideo) return;
-    const timeEl = document.getElementById("byob-time");
+    const timeEl = document.getElementById(El.TIME);
     if (!timeEl) return;
 
     const t = hookedVideo.currentTime || 0;
@@ -861,7 +1000,7 @@
     // Only update status when synced — before that, status is managed by
     // tryAutoSync/tryPlay/waitForNativePlay
     if (synced && !_countdownInterval) {
-      updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+      updateSyncBarStatus(hookedVideo.paused ? State.PAUSED : State.PLAYING);
     }
   }, 250);
 
@@ -869,7 +1008,7 @@
     activateArgs = null; // prevent reconnection
     synced = false;
     unhookVideo();
-    const bar = document.getElementById("byob-sync-bar");
+    const bar = document.getElementById(El.SYNC_BAR);
     if (bar) bar.remove();
   }
 
@@ -877,10 +1016,10 @@
   // If we're inside a YouTube embed iframe, listen for sponsor segments
   // from the parent page and inject colored bars into YouTube's seek bar.
   function initYouTubeEmbed() {
-    if (!window.location.hostname.includes("youtube.com")) return;
+    if (!window.location.hostname.includes(Hosts.YOUTUBE)) return;
     if (!window.location.pathname.startsWith("/embed/")) return;
 
-    window.addEventListener("message", (e) => {
+    window.addEventListener(Evt.MESSAGE, (e) => {
       if (!e.data || e.data.type !== "byob:sponsor-segments") return;
       const { segments, duration } = e.data;
       if (!segments || !duration) return;
@@ -911,14 +1050,14 @@
     progressBar.querySelectorAll(".byob-sponsor-segment").forEach((el) => el.remove());
 
     const colors = {
-      sponsor: "#00d400",
-      selfpromo: "#ffff00",
-      interaction: "#cc00ff",
-      intro: "#00ffff",
-      outro: "#0202ed",
-      preview: "#008fd6",
-      music_offtopic: "#ff9900",
-      filler: "#7300FF",
+      sponsor: Color.SB_SPONSOR,
+      selfpromo: Color.SB_SELFPROMO,
+      interaction: Color.SB_INTERACTION,
+      intro: Color.SB_INTRO,
+      outro: Color.SB_OUTRO,
+      preview: Color.SB_PREVIEW,
+      music_offtopic: Color.SB_MUSIC_OFFTOPIC,
+      filler: Color.SB_FILLER,
     };
 
     const labels = {
@@ -947,7 +1086,7 @@
         0.3,
         ((seg.segment[1] - seg.segment[0]) / duration) * 100
       );
-      const el = document.createElement("div");
+      const el = document.createElement(Tag.DIV);
       el.className = "byob-sponsor-segment";
       el.title = labels[seg.category] || seg.category;
       el.style.cssText = `
@@ -956,7 +1095,7 @@
         left: ${left}%;
         width: ${width}%;
         height: 3px;
-        background: ${colors[seg.category] || "#00d400"};
+        background: ${colors[seg.category] || Color.SB_SPONSOR};
         opacity: 0.8;
         z-index: 0;
         pointer-events: none;
