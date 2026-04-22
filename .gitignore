@@ -49,6 +49,7 @@ result-firefox
 # Editor lock files
 *~lock~*
 .superpowers/
+.worktrees/
 
 # dotenv
 .env
