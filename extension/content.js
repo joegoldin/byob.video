@@ -622,7 +622,7 @@
     collapse.style.cssText = "background:none;color:white;border:none;cursor:pointer;font-size:14px;opacity:0.5;padding:0 4px;line-height:1;outline:none;-webkit-user-select:none;user-select:none;flex-shrink:0;";
     collapse.textContent = "\u25BC";
 
-    content.append(logo, dot, status, playPauseBtn, progressWrap, time, usersEl, collapse);
+    content.append(logo, dot, status, usersEl, playPauseBtn, progressWrap, time, collapse);
     bar.appendChild(content);
 
     // Collapse/expand toggle
