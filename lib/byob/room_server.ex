@@ -248,7 +248,18 @@ defmodule Byob.RoomServer do
           end)
           |> Enum.map(fn {uid, _} -> uid end)
 
-        %{state | users: Map.drop(state.users, stale_ids)}
+        if stale_ids != [] do
+          stale_set = MapSet.new(stale_ids)
+          open = Map.get(state, :open_tabs, %{}) |> Enum.reject(fn {_, o} -> o in stale_set end) |> Map.new()
+          ready = Map.get(state, :ready_tabs, %{}) |> Enum.reject(fn {_, o} -> o in stale_set end) |> Map.new()
+
+          state
+          |> Map.put(:users, Map.drop(state.users, stale_ids))
+          |> Map.put(:open_tabs, open)
+          |> Map.put(:ready_tabs, ready)
+        else
+          state
+        end
       else
         state
       end
