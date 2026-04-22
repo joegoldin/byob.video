@@ -1,14 +1,13 @@
 // Time-window suppression for echoed player events after programmatic commands.
 // Suppresses ALL events for a window after a programmatic command, clearing
-// only after the terminal state is reached + a settling period, or a safety timeout.
+// after the terminal state is reached + a short settling timer, or a safety timeout.
 export class Suppression {
   constructor() {
     this.gen = 0;
     this.suppressUntilGen = 0;
     this.expectedState = null;
-    this.terminalReached = false;
-    this.terminalAt = null;
     this.safetyTimeout = null;
+    this.settleTimeout = null;
   }
 
   // Call before applying a remote command to the player.
@@ -17,10 +16,11 @@ export class Suppression {
     this.gen++;
     this.suppressUntilGen = this.gen;
     this.expectedState = expectedState;
-    this.terminalReached = false;
-    this.terminalAt = null;
 
     if (this.safetyTimeout) clearTimeout(this.safetyTimeout);
+    if (this.settleTimeout) clearTimeout(this.settleTimeout);
+    this.settleTimeout = null;
+
     this.safetyTimeout = setTimeout(() => {
       this._clear();
     }, 3000);
@@ -31,13 +31,10 @@ export class Suppression {
     if (this.suppressUntilGen === 0) return false;
 
     if (currentState === this.expectedState || this.expectedState === null) {
-      if (!this.terminalReached) {
-        this.terminalReached = true;
-        this.terminalAt = performance.now();
-      }
-      // Keep suppressing for 200ms after terminal state to catch double-fires
-      if (performance.now() - this.terminalAt > 200) {
-        this._clear();
+      // Terminal state reached — schedule auto-clear after 200ms settling
+      // to catch YouTube's double-fire patterns, then release.
+      if (!this.settleTimeout) {
+        this.settleTimeout = setTimeout(() => this._clear(), 200);
       }
     }
 
@@ -52,11 +49,13 @@ export class Suppression {
   _clear() {
     this.suppressUntilGen = 0;
     this.expectedState = null;
-    this.terminalReached = false;
-    this.terminalAt = null;
     if (this.safetyTimeout) {
       clearTimeout(this.safetyTimeout);
       this.safetyTimeout = null;
+    }
+    if (this.settleTimeout) {
+      clearTimeout(this.settleTimeout);
+      this.settleTimeout = null;
     }
   }
 
