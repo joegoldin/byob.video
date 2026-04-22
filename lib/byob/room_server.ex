@@ -807,10 +807,10 @@ defmodule Byob.RoomServer do
         updated = Round.cast_vote(round, user_id, external_id)
         state = %{state | round: updated}
 
-        # Early-close if all present (connected) users have voted
+        # Early-close if all present (connected, non-extension) users have voted
         connected_user_ids =
           state.users
-          |> Enum.filter(fn {_, u} -> u.connected end)
+          |> Enum.filter(fn {_, u} -> u.connected and not Map.get(u, :is_extension, false) end)
           |> Enum.map(fn {id, _} -> id end)
           |> MapSet.new()
 
@@ -825,7 +825,9 @@ defmodule Byob.RoomServer do
           state = resolve_round_now(state)
           {:reply, :ok, state}
         else
-          state = schedule_round_broadcast(state)
+          # Broadcast immediately so all clients see the vote in real-time
+          broadcast(state, {:round_updated, snapshot_round(updated)})
+          state = %{state | round_last_broadcast_ms: System.monotonic_time(:millisecond)}
           {:reply, :ok, state}
         end
 
@@ -1438,24 +1440,7 @@ defmodule Byob.RoomServer do
     %{state | round_coalesce_ref: nil}
   end
 
-  # Throttle :round_updated broadcasts — max one per 250ms.
-  defp schedule_round_broadcast(state) do
-    now = System.monotonic_time(:millisecond)
-    elapsed = now - state.round_last_broadcast_ms
-
-    cond do
-      state.round_coalesce_ref != nil ->
-        state
-
-      elapsed >= 250 ->
-        broadcast(state, {:round_updated, snapshot_round(state.round)})
-        %{state | round_last_broadcast_ms: now}
-
-      true ->
-        ref = Process.send_after(self(), :round_broadcast_flush, 250 - elapsed)
-        %{state | round_coalesce_ref: ref}
-    end
-  end
+  # (schedule_round_broadcast removed — votes broadcast immediately)
 
   # Resolve (pick winner), broadcast :round_revealed, schedule finalize.
   defp resolve_round_now(state) do
