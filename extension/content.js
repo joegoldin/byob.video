@@ -14,6 +14,9 @@
   let safetyTimeout = null;
   let timeReportInterval = null;
   let commandCooldown = null; // blocks ALL outbound events briefly after a server command
+  let expectedPlayState = null; // "playing" or "paused" — what the server wants
+  let stateCheckInterval = null;
+  let mismatchSince = null;
 
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
@@ -262,6 +265,7 @@
 
   function unhookVideo() {
     if (!hookedVideo) return;
+    stopStateCheck();
     hookedVideo.removeEventListener("play", onVideoPlay);
     hookedVideo.removeEventListener("pause", onVideoPause);
     hookedVideo.removeEventListener("seeked", onVideoSeeked);
@@ -283,6 +287,8 @@
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced || commandCooldown) return;
     if (shouldSuppress("playing")) return;
+    expectedPlayState = "playing";
+    mismatchSince = null;
     if (port && hookedVideo) {
       port.postMessage({
         type: "video:play",
@@ -294,6 +300,8 @@
   function onVideoPause() {
     if (!synced || commandCooldown) return;
     if (shouldSuppress("paused")) return;
+    expectedPlayState = "paused";
+    mismatchSince = null;
     if (port && hookedVideo) {
       port.postMessage({
         type: "video:pause",
@@ -318,6 +326,58 @@
     if (port) {
       port.postMessage({ type: "video:ended" });
     }
+  }
+
+  // State reconciliation — checks if actual video state matches expected
+  // server state. If mismatched for >1s, tries to correct. If play fails
+  // repeatedly, drops to needsGesture state.
+  function startStateCheck() {
+    if (stateCheckInterval) return; // already running
+    mismatchSince = null;
+
+    stateCheckInterval = setInterval(() => {
+      if (!hookedVideo || !synced || !expectedPlayState || commandCooldown) return;
+
+      const actual = hookedVideo.paused ? "paused" : "playing";
+
+      if (actual !== expectedPlayState) {
+        if (!mismatchSince) {
+          mismatchSince = performance.now();
+        } else if (performance.now() - mismatchSince > 1000) {
+          // Mismatch persisted for 1s — try to correct
+          mismatchSince = null;
+          startCommandCooldown(); // prevent echo from correction
+
+          if (expectedPlayState === "playing") {
+            hookedVideo.play().then(() => {
+              // Worked — state will match on next tick
+            }).catch(() => {
+              // Play failed — need user gesture. Drop to gesture state
+              // so the user sees the toast and can click play
+              synced = false;
+              needsGesture = true;
+              expectedPlayState = null;
+              stopStateCheck();
+              updateSyncBarStatus("clickjoin");
+              showJoinToast("Click play on the video to start syncing");
+              waitForNativePlay();
+            });
+          } else {
+            hookedVideo.pause();
+          }
+        }
+      } else {
+        mismatchSince = null;
+      }
+    }, 200);
+  }
+
+  function stopStateCheck() {
+    if (stateCheckInterval) {
+      clearInterval(stateCheckInterval);
+      stateCheckInterval = null;
+    }
+    mismatchSince = null;
   }
 
   // Command cooldown — blocks ALL outbound events for 500ms after a server
@@ -462,14 +522,17 @@
     switch (msg.type) {
       case "command:play":
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
+        expectedPlayState = "playing";
         startCommandCooldown();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         if (hookedVideo.paused) {
           hookedVideo.play().catch(() => {});
         }
+        startStateCheck();
         break;
 
       case "command:pause":
+        expectedPlayState = "paused";
         startCommandCooldown();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.pause();
