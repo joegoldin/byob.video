@@ -347,42 +347,27 @@
 
     if (!hookedVideo) return;
 
-    // If we're waiting for a user gesture, ignore play/pause/seek commands —
-    // they'll just fail. Only process command:synced (which is gated below).
-    if (needsGesture && msg.type !== "command:synced") return;
+    // If we're waiting for a user gesture, ignore commands — they'll just fail.
+    if (needsGesture) return;
 
     switch (msg.type) {
       case "command:play":
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         suppress("playing");
-        if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) > 0.5) {
-          hookedVideo.currentTime = msg.position;
-          // Wait for seek to complete, then play. Use a flag to prevent
-          // the safety timeout from calling tryPlay a second time.
-          let played = false;
-          hookedVideo.addEventListener("seeked", function onSeeked() {
-            hookedVideo.removeEventListener("seeked", onSeeked);
-            if (!played) { played = true; tryPlay(); }
-          }, { once: true });
-          setTimeout(() => { if (!played) { played = true; tryPlay(); } }, 1000);
-        } else {
-          tryPlay();
+        // Seek if needed, then play. Don't use tryPlay() here — if the user
+        // already clicked play (requestSync flow), the video is playing and
+        // we just need to adjust position. play() on an already-playing video
+        // resolves immediately without needing a gesture.
+        if (msg.position != null) hookedVideo.currentTime = msg.position;
+        if (hookedVideo.paused) {
+          hookedVideo.play().catch(() => {});
         }
         break;
 
       case "command:pause":
         suppress("paused");
-        if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) > 0.5) {
-          hookedVideo.currentTime = msg.position;
-          let paused = false;
-          hookedVideo.addEventListener("seeked", function onSeeked() {
-            hookedVideo.removeEventListener("seeked", onSeeked);
-            if (!paused) { paused = true; hookedVideo.pause(); }
-          }, { once: true });
-          setTimeout(() => { if (!paused) { paused = true; hookedVideo.pause(); } }, 1000);
-        } else {
-          hookedVideo.pause();
-        }
+        if (msg.position != null) hookedVideo.currentTime = msg.position;
+        hookedVideo.pause();
         // Enforce pause for 2s — fights autoplay/delayed play from sites
         if (pauseEnforcer) clearInterval(pauseEnforcer);
         pauseEnforcer = setInterval(() => {
@@ -400,13 +385,9 @@
         break;
 
       case "command:synced":
-        // Don't override gesture requirement — if tryPlay failed,
-        // we need user to click play before enabling sync
-        if (!needsGesture) {
-          synced = true;
-          hideJoinToast();
-          updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
-        }
+        synced = true;
+        hideJoinToast();
+        updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
         break;
     }
   }
@@ -435,6 +416,7 @@
   function requestSync() {
     needsGesture = false;
     hideJoinToast();
+    updateSyncBarStatus("syncing");
     if (port) {
       port.postMessage({ type: "video:request-sync" });
     }
@@ -465,24 +447,6 @@
       requestSync();
     };
     hookedVideo.addEventListener("play", _nativePlayListener);
-  }
-
-  function tryPlay() {
-    if (!hookedVideo) return;
-    hookedVideo.play().then(() => {
-      // Autoplay worked
-      needsGesture = false;
-      hideJoinToast();
-      updateSyncBarStatus("playing");
-    }).catch(() => {
-      // Autoplay blocked — need user gesture. Drop out of synced state
-      // so commands don't keep failing silently, and wait for native play.
-      synced = false;
-      needsGesture = true;
-      updateSyncBarStatus("clickjoin");
-      showJoinToast("Click play on the video to start syncing");
-      waitForNativePlay();
-    });
   }
 
   function showJoinToast(text) {
