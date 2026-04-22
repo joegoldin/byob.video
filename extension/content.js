@@ -310,7 +310,7 @@
     }
 
     if (msg.type === "command:initial-state") {
-      tryAutoSync(msg.play_state, msg.current_time);
+      tryAutoSync();
       return;
     }
 
@@ -320,14 +320,32 @@
       case "command:play":
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         suppress("playing");
-        if (msg.position != null) hookedVideo.currentTime = msg.position;
-        hookedVideo.play().catch(() => {});
+        if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) > 0.5) {
+          // Seek first, then play once seek completes for accurate sync
+          hookedVideo.currentTime = msg.position;
+          hookedVideo.addEventListener("seeked", function onSeeked() {
+            hookedVideo.removeEventListener("seeked", onSeeked);
+            hookedVideo.play().catch(() => {});
+          }, { once: true });
+          // Safety: play anyway after 1s if seeked never fires
+          setTimeout(() => hookedVideo.play().catch(() => {}), 1000);
+        } else {
+          hookedVideo.play().catch(() => {});
+        }
         break;
 
       case "command:pause":
         suppress("paused");
-        if (msg.position != null) hookedVideo.currentTime = msg.position;
-        hookedVideo.pause();
+        if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) > 0.5) {
+          hookedVideo.currentTime = msg.position;
+          hookedVideo.addEventListener("seeked", function onSeeked() {
+            hookedVideo.removeEventListener("seeked", onSeeked);
+            hookedVideo.pause();
+          }, { once: true });
+          setTimeout(() => hookedVideo.pause(), 1000);
+        } else {
+          hookedVideo.pause();
+        }
         // Enforce pause for 2s — fights autoplay/delayed play from sites
         if (pauseEnforcer) clearInterval(pauseEnforcer);
         pauseEnforcer = setInterval(() => {
@@ -350,52 +368,48 @@
     }
   }
 
-  function tryAutoSync(playState, currentTime) {
+  function tryAutoSync() {
     if (!hookedVideo) return;
 
-    // Check if video has content loaded (duration > 0 means media is ready)
+    // The video element was just hooked. It may or may not be loaded/playing
+    // depending on the site. The user's click to load the video may have
+    // already fired a play event before we got here (SW round-trip delay).
+    //
+    // Strategy: if the video is already playing or has content, request
+    // fresh state and apply it. Otherwise wait for the native play event.
+
+    const isPlaying = !hookedVideo.paused;
     const isLoaded = hookedVideo.duration > 0 && isFinite(hookedVideo.duration);
 
-    if (!isLoaded) {
-      // Video element exists but no media loaded yet (common on streaming
-      // sites where clicking play loads the stream). Wait for the user to
-      // click play on the native player, then apply room state.
+    if (isPlaying || isLoaded) {
+      // Video is already going or loaded — request fresh state now
+      requestSync();
+    } else {
+      // No content yet — wait for native play
       updateSyncBarStatus("clickjoin");
       waitForNativePlay();
-      return;
     }
+  }
 
-    // Video is loaded — try to sync directly
-    suppress(playState === "playing" ? "playing" : "paused");
-    hookedVideo.currentTime = currentTime;
-
-    if (playState === "playing") {
-      hookedVideo.play().then(() => {
-        synced = true;
-        updateSyncBarStatus("playing");
-      }).catch(() => {
-        updateSyncBarStatus("clickjoin");
-        waitForNativePlay();
-      });
-    } else {
-      synced = true;
-      updateSyncBarStatus("paused");
+  function requestSync() {
+    if (port) {
+      port.postMessage({ type: "video:request-sync" });
     }
   }
 
   function waitForNativePlay() {
     if (!hookedVideo) return;
-    // Listen for the user's play click on the site's native player.
-    // This click loads the video — we then request fresh room state from
-    // the server and apply it (which may mean immediately pausing back).
-    // synced stays false until command:synced arrives, so this play event
-    // does NOT get sent to the server as a user action.
+
+    // If video is already playing (race: site autoplayed during SW round-trip),
+    // sync immediately instead of waiting for a click that already happened.
+    if (!hookedVideo.paused) {
+      requestSync();
+      return;
+    }
+
     const onPlay = () => {
       hookedVideo?.removeEventListener("play", onPlay);
-      // Request fresh state — SW will seek/play/pause and then send synced
-      if (port) {
-        port.postMessage({ type: "video:request-sync" });
-      }
+      requestSync();
     };
     hookedVideo.addEventListener("play", onPlay);
   }
