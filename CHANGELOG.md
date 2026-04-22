@@ -2,6 +2,14 @@
 
 ---
 
+# v3.6.2
+
+- Updated logo and favicon
+- Removed favicon from header bar (text logo only)
+- Fixed visibility change handler pushing `time` instead of `position` (caused crash on tab return from background)
+
+---
+
 # v3.6.1
 
 **Bugfixes + embeddable filter.**

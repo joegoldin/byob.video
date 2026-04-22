@@ -33,7 +33,6 @@ defmodule ByobWeb.RoomLive.Components do
     >
       <div class="flex-1 flex items-center gap-2">
         <a href="/" class="flex items-center gap-1.5 flex-shrink-0">
-          <img src={~p"/images/favicon.svg"} class="w-5 h-5" />
           <span class="text-base font-bold tracking-tight">byob</span>
         </a>
         <button
