@@ -261,6 +261,9 @@ const RouletteWheel = {
       if (this._status) this._status.textContent = "winner!";
       this._pulseWinnerSlice();
       this._startFinalizePie();
+      // Reveal the winner text now that the animation has completed
+      const winnerText = document.getElementById("roulette-winner-text");
+      if (winnerText) winnerText.classList.remove("hidden");
     }
   },
 

@@ -476,7 +476,8 @@ defmodule ByobWeb.RoomLive.RoundPanel do
       </div>
       <div
         :if={@round.phase == :revealing and @round.winner_external_id}
-        class="text-sm font-semibold text-center text-warning"
+        id="roulette-winner-text"
+        class="text-sm font-semibold text-center text-warning hidden"
       >
         🎉 {winner_title(@round)}
       </div>
