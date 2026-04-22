@@ -54,3 +54,4 @@ result-firefox
 # dotenv
 .env
 priv/byob_test.db*
+.dexter.db*
