@@ -2,6 +2,24 @@
 
 ---
 
+# v3.6.0
+
+**Extension sync overhaul + debug logging.**
+
+- **Extension autoplay fix:** Third-party sites (Crunchyroll, Dailymotion, etc.) blocked programmatic `video.play()`. Extension now shows a "Play the video to start syncing" toast and waits for the user's natural play click as the gesture. One-click flow, no blocking overlay. DRM-safe.
+- **YouTube stutter fix:** Joining a paused room used `cueVideoById` (thumbnail only); resuming caused load-from-scratch → buffering → echo loop. Now uses `loadVideoById` + immediate pause. Player readiness gate prevents outbound events during load. Time-window suppression handles YouTube's multi-event state sequences.
+- **Redundant broadcast fix:** Server only broadcasts `sync:play`/`sync:pause` on real state transitions. Eliminates echo amplification from clients re-echoing already-playing state.
+- **Extension sync bar:** Play/pause button, clickable progress bar, time counter. Only visible after sync. Purple brand color for progress fill.
+- **Ready count indicator:** Shows `ready/hasTab/total` (collapses tiers when equal). Per-tab tracking via tab IDs on the server. Green when all synced, gray otherwise. Tooltips explain each tier.
+- **Autoplay countdown:** Extension bar shows "Finished — next in 5s" counting down when video ends.
+- **Page metadata scraping:** Extension scrapes title/thumbnail from third-party pages (Crunchyroll-specific selectors + generic OG fallback) and sends to byob.video for display.
+- **Debug logging:** New `Byob.SyncLog` module with privacy-safe structured logging. Video URLs SHA-256 hashed (12-char prefix). Logs play/pause/seek/join/heartbeat transitions. Extension channel events logged.
+- **Extension stability:** Auto-reconnect on SW restart, bfcache error suppression, stale extension user cleanup on rejoin, tab-scoped `command:synced`.
+- **HTML entity fix:** OEmbed title extraction now decodes `&#039;`, `&amp;`, etc.
+- **Extension user hidden:** Extension connections use real username and are hidden from the room user list.
+
+---
+
 # v3.5.1
 
 **Roulette polish + sync hardening.**
