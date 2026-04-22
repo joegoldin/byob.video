@@ -17,6 +17,8 @@ chrome.runtime.onConnect.addListener((port) => {
   port.onMessage.addListener((msg) => handleContentMessage(msg, port));
 
   port.onDisconnect.addListener(() => {
+    // Clear lastError to suppress "port moved into bfcache" noise
+    void chrome.runtime.lastError;
     const idx = ports.indexOf(port);
     if (idx > -1) ports.splice(idx, 1);
     if (ports.length === 0 && channel) {
