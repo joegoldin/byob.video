@@ -100,6 +100,20 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
+  def handle_in("video:media_info", payload, socket) do
+    Phoenix.PubSub.broadcast(
+      Byob.PubSub,
+      "room:#{socket.assigns.room_id}",
+      {:extension_media_info,
+       %{
+         title: payload["title"],
+         thumbnail_url: payload["thumbnail_url"]
+       }}
+    )
+
+    {:noreply, socket}
+  end
+
   def handle_in("video:ready", payload, socket) do
     # Prefix tab_id with ext user_id to make unique across browser instances
     tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"

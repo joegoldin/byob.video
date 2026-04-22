@@ -180,6 +180,37 @@
     }
   }
 
+  function scrapePageMetadata() {
+    try {
+      // Try site-specific selectors first
+      const host = window.location.hostname;
+
+      // Crunchyroll
+      if (host.includes("crunchyroll.com")) {
+        const showEl = document.querySelector("[data-t='show-title-link'] h4, .show-title-link h4");
+        const epEl = document.querySelector(".title, h1.title");
+        const thumbEl = document.querySelector("meta[property='og:image']");
+        const show = showEl?.textContent?.trim();
+        const ep = epEl?.textContent?.trim();
+        const title = show && ep ? `${show} — ${ep}` : show || ep || null;
+        return {
+          title: title || document.title,
+          thumbnail_url: thumbEl?.content || null,
+        };
+      }
+
+      // Generic: use OpenGraph or document title
+      const ogTitle = document.querySelector("meta[property='og:title']")?.content;
+      const ogImage = document.querySelector("meta[property='og:image']")?.content;
+      return {
+        title: ogTitle || document.title || null,
+        thumbnail_url: ogImage || null,
+      };
+    } catch (_) {
+      return { title: document.title || null, thumbnail_url: null };
+    }
+  }
+
   function hookVideo(video) {
     if (hookedVideo === video) return;
     if (hookedVideo) {
@@ -194,8 +225,9 @@
     video.addEventListener("seeked", onVideoSeeked);
     video.addEventListener("ended", onVideoEnded);
 
-    // Report that we found a video — try port first, fall back to top-frame relay
-    const reportHooked = { type: "video:hooked", duration: video.duration || 0 };
+    // Report that we found a video — include page metadata for byob display
+    const meta = scrapePageMetadata();
+    const reportHooked = { type: "video:hooked", duration: video.duration || 0, ...meta };
     if (port) {
       port.postMessage(reportHooked);
     }
@@ -690,19 +722,16 @@
     count.style.opacity = allReady ? "1" : "0.5";
     count.style.color = allReady ? "#00d400" : "white";
 
-    // Tooltip
+    // Tooltip — phrase everything as "what's still needed"
     const parts = [];
     parts.push(`${total} user${total !== 1 ? "s" : ""} in room`);
-    if (!allHaveTab) {
-      parts.push(`${hasTab} opened external player`);
-    }
     if (allReady) {
       parts.push("all synced and ready to play");
     } else {
-      const needClick = hasTab - ready;
       const needTab = total - hasTab;
+      const needClick = hasTab - ready;
+      if (needTab > 0) parts.push(`${needTab} need${needTab === 1 ? "s" : ""} to open external player`);
       if (needClick > 0) parts.push(`${needClick} need${needClick === 1 ? "s" : ""} to click play`);
-      if (needTab > 0) parts.push(`${needTab} need${needTab === 1 ? "s" : ""} to open player`);
     }
     el.title = parts.join(" · ");
   }

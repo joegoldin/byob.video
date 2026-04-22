@@ -58,9 +58,14 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:hooked":
+      // Send page metadata to server for display on byob.video
+      if (channel && (msg.title || msg.thumbnail_url)) {
+        channel.push("video:media_info", {
+          title: msg.title || null,
+          thumbnail_url: msg.thumbnail_url || null,
+        });
+      }
       // Request current room state and send it to the content script.
-      // The content script will show an autoplay overlay — the user's click
-      // provides the gesture needed to unlock video.play().
       if (channel) {
         channel.push("sync:request_state", {}).receive("ok", (resp) => {
           console.log("[byob] Got current state for sync:", resp);

@@ -292,6 +292,9 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:extension_player_state, state}, socket),
     do: PubSub.handle_extension_player_state(state, socket)
 
+  def handle_info({:extension_media_info, info}, socket),
+    do: PubSub.handle_extension_media_info(info, socket)
+
   def handle_info({:users_updated, users}, socket), do: PubSub.handle_users_updated(users, socket)
 
   def handle_info({:activity_log_updated, log}, socket),

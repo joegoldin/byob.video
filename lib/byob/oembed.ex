@@ -83,7 +83,7 @@ defmodule Byob.OEmbed do
            html
          ) do
       [_, value] ->
-        value
+        decode_entities(value)
 
       _ ->
         # Try reversed attribute order
@@ -91,7 +91,7 @@ defmodule Byob.OEmbed do
                ~r/<meta[^>]*content="([^"]*)"[^>]*(?:property|name)="#{Regex.escape(property)}"/,
                html
              ) do
-          [_, value] -> value
+          [_, value] -> decode_entities(value)
           _ -> nil
         end
     end
@@ -99,8 +99,24 @@ defmodule Byob.OEmbed do
 
   defp extract_tag(html, tag) do
     case Regex.run(~r/<#{tag}[^>]*>([^<]+)<\/#{tag}>/i, html) do
-      [_, value] -> String.trim(value)
+      [_, value] -> value |> String.trim() |> decode_entities()
       _ -> nil
     end
+  end
+
+  defp decode_entities(str) do
+    str
+    |> String.replace("&amp;", "&")
+    |> String.replace("&lt;", "<")
+    |> String.replace("&gt;", ">")
+    |> String.replace("&quot;", "\"")
+    |> String.replace("&#039;", "'")
+    |> String.replace("&#39;", "'")
+    |> String.replace("&apos;", "'")
+    |> then(fn s ->
+      Regex.replace(~r/&#(\d+);/, s, fn _, code ->
+        code |> String.to_integer() |> List.wrap() |> List.to_string()
+      end)
+    end)
   end
 end

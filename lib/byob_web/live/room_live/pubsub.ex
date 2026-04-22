@@ -130,6 +130,10 @@ defmodule ByobWeb.RoomLive.PubSub do
      socket |> assign(sb_settings: sb_settings) |> push_event("sb:settings", sb_settings)}
   end
 
+  def handle_extension_media_info(info, socket) do
+    {:noreply, push_event(socket, "ext:media-info", info)}
+  end
+
   def handle_extension_player_state(state, socket) do
     current = socket.assigns.ext_player
 
