@@ -615,7 +615,7 @@
     const usersEl = document.createElement("span");
     usersEl.id = "byob-users";
     usersEl.style.cssText = "display:none;font-size:12px;flex-shrink:0;gap:4px;align-items:center;font-variant-numeric:tabular-nums;";
-    usersEl.innerHTML = `<span id="byob-users-icon" style="font-size:14px;opacity:0.5">&#128100;</span><span id="byob-users-count" style="opacity:0.6">0/0</span>`;
+    usersEl.innerHTML = `<svg id="byob-users-icon" width="14" height="14" viewBox="0 0 24 24" fill="rgba(255,255,255,0.5)" style="flex-shrink:0"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg><span id="byob-users-count" style="opacity:0.5">0/0</span>`;
 
     const collapse = document.createElement("button");
     collapse.id = "byob-collapse";
@@ -671,9 +671,9 @@
     count.textContent = `${ready}/${total}`;
 
     const allReady = ready >= total && total > 0;
-    icon.style.opacity = allReady ? "1" : "0.5";
-    icon.style.filter = allReady ? "hue-rotate(90deg) saturate(3) brightness(1.3)" : "none";
-    count.style.color = allReady ? "#00d400" : "rgba(255,255,255,0.6)";
+    icon.setAttribute("fill", allReady ? "#00d400" : "rgba(255,255,255,0.5)");
+    count.style.opacity = allReady ? "1" : "0.5";
+    count.style.color = allReady ? "#00d400" : "white";
   }
 
   let _countdownInterval = null;

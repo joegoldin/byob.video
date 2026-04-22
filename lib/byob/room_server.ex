@@ -273,6 +273,7 @@ defmodule Byob.RoomServer do
         schedule_cleanup(state)
       else
         broadcast(state, {:users_updated, state.users})
+        broadcast_ready_count(state)
         state
       end
 
@@ -987,9 +988,25 @@ defmodule Byob.RoomServer do
   end
 
   defp broadcast_ready_count(state) do
+    # Group connected users by username to deduplicate (extension + LiveView = same person).
+    # A person is "ready" unless they have an extension connection that isn't ready yet.
     connected = state.users |> Enum.filter(fn {_, u} -> u.connected end)
-    total = length(connected)
-    ready = connected |> Enum.count(fn {_, u} -> Map.get(u, :ready, false) end)
+
+    by_username =
+      connected
+      |> Enum.group_by(fn {_, u} -> u.username end)
+
+    total = map_size(by_username)
+
+    ready =
+      by_username
+      |> Enum.count(fn {_, entries} ->
+        # Ready if no extension user, or all extension users are ready
+        Enum.all?(entries, fn {_, u} ->
+          !Map.get(u, :is_extension, false) || Map.get(u, :ready, false)
+        end)
+      end)
+
     broadcast(state, {:ready_count, %{ready: ready, total: total}})
   end
 
