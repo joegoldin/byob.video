@@ -191,13 +191,40 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   defp sync_state_payload(state) do
+    connected = state.users |> Enum.filter(fn {_, u} -> u.connected end)
+    has_ext = Enum.any?(connected, fn {_, u} -> Map.get(u, :is_extension, false) end)
+
+    ready_count =
+      if has_ext do
+        by_username = Enum.group_by(connected, fn {_, u} -> u.username end)
+        total = map_size(by_username)
+
+        ready =
+          Enum.count(by_username, fn {_, entries} ->
+            has_ext_conn = Enum.any?(entries, fn {_, u} -> Map.get(u, :is_extension, false) end)
+
+            if has_ext_conn do
+              Enum.all?(entries, fn {_, u} ->
+                !Map.get(u, :is_extension, false) || Map.get(u, :ready, false)
+              end)
+            else
+              false
+            end
+          end)
+
+        %{ready: ready, total: total}
+      else
+        nil
+      end
+
     %{
       queue: Enum.map(state.queue, &serialize_item/1),
       current_index: state.current_index,
       play_state: Atom.to_string(state.play_state),
       current_time: state.current_time,
       server_time: state.server_time,
-      playback_rate: state.playback_rate
+      playback_rate: state.playback_rate,
+      ready_count: ready_count
     }
   end
 

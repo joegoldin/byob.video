@@ -205,7 +205,12 @@ function connectToRoom(roomId, serverUrl, token, username) {
       // Send initial sync state so late joiners sync immediately
       // Store initial state — content scripts will request it after hooking video
       initialRoomState = resp;
+      // Cache ready count from join response
+      if (resp.ready_count) {
+        lastReadyCount = { type: "byob:ready-count", ready: resp.ready_count.ready, total: resp.ready_count.total };
+      }
       broadcastToContentScripts({ type: "byob:channel-ready" });
+      if (lastReadyCount) broadcastToContentScripts(lastReadyCount);
     })
     .receive("error", (resp) => {
       console.error("[byob] Failed to join room", roomId, resp);
