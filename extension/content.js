@@ -6,7 +6,7 @@
   let port = null;
   let hookedVideo = null;
   let synced = false; // Don't send events until initial sync is done
-  let needsGesture = false; // True when play() failed — blocks command:synced
+  let needsGesture = true; // True until video actually plays — blocks commands
   let pauseEnforcer = null;
   let suppressGen = 0;
   let suppressUntilGen = 0;
