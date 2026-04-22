@@ -38,10 +38,12 @@ export async function create(el, callbacks, opts) {
 
   el.innerHTML = "";
   el.style.background = "black";
+  el.style.display = "flex";
+  el.style.alignItems = "center";
+  el.style.justifyContent = "center";
   const container = document.createElement("div");
   container.id = "vimeo-player";
   container.style.width = "100%";
-  container.style.height = "100%";
   container.style.background = "black";
   el.appendChild(container);
 
