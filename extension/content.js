@@ -79,7 +79,14 @@
     tryActivate(0);
   }
 
+  let activateArgs = null; // saved for reconnection
+
   function activate(roomId, serverUrl, token) {
+    activateArgs = { roomId, serverUrl, token };
+    connectToSW(roomId, serverUrl, token);
+  }
+
+  function connectToSW(roomId, serverUrl, token) {
     // Show sync bar immediately in top frame with "Loading..." status
     if (window === window.top) {
       injectSyncBar();
@@ -87,7 +94,14 @@
     }
 
     // Connect port to service worker
-    port = chrome.runtime.connect({ name: "watchparty" });
+    try {
+      port = chrome.runtime.connect({ name: "watchparty" });
+    } catch (e) {
+      // Service worker not available — retry after a delay
+      setTimeout(() => connectToSW(roomId, serverUrl, token), 2000);
+      return;
+    }
+
     port.postMessage({
       type: "connect",
       room_id: roomId,
@@ -106,7 +120,15 @@
 
     port.onDisconnect.addListener(() => {
       port = null;
-      cleanup();
+      // If SW was terminated (Chrome MV3 lifecycle), reconnect after a delay
+      if (activateArgs) {
+        setTimeout(() => {
+          const { roomId: r, serverUrl: s, token: t } = activateArgs;
+          connectToSW(r, s, t);
+        }, 1000);
+      } else {
+        cleanup();
+      }
     });
 
     // Start observing for <video> elements
@@ -530,6 +552,8 @@
   }, 250);
 
   function cleanup() {
+    activateArgs = null; // prevent reconnection
+    synced = false;
     unhookVideo();
     const bar = document.getElementById("byob-sync-bar");
     if (bar) bar.remove();
