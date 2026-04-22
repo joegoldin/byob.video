@@ -301,7 +301,7 @@
 
   function onVideoSeeked() {
     if (!synced) return;
-    if (shouldSuppress(null)) return;
+    if (shouldSuppress("seeked")) return;
     if (port && hookedVideo) {
       port.postMessage({
         type: "video:seek",
@@ -334,7 +334,7 @@
 
   function shouldSuppress(currentState) {
     if (suppressUntilGen === 0) return false;
-    if (currentState === expectedState || expectedState === null) {
+    if (currentState === expectedState) {
       // Expected event — swallow it and clear suppression
       suppressUntilGen = 0;
       expectedState = null;
@@ -478,7 +478,7 @@
         break;
 
       case "command:seek":
-        suppress(null);
+        suppress("seeked");
         hookedVideo.currentTime = msg.position;
         break;
 
