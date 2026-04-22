@@ -1,7 +1,7 @@
 defmodule ByobWeb.ExtensionChannel do
   use ByobWeb, :channel
 
-  alias Byob.{RoomManager, RoomServer}
+  alias Byob.{RoomManager, RoomServer, SyncLog}
 
   @impl true
   def join("extension:" <> room_id, params, socket) do
@@ -18,6 +18,7 @@ defmodule ByobWeb.ExtensionChannel do
     username = (params["username"] || "ExtensionUser") |> String.slice(0, 30)
 
     {:ok, state} = RoomServer.join(pid, user_id, username)
+    SyncLog.ext_join(room_id, user_id)
     Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
 
     socket =
@@ -31,21 +32,25 @@ defmodule ByobWeb.ExtensionChannel do
   @impl true
   def handle_in("video:play", %{"position" => position}, socket) do
     RoomServer.play(socket.assigns.room_pid, socket.assigns.user_id, position)
+    SyncLog.ext_event(socket.assigns.room_id, "play", socket.assigns.user_id)
     {:noreply, socket}
   end
 
   def handle_in("video:pause", %{"position" => position}, socket) do
     RoomServer.pause(socket.assigns.room_pid, socket.assigns.user_id, position)
+    SyncLog.ext_event(socket.assigns.room_id, "pause", socket.assigns.user_id)
     {:noreply, socket}
   end
 
   def handle_in("video:seek", %{"position" => position}, socket) do
     RoomServer.seek(socket.assigns.room_pid, socket.assigns.user_id, position)
+    SyncLog.ext_event(socket.assigns.room_id, "seek", socket.assigns.user_id)
     {:noreply, socket}
   end
 
   def handle_in("video:ended", %{"index" => index}, socket) do
     RoomServer.video_ended(socket.assigns.room_pid, index)
+    SyncLog.ext_event(socket.assigns.room_id, "ended", socket.assigns.user_id)
     {:noreply, socket}
   end
 
