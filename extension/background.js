@@ -198,6 +198,12 @@ function connectToRoom(roomId, serverUrl, token, username) {
     // For v0, just relay seek if drift is large
   });
 
+  channel.on("sync:buffering", (data) => broadcastToContentScripts({
+    type: "byob:peer-buffering",
+    user_id: data.user_id,
+    buffering: data.buffering,
+  }));
+
   channel.on("autoplay:countdown", (data) => broadcastToContentScripts({
     type: "autoplay:countdown",
     duration_ms: data.duration_ms,

@@ -19,6 +19,7 @@
     CLICKJOIN: "clickjoin",
     PLAYING: "playing",
     PAUSED: "paused",
+    BUFFERING: "buffering",
     FINISHED: "finished",
   });
 
@@ -368,6 +369,8 @@
     video.addEventListener(Evt.PAUSE, onVideoPause);
     video.addEventListener(Evt.SEEKED, onVideoSeeked);
     video.addEventListener(Evt.ENDED, onVideoEnded);
+    video.addEventListener("waiting", onVideoWaiting);
+    video.addEventListener("canplay", onVideoCanPlay);
 
     // Report that we found a video — include page metadata for byob display
     const meta = scrapePageMetadata();
@@ -396,6 +399,7 @@
         position: hookedVideo.currentTime,
         duration: hookedVideo.duration || 0,
         playing: !hookedVideo.paused,
+        buffering: isBuffering,
       };
       // Only send state to server when synced (prevents corrupting canonical state)
       if (synced && port) port.postMessage(msg);
@@ -411,6 +415,10 @@
     hookedVideo.removeEventListener(Evt.PAUSE, onVideoPause);
     hookedVideo.removeEventListener(Evt.SEEKED, onVideoSeeked);
     hookedVideo.removeEventListener(Evt.ENDED, onVideoEnded);
+    hookedVideo.removeEventListener("waiting", onVideoWaiting);
+    hookedVideo.removeEventListener("canplay", onVideoCanPlay);
+    isBuffering = false;
+    hideBufferingOverlay();
     if (_nativePlayListener) {
       hookedVideo.removeEventListener(Evt.PLAY, _nativePlayListener);
       _nativePlayListener = null;
@@ -474,6 +482,26 @@
       // the surrounding play/pause are player behavior, not user intent.
       if (seekCooldown) clearTimeout(seekCooldown);
       seekCooldown = setTimeout(() => { seekCooldown = null; }, 500);
+    }
+  }
+
+  let isBuffering = false;
+
+  function onVideoWaiting() {
+    if (!synced) return;
+    isBuffering = true;
+    showBufferingOverlay();
+    updateSyncBarStatus(SyncStatus.LOADING);
+    // Notify server immediately
+    if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: hookedVideo?.currentTime || 0, duration: hookedVideo?.duration || 0, playing: false });
+  }
+
+  function onVideoCanPlay() {
+    if (!isBuffering) return;
+    isBuffering = false;
+    hideBufferingOverlay();
+    if (synced && hookedVideo) {
+      updateSyncBarStatus(hookedVideo.paused ? SyncStatus.PAUSED : SyncStatus.PLAYING);
     }
   }
 
@@ -635,6 +663,21 @@
       return;
     }
 
+    if (msg.type === "byob:peer-buffering" && window === window.top && synced) {
+      if (msg.buffering && !isBuffering) {
+        // Another client is buffering — show overlay on our side too
+        showBufferingOverlay();
+        updateSyncBarStatus(SyncStatus.BUFFERING);
+      } else if (!msg.buffering && !isBuffering) {
+        // Peer done buffering and we're not buffering either — clear
+        hideBufferingOverlay();
+        if (hookedVideo) {
+          updateSyncBarStatus(hookedVideo.paused ? SyncStatus.PAUSED : SyncStatus.PLAYING);
+        }
+      }
+      return;
+    }
+
     if (msg.type === Msg.AUTOPLAY_COUNTDOWN && window === window.top) {
       startCountdown(msg.duration_ms || 5000);
       return;
@@ -765,6 +808,37 @@
       requestSync();
     };
     hookedVideo.addEventListener(Evt.PLAY, _nativePlayListener);
+  }
+
+  function showBufferingOverlay() {
+    if (window !== window.top || document.getElementById("byob-buffering-overlay")) return;
+    const overlay = document.createElement(Tag.DIV);
+    overlay.id = "byob-buffering-overlay";
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 40px; z-index: 999997;
+      background: rgba(0,0,0,0.4); display: flex; align-items: center;
+      justify-content: center; pointer-events: none;
+    `;
+    overlay.innerHTML = `
+      <div style="text-align:center;color:white;font-family:system-ui,sans-serif;">
+        <div style="width:48px;height:48px;border:3px solid rgba(255,255,255,0.3);border-top-color:${Color.PURPLE};border-radius:50%;animation:byob-spin 0.8s linear infinite;margin:0 auto 12px;"></div>
+        <div style="font-size:14px;font-weight:500;">Buffering...</div>
+      </div>
+    `;
+    // Add spin animation
+    let styleEl = document.getElementById("byob-buffering-style");
+    if (!styleEl) {
+      styleEl = document.createElement(Tag.STYLE);
+      styleEl.id = "byob-buffering-style";
+      styleEl.textContent = `@keyframes byob-spin { to { transform: rotate(360deg); } }`;
+      document.head.appendChild(styleEl);
+    }
+    document.body.appendChild(overlay);
+  }
+
+  function hideBufferingOverlay() {
+    const el = document.getElementById("byob-buffering-overlay");
+    if (el) el.remove();
   }
 
   function showJoinToast(text) {
@@ -993,6 +1067,7 @@
       clickjoin: { color: Color.ORANGE, text: Copy.CLICK_PLAY, tip: Copy.TIP_CLICKJOIN },
       playing:   { color: Color.GREEN, text: Copy.PLAYING, tip: Copy.TIP_PLAYING },
       paused:    { color: Color.ORANGE, text: Copy.PAUSED, tip: Copy.TIP_PAUSED },
+      buffering: { color: Color.PURPLE, text: "Buffering...", tip: "Video is buffering — waiting for data" },
       finished:  { color: Color.PURPLE, text: Copy.FINISHED, tip: Copy.TIP_FINISHED },
     };
     const s = states[state];

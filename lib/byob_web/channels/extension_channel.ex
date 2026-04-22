@@ -82,7 +82,9 @@ defmodule ByobWeb.ExtensionChannel do
     is_playing = payload["playing"] || false
     is_hooked = payload["hooked"] || false
 
-    if is_playing or is_hooked do
+    is_buffering = payload["buffering"] || false
+
+    if is_playing or is_hooked or is_buffering do
       Phoenix.PubSub.broadcast(
         Byob.PubSub,
         "room:#{socket.assigns.room_id}",
@@ -92,6 +94,7 @@ defmodule ByobWeb.ExtensionChannel do
            position: payload["position"] || 0,
            duration: payload["duration"] || 0,
            playing: is_playing,
+           buffering: payload["buffering"] || false,
            user_id: socket.assigns.user_id
          }}
       )
@@ -200,6 +203,21 @@ defmodule ByobWeb.ExtensionChannel do
 
   def handle_info({:autoplay_countdown_cancelled, _data}, socket) do
     push(socket, "autoplay:cancelled", %{})
+    {:noreply, socket}
+  end
+
+  def handle_info({:extension_player_state, %{buffering: true} = data}, socket) do
+    # Relay buffering state to other extension clients so they can show overlay
+    push(socket, "sync:buffering", %{user_id: data.user_id, buffering: true})
+    {:noreply, socket}
+  end
+
+  def handle_info({:extension_player_state, %{buffering: false, user_id: uid}}, socket) do
+    push(socket, "sync:buffering", %{user_id: uid, buffering: false})
+    {:noreply, socket}
+  end
+
+  def handle_info({:extension_player_state, _data}, socket) do
     {:noreply, socket}
   end
 
