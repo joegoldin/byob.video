@@ -402,32 +402,27 @@
   function activateAfterGesture(playState, currentTime) {
     if (!hookedVideo) return;
 
-    // The click provides the user gesture — play to unlock autoplay
-    suppress("playing");
-    hookedVideo.play().then(() => {
-      // Autoplay is now unlocked. Pause, seek to room position, apply state.
-      suppress("paused");
-      hookedVideo.pause();
-      hookedVideo.currentTime = currentTime;
+    // Don't do play-pause-play to "unlock" autoplay — that breaks DRM players
+    // (e.g. Crunchyroll). Instead, use the gesture directly for what we need:
+    // seek to position, then play if room is playing.
+    suppress(playState === "playing" ? "playing" : "paused");
+    hookedVideo.currentTime = currentTime;
 
-      if (playState === "playing") {
-        // Small delay to let the seek settle, then play
-        setTimeout(() => {
-          suppress("playing");
-          hookedVideo.play().catch(() => {});
-          synced = true;
-          updateSyncBarStatus("playing");
-        }, 200);
-      } else {
+    if (playState === "playing") {
+      // The click gesture is still active in this call stack — play() should work
+      hookedVideo.play().then(() => {
+        synced = true;
+        updateSyncBarStatus("playing");
+      }).catch(() => {
+        // Autoplay still blocked or DRM not ready — enable sync anyway
+        // so that when the user manually hits play, it syncs
         synced = true;
         updateSyncBarStatus("paused");
-      }
-    }).catch(() => {
-      // play() failed even with gesture — very rare, try directly
-      hookedVideo.currentTime = currentTime;
+      });
+    } else {
       synced = true;
-      updateSyncBarStatus(playState === "playing" ? "playing" : "paused");
-    });
+      updateSyncBarStatus("paused");
+    }
   }
 
   function injectSyncBar() {
