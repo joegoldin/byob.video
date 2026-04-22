@@ -906,6 +906,10 @@ const VideoPlayer = {
   },
 
   _showClickToPlay(position) {
+    // Don't show when external player is active — user watches in the
+    // extension window, not the embedded YouTube player
+    if (document.getElementById("ext-placeholder")) return;
+
     // Remove any existing overlay
     this.el.querySelector(".byob-click-to-play")?.remove();
 
