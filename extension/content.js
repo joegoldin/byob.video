@@ -389,14 +389,9 @@
     timeReportInterval = setInterval(() => {
       if (!hookedVideo) return;
 
-      // Detect buffering via readyState — more reliable than waiting/canplay events
-      // readyState < 3 (HAVE_FUTURE_DATA) while not paused = buffering
-      const actuallyBuffering = !hookedVideo.paused && hookedVideo.readyState < 3;
-      if (actuallyBuffering && !isBuffering) {
-        isBuffering = true;
-        showBufferingOverlay();
-        updateSyncBarStatus(SyncStatus.BUFFERING);
-      } else if (!actuallyBuffering && isBuffering) {
+      // Buffering is detected by resolveCommandGuard (state mismatch after command).
+      // Here we just clear buffering if the video caught up without the guard noticing.
+      if (isBuffering && !commandGuard) {
         isBuffering = false;
         hideBufferingOverlay();
         if (synced) updateSyncBarStatus(hookedVideo.paused ? SyncStatus.PAUSED : SyncStatus.PLAYING);
@@ -543,12 +538,44 @@
     mismatchSince = null;
   }
 
-  // Brief echo guard — prevents the video element's reaction to a
-  // programmatic play()/pause()/seek() from echoing back to the server.
-  // Clears after 500ms. Separate from buffering (which is detected via readyState).
+  // Adaptive command guard — prevents echoes from executing server commands.
+  // Starts with a 500ms minimum, then keeps checking if the video state
+  // matches expectedPlayState. If it doesn't match after 500ms, enters
+  // buffering state (shows overlay, reports to peers). Clears when state matches.
   function startCommandGuard() {
     if (commandGuard) clearTimeout(commandGuard);
-    commandGuard = setTimeout(() => { commandGuard = null; }, 500);
+    commandGuard = setTimeout(() => resolveCommandGuard(), 500);
+  }
+
+  function resolveCommandGuard() {
+    if (!hookedVideo || !expectedPlayState) {
+      commandGuard = null;
+      return;
+    }
+
+    const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
+
+    if (actual === expectedPlayState) {
+      // State matches — release guard, clear any buffering
+      commandGuard = null;
+      if (isBuffering) {
+        isBuffering = false;
+        hideBufferingOverlay();
+        updateSyncBarStatus(actual === State.PLAYING ? SyncStatus.PLAYING : SyncStatus.PAUSED);
+      }
+    } else {
+      // Still mismatched — video is buffering. Show overlay and keep checking.
+      if (!isBuffering) {
+        isBuffering = true;
+        showBufferingOverlay();
+        updateSyncBarStatus(SyncStatus.BUFFERING);
+        // Report buffering to server so other clients see it
+        if (synced && port) {
+          port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: false });
+        }
+      }
+      commandGuard = setTimeout(() => resolveCommandGuard(), 200);
+    }
   }
 
   // Handle commands from service worker
