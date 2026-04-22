@@ -199,8 +199,10 @@
       try { chrome.runtime.sendMessage({ type: "byob:video-hooked" }); } catch (_) {}
     }
 
-    // Update sync bar to show we found a video and are syncing
-    updateSyncBarStatus("syncing");
+    // Update sync bar — but don't overwrite gesture-needed state
+    if (!needsGesture) {
+      updateSyncBarStatus("syncing");
+    }
 
     // Send periodic state updates (position, duration, playing) for relay to room + sync bar
     timeReportInterval = setInterval(() => {
@@ -312,9 +314,12 @@
       return;
     }
     if (msg.type === "byob:video-hooked" && window === window.top) {
+      // Only inject the sync bar if not already present — don't update
+      // status here since it would overwrite per-client states like
+      // "Click play to sync" across all tabs. Status is managed by
+      // tryAutoSync/tryPlay/command:synced for each client individually.
       if (!window.location.hostname.includes("youtube.com")) {
         injectSyncBar();
-        updateSyncBarStatus("syncing");
       }
       return;
     }
@@ -342,17 +347,24 @@
 
     if (!hookedVideo) return;
 
+    // If we're waiting for a user gesture, ignore play/pause/seek commands —
+    // they'll just fail. Only process command:synced (which is gated below).
+    if (needsGesture && msg.type !== "command:synced") return;
+
     switch (msg.type) {
       case "command:play":
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         suppress("playing");
         if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) > 0.5) {
           hookedVideo.currentTime = msg.position;
+          // Wait for seek to complete, then play. Use a flag to prevent
+          // the safety timeout from calling tryPlay a second time.
+          let played = false;
           hookedVideo.addEventListener("seeked", function onSeeked() {
             hookedVideo.removeEventListener("seeked", onSeeked);
-            tryPlay();
+            if (!played) { played = true; tryPlay(); }
           }, { once: true });
-          setTimeout(() => tryPlay(), 1000);
+          setTimeout(() => { if (!played) { played = true; tryPlay(); } }, 1000);
         } else {
           tryPlay();
         }
@@ -362,11 +374,12 @@
         suppress("paused");
         if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) > 0.5) {
           hookedVideo.currentTime = msg.position;
+          let paused = false;
           hookedVideo.addEventListener("seeked", function onSeeked() {
             hookedVideo.removeEventListener("seeked", onSeeked);
-            hookedVideo.pause();
+            if (!paused) { paused = true; hookedVideo.pause(); }
           }, { once: true });
-          setTimeout(() => hookedVideo.pause(), 1000);
+          setTimeout(() => { if (!paused) { paused = true; hookedVideo.pause(); } }, 1000);
         } else {
           hookedVideo.pause();
         }
@@ -392,6 +405,7 @@
         if (!needsGesture) {
           synced = true;
           hideJoinToast();
+          updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
         }
         break;
     }
@@ -400,22 +414,18 @@
   function tryAutoSync() {
     if (!hookedVideo) return;
 
-    // The video element was just hooked. It may or may not be loaded/playing
-    // depending on the site. The user's click to load the video may have
-    // already fired a play event before we got here (SW round-trip delay).
-    //
-    // Strategy: if the video is already playing or has content, request
-    // fresh state and apply it. Otherwise wait for the native play event.
+    // The video element was just hooked. It may or may not be loaded/playing.
+    // If it's already playing (user's click started it during SW round-trip),
+    // request sync immediately. Otherwise, wait for the user to click play.
+    // Don't try to autoplay — it almost always fails without a gesture and
+    // we'd just end up showing the toast anyway after the failed tryPlay.
 
-    const isPlaying = !hookedVideo.paused;
-    const isLoaded = hookedVideo.duration > 0 && isFinite(hookedVideo.duration);
-
-    if (isPlaying || isLoaded) {
-      // Video is already going or loaded — request fresh state now
+    if (!hookedVideo.paused) {
+      // Video is already playing — request sync now
       hideJoinToast();
       requestSync();
     } else {
-      // No content yet — wait for native play
+      // Video is paused (loaded or not) — wait for user to click play
       updateSyncBarStatus("clickjoin");
       showJoinToast("Click play on the video to start syncing");
       waitForNativePlay();
@@ -430,6 +440,8 @@
     }
   }
 
+  let _nativePlayListener = null;
+
   function waitForNativePlay() {
     if (!hookedVideo) return;
 
@@ -440,11 +452,19 @@
       return;
     }
 
-    const onPlay = () => {
-      hookedVideo?.removeEventListener("play", onPlay);
+    // Remove any existing listener to prevent stacking
+    if (_nativePlayListener) {
+      hookedVideo.removeEventListener("play", _nativePlayListener);
+    }
+
+    _nativePlayListener = () => {
+      if (_nativePlayListener) {
+        hookedVideo?.removeEventListener("play", _nativePlayListener);
+        _nativePlayListener = null;
+      }
       requestSync();
     };
-    hookedVideo.addEventListener("play", onPlay);
+    hookedVideo.addEventListener("play", _nativePlayListener);
   }
 
   function tryPlay() {
@@ -453,6 +473,7 @@
       // Autoplay worked
       needsGesture = false;
       hideJoinToast();
+      updateSyncBarStatus("playing");
     }).catch(() => {
       // Autoplay blocked — need user gesture. Drop out of synced state
       // so commands don't keep failing silently, and wait for native play.
@@ -612,8 +633,11 @@
     const fmt = (s) => Math.floor(s / 60) + ":" + Math.floor(s % 60).toString().padStart(2, "0");
     timeEl.textContent = d > 0 ? `${fmt(t)} / ${fmt(d)}` : fmt(t);
 
-    // Show actual video state once we have a video (don't wait for synced flag)
-    updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+    // Only update status when synced — before that, status is managed by
+    // tryAutoSync/tryPlay/waitForNativePlay
+    if (synced) {
+      updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+    }
   }, 250);
 
   function cleanup() {
