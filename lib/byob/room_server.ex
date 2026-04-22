@@ -248,18 +248,20 @@ defmodule Byob.RoomServer do
           end)
           |> Enum.map(fn {uid, _} -> uid end)
 
-        if stale_ids != [] do
-          stale_set = MapSet.new(stale_ids)
-          open = Map.get(state, :open_tabs, %{}) |> Enum.reject(fn {_, o} -> o in stale_set end) |> Map.new()
-          ready = Map.get(state, :ready_tabs, %{}) |> Enum.reject(fn {_, o} -> o in stale_set end) |> Map.new()
+        state = %{state | users: Map.drop(state.users, stale_ids)}
 
-          state
-          |> Map.put(:users, Map.drop(state.users, stale_ids))
-          |> Map.put(:open_tabs, open)
-          |> Map.put(:ready_tabs, ready)
-        else
-          state
-        end
+        # Clean open/ready tabs whose owner is not a connected extension user.
+        # This catches both freshly-stale users AND orphaned entries from
+        # extension users that were removed in previous cleanup passes.
+        connected_ext_ids =
+          state.users
+          |> Enum.filter(fn {_, u} -> Map.get(u, :is_extension, false) && u.connected end)
+          |> Enum.map(fn {uid, _} -> uid end)
+          |> MapSet.new()
+
+        open = Map.get(state, :open_tabs, %{}) |> Enum.filter(fn {_, o} -> o in connected_ext_ids end) |> Map.new()
+        ready = Map.get(state, :ready_tabs, %{}) |> Enum.filter(fn {_, o} -> o in connected_ext_ids end) |> Map.new()
+        state |> Map.put(:open_tabs, open) |> Map.put(:ready_tabs, ready)
       else
         state
       end
