@@ -37,10 +37,12 @@ export async function create(el, callbacks, opts) {
   const VimeoPlayer = await loadVimeoSDK();
 
   el.innerHTML = "";
+  el.style.background = "black";
   const container = document.createElement("div");
   container.id = "vimeo-player";
   container.style.width = "100%";
   container.style.height = "100%";
+  container.style.background = "black";
   el.appendChild(container);
 
   const player = new VimeoPlayer(container, {
@@ -126,6 +128,18 @@ export async function create(el, callbacks, opts) {
 
   // Wait for player to be ready
   await player.ready();
+
+  // Style the iframe to fill the player area
+  const iframe = container.querySelector("iframe");
+  if (iframe) {
+    iframe.style.width = "100%";
+    iframe.style.height = "100%";
+    iframe.style.border = "none";
+    iframe.style.background = "black";
+  }
+  container.style.width = "100%";
+  container.style.height = "100%";
+  container.style.background = "black";
 
   // Get initial duration
   try { duration = await player.getDuration(); } catch (_) {}
