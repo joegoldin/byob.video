@@ -196,19 +196,19 @@ defmodule ByobWeb.ExtensionChannel do
 
     ready_count =
       if has_ext do
-        by_username = Enum.group_by(connected, fn {_, u} -> u.username end)
+        non_ext =
+          connected
+          |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
+          |> Enum.group_by(fn {_, u} -> u.username end)
 
-        ext_usernames =
-          Enum.filter(by_username, fn {_, entries} ->
-            Enum.any?(entries, fn {_, u} -> Map.get(u, :is_extension, false) end)
-          end)
-
-        total = length(ext_usernames)
+        total = map_size(non_ext)
 
         ready =
-          Enum.count(ext_usernames, fn {_, entries} ->
-            Enum.all?(entries, fn {_, u} ->
-              !Map.get(u, :is_extension, false) || Map.get(u, :ready, false)
+          Enum.count(non_ext, fn {username, _} ->
+            Enum.any?(connected, fn {_, u} ->
+              u.username == username &&
+                Map.get(u, :is_extension, false) &&
+                Map.get(u, :ready, false)
             end)
           end)
 
