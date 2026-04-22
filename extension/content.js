@@ -350,8 +350,10 @@
       if (statusEl && dotEl) {
         if (msg.playing) {
           statusEl.textContent = "Playing"; statusEl.style.color = "#00d400"; dotEl.style.background = "#00d400";
+          statusEl.title = "Video is playing in sync with the room";
         } else {
           statusEl.textContent = "Paused"; statusEl.style.color = "#ff9900"; dotEl.style.background = "#ff9900";
+          statusEl.title = "Video is paused — synced with room";
         }
       }
 
