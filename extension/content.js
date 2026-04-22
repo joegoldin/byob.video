@@ -305,6 +305,7 @@
   function handleSWMessage(msg) {
     if (msg.type === "byob:channel-ready" && window === window.top) {
       updateSyncBarStatus("searching");
+      showJoinToast("Play the video to start syncing");
       return;
     }
     if (msg.type === "byob:video-hooked" && window === window.top) {
@@ -314,7 +315,7 @@
       }
       return;
     }
-    if (msg.type === "byob:bar-update" && window === window.top) {
+    if (msg.type === "byob:bar-update" && window === window.top && synced) {
       const fmt = (s) => Math.floor(s / 60) + ":" + Math.floor(s % 60).toString().padStart(2, "0");
       const timeEl = document.getElementById("byob-time");
       const statusEl = document.getElementById("byob-status");
@@ -386,6 +387,7 @@
 
       case "command:synced":
         synced = true;
+        hideJoinToast();
         break;
     }
   }
@@ -405,15 +407,18 @@
 
     if (isPlaying || isLoaded) {
       // Video is already going or loaded — request fresh state now
+      hideJoinToast();
       requestSync();
     } else {
       // No content yet — wait for native play
       updateSyncBarStatus("clickjoin");
+      showJoinToast("Click play on the video to start syncing");
       waitForNativePlay();
     }
   }
 
   function requestSync() {
+    hideJoinToast();
     if (port) {
       port.postMessage({ type: "video:request-sync" });
     }
@@ -434,6 +439,43 @@
       requestSync();
     };
     hookedVideo.addEventListener("play", onPlay);
+  }
+
+  function showJoinToast(text) {
+    if (window !== window.top) return;
+    hideJoinToast();
+
+    const toast = document.createElement("div");
+    toast.id = "byob-join-toast";
+    toast.style.cssText = `
+      position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%);
+      z-index: 999999; background: rgba(0,0,0,0.9); color: white;
+      font-family: system-ui, sans-serif; font-size: 15px; font-weight: 500;
+      padding: 12px 24px; border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.2);
+      backdrop-filter: blur(10px); pointer-events: none;
+      animation: byob-toast-pulse 2s ease-in-out infinite;
+    `;
+    toast.textContent = text;
+
+    // Add pulse animation
+    const style = document.createElement("style");
+    style.id = "byob-toast-style";
+    style.textContent = `
+      @keyframes byob-toast-pulse {
+        0%, 100% { opacity: 0.9; }
+        50% { opacity: 0.6; }
+      }
+    `;
+    document.head.appendChild(style);
+    document.body.appendChild(toast);
+  }
+
+  function hideJoinToast() {
+    const toast = document.getElementById("byob-join-toast");
+    if (toast) toast.remove();
+    const style = document.getElementById("byob-toast-style");
+    if (style) style.remove();
   }
 
   function injectSyncBar() {
