@@ -514,7 +514,7 @@ defmodule ByobWeb.RoomLive do
             </div>
 
             <%!-- Queue list --%>
-            <div :if={@sidebar_tab == :queue}>
+            <div :if={@sidebar_tab == :queue} class="flex flex-col flex-1 min-h-0">
               <Components.queue_panel queue={@queue} current_index={@current_index} />
             </div>
 
