@@ -1,5 +1,6 @@
 defmodule Byob.OEmbed do
   @youtube_oembed "https://www.youtube.com/oembed"
+  @vimeo_oembed "https://vimeo.com/api/oembed.json"
 
   @doc """
   Fetches oEmbed metadata for a YouTube URL. Returns {:ok, metadata} or {:error, reason}.
@@ -13,6 +14,26 @@ defmodule Byob.OEmbed do
            title: body["title"],
            thumbnail_url: body["thumbnail_url"],
            author_name: body["author_name"]
+         }}
+
+      {:ok, %{status: status}} ->
+        {:error, {:http_error, status}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  def fetch_vimeo(url) do
+    case Req.get(@vimeo_oembed, params: [url: url], receive_timeout: 5000) do
+      {:ok, %{status: 200, body: body}} when is_map(body) ->
+        {:ok,
+         %{
+           title: body["title"],
+           thumbnail_url: body["thumbnail_url"],
+           author_name: body["author_name"],
+           duration: body["duration"],
+           source_type: :vimeo
          }}
 
       {:ok, %{status: status}} ->

@@ -14,6 +14,7 @@ defmodule Byob.MediaItem do
   ]
 
   @youtube_hosts ~w(youtube.com www.youtube.com m.youtube.com youtu.be)
+  @vimeo_hosts ~w(vimeo.com www.vimeo.com player.vimeo.com)
 
   @drm_hosts [
     {"netflix.com", "Netflix"},
@@ -107,6 +108,7 @@ defmodule Byob.MediaItem do
   defp classify(host, uri) do
     cond do
       youtube_host?(host) -> {:youtube, extract_youtube_id(host, uri)}
+      vimeo_host?(host) -> {:vimeo, extract_vimeo_id(host, uri)}
       direct_video_url?(uri) -> {:direct_url, nil}
       true -> {:extension_required, nil}
     end
@@ -120,6 +122,17 @@ defmodule Byob.MediaItem do
   defp direct_video_url?(_), do: false
 
   defp youtube_host?(host), do: host in @youtube_hosts
+  defp vimeo_host?(host), do: host in @vimeo_hosts
+
+  # Vimeo URLs: vimeo.com/123456789, player.vimeo.com/video/123456789
+  defp extract_vimeo_id(_host, %URI{path: path}) when is_binary(path) do
+    case Regex.run(~r{/(?:video/)?(\d+)}, path) do
+      [_, id] -> id
+      _ -> nil
+    end
+  end
+
+  defp extract_vimeo_id(_, _), do: nil
 
   defp extract_youtube_id("youtu.be", %URI{path: "/" <> id}) do
     id |> String.split("?") |> hd()

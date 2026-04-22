@@ -65,6 +65,22 @@ defmodule ByobWeb.RoomLive.UrlPreview do
 
         {:noreply, socket}
 
+      {:ok, %{source_type: :vimeo}} ->
+        socket = assign(base, url_preview_loading: true, url_preview: nil)
+        pid = self()
+
+        Task.start(fn ->
+          meta =
+            case Byob.OEmbed.fetch_vimeo(extracted) do
+              {:ok, data} -> data
+              _ -> %{title: nil, thumbnail_url: nil, source_type: :vimeo}
+            end
+
+          send(pid, {:url_preview_result, meta})
+        end)
+
+        {:noreply, socket}
+
       {:ok, %{source_type: :direct_url}} ->
         filename = extracted |> URI.parse() |> Map.get(:path, "") |> Path.basename()
 
