@@ -353,24 +353,31 @@
   function tryAutoSync(playState, currentTime) {
     if (!hookedVideo) return;
 
-    // Try to sync without requiring an extra click.
-    // Seek to room position first, then try play if room is playing.
+    // Check if video has content loaded (duration > 0 means media is ready)
+    const isLoaded = hookedVideo.duration > 0 && isFinite(hookedVideo.duration);
+
+    if (!isLoaded) {
+      // Video element exists but no media loaded yet (common on streaming
+      // sites where clicking play loads the stream). Wait for the user to
+      // click play on the native player, then apply room state.
+      updateSyncBarStatus("clickjoin");
+      waitForNativePlay();
+      return;
+    }
+
+    // Video is loaded — try to sync directly
     suppress(playState === "playing" ? "playing" : "paused");
     hookedVideo.currentTime = currentTime;
 
     if (playState === "playing") {
       hookedVideo.play().then(() => {
-        // Autoplay worked — we're synced
         synced = true;
         updateSyncBarStatus("playing");
       }).catch(() => {
-        // Autoplay blocked — wait for user to click play on the native player.
-        // When they do, onVideoPlay will fire and we'll request fresh state.
         updateSyncBarStatus("clickjoin");
         waitForNativePlay();
       });
     } else {
-      // Room is paused — no gesture needed, just sync position
       synced = true;
       updateSyncBarStatus("paused");
     }
@@ -378,12 +385,14 @@
 
   function waitForNativePlay() {
     if (!hookedVideo) return;
-    // Listen for the user's natural play click on the site's player.
-    // That play event provides the gesture AND means autoplay is unlocked.
+    // Listen for the user's play click on the site's native player.
+    // This click loads the video — we then request fresh room state from
+    // the server and apply it (which may mean immediately pausing back).
+    // synced stays false until command:synced arrives, so this play event
+    // does NOT get sent to the server as a user action.
     const onPlay = () => {
       hookedVideo?.removeEventListener("play", onPlay);
-      // User clicked play — request fresh state from SW since position
-      // may have changed since initial-state was sent
+      // Request fresh state — SW will seek/play/pause and then send synced
       if (port) {
         port.postMessage({ type: "video:request-sync" });
       }
