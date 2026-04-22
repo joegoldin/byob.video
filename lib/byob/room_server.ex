@@ -1341,9 +1341,26 @@ defmodule Byob.RoomServer do
         do: get_in(state, [Access.key(:users), user_id, Access.key(:username)]),
         else: nil
 
+    user_label = username || user_id
+
+    # Deduplicate: skip if the last entry is the same user+action within 2 seconds
+    case state.activity_log do
+      [%{action: ^action, user: ^user_label} = prev | _] ->
+        if DateTime.diff(DateTime.utc_now(), prev.at, :second) < 2 do
+          state
+        else
+          do_log_activity(state, action, user_label, detail)
+        end
+
+      _ ->
+        do_log_activity(state, action, user_label, detail)
+    end
+  end
+
+  defp do_log_activity(state, action, user_label, detail) do
     entry = %{
       action: action,
-      user: username || user_id,
+      user: user_label,
       detail: detail,
       at: DateTime.utc_now()
     }

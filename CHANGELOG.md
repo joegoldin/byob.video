@@ -2,6 +2,13 @@
 
 ---
 
+# v3.6.3
+
+- Deduplicate activity log entries (same user+action within 2s is suppressed — fixes double "joined" from longpoll→websocket upgrade)
+- Removed favicon from all header bars (root layout + room nav)
+
+---
+
 # v3.6.2
 
 - Updated logo and favicon
