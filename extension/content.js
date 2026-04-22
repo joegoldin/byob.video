@@ -24,21 +24,25 @@
     // Listen for room page messages — only accept from our own origin
     window.addEventListener("message", (e) => {
       if (e.origin !== window.location.origin) return;
-      if (e.data?.type === "byob:clear-external") {
-        chrome.storage.local.remove("watchparty_config");
-        return;
-      }
-      if (e.data?.type === "byob:open-external") {
-        chrome.storage.local.set({
-          watchparty_config: {
-            room_id: e.data.room_id,
-            server_url: e.data.server_url,
-            target_url: e.data.url,
-            token: e.data.token,
-            username: e.data.username,
-            timestamp: Date.now(),
-          },
-        });
+      try {
+        if (e.data?.type === "byob:clear-external") {
+          chrome.storage.local.remove("watchparty_config");
+          return;
+        }
+        if (e.data?.type === "byob:open-external") {
+          chrome.storage.local.set({
+            watchparty_config: {
+              room_id: e.data.room_id,
+              server_url: e.data.server_url,
+              target_url: e.data.url,
+              token: e.data.token,
+              username: e.data.username,
+              timestamp: Date.now(),
+            },
+          });
+        }
+      } catch (_) {
+        // Extension context invalidated (reloaded while page is open)
       }
     });
 
