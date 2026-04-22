@@ -289,6 +289,12 @@ defmodule Byob.RoomServer do
 
   def handle_call({:leave, user_id}, _from, state) do
     state = log_activity(state, :left, user_id)
+
+    # If this is an extension user leaving, clear all ready tabs they managed.
+    # When the SW dies, it can't send video:unready — this is the fallback.
+    is_ext = get_in(state, [Access.key(:users), user_id, Access.key(:is_extension)])
+    state = if is_ext, do: Map.put(state, :ready_tabs, MapSet.new()), else: state
+
     # Mark as disconnected instead of removing
     state =
       case Map.get(state.users, user_id) do
