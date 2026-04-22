@@ -579,7 +579,7 @@
     // Play/pause button — hidden until synced
     const playPauseBtn = document.createElement("button");
     playPauseBtn.id = "byob-playpause";
-    playPauseBtn.style.cssText = "display:none;background:none;border:none;color:white;cursor:pointer;font-size:16px;padding:0 2px;line-height:1;opacity:0.8;flex-shrink:0;outline:none;-webkit-user-select:none;user-select:none;";
+    playPauseBtn.style.cssText = "display:none;background:none;border:none;color:white;cursor:pointer;font-size:14px;padding:0;margin:0;line-height:1;opacity:0.8;flex-shrink:0;outline:none;-webkit-user-select:none;user-select:none;vertical-align:middle;";
     playPauseBtn.textContent = "▶";
     playPauseBtn.addEventListener("click", () => {
       if (port) {
