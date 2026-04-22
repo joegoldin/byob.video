@@ -45,6 +45,7 @@ result/
 result
 result-chrome
 result-firefox
+build/
 
 # Editor lock files
 *~lock~*

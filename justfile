@@ -6,10 +6,13 @@ build: sync-version chrome firefox docker
 # Build Chrome extension (.crx + unpacked)
 chrome: sync-version
     nix build .#chrome-extension -o result-chrome
+    rm -rf build/chrome-unpacked
+    mkdir -p build
+    cp -rL result-chrome/unpacked build/chrome-unpacked
     @echo "Chrome extension:"
     @echo "  .crx:     result-chrome/byob-chrome.crx"
     @echo "  .zip:     result-chrome/byob-chrome.zip"
-    @echo "  unpacked: result-chrome/unpacked/"
+    @echo "  unpacked: build/chrome-unpacked/"
 
 # Build Firefox extension (.xpi)
 firefox: sync-version
