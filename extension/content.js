@@ -597,18 +597,9 @@
 
       if (!clockSynced) return;
 
-      // --- Paused position correction ---
-      if (serverRef.playState === State.PAUSED && actual === State.PAUSED) {
-        const posDrift = Math.abs(hookedVideo.currentTime - serverRef.position);
-        if (posDrift > 1.0 && !recentSeek) {
-          lastSeekAt = now;
-          if (commandGuard) clearTimeout(commandGuard);
-          commandGuard = setTimeout(() => { commandGuard = null; }, 2000);
-          hookedVideo.currentTime = serverRef.position;
-          _log(`paused position correction: drift=${posDrift.toFixed(1)}s`);
-        }
-        return;
-      }
+      // When paused, don't auto-correct position — the site may fight seeks.
+      // User seeks via onVideoSeeked handle position changes.
+      if (serverRef.playState === State.PAUSED || actual === State.PAUSED) return;
 
       // --- Position drift correction (while playing) ---
       if (serverRef.playState !== State.PLAYING || actual !== State.PLAYING) return;
