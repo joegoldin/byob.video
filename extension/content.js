@@ -640,7 +640,9 @@
       // Stall detection: if position hasn't advanced for 3+ consecutive
       // ticks (1.5s), video is buffering. Single-tick stalls are normal
       // during playback and should not trigger buffering.
-      if (_lastReconcilePos !== null && Math.abs(localPosition - _lastReconcilePos) < 0.1) {
+      // Stall = position advanced less than 0.3s in a 500ms tick (playing at <60% speed = stalled)
+      const posAdvance = _lastReconcilePos !== null ? (localPosition - _lastReconcilePos) : 1;
+      if (posAdvance < 0.3) {
         _stallTicks++;
         if (_stallTicks >= 3 && !isBuffering) {
           isBuffering = true;
@@ -654,14 +656,19 @@
           return; // Don't drift-correct while buffering
         }
       } else {
-        if (_stallTicks >= 3 && isBuffering) {
-          isBuffering = false;
-          hideBufferingOverlay();
-          updateSyncBarStatus(SyncStatus.PLAYING);
-          _log("reconcile: buffering cleared, pos advancing");
-          if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: localPosition, duration: hookedVideo.duration || 0, playing: true });
+        // Only exit buffering after 2 consecutive ticks of real advancement
+        if (isBuffering) {
+          _stallTicks = Math.max(0, _stallTicks - 1);
+          if (_stallTicks <= 0) {
+            isBuffering = false;
+            hideBufferingOverlay();
+            updateSyncBarStatus(SyncStatus.PLAYING);
+            _log("reconcile: buffering cleared");
+            if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: localPosition, duration: hookedVideo.duration || 0, playing: true });
+          }
+        } else {
+          _stallTicks = 0;
         }
-        _stallTicks = 0;
       }
       _lastReconcilePos = localPosition;
 
