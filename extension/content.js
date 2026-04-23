@@ -561,6 +561,7 @@
   // for keeping the client in sync — commandGuard only prevents echoes.
   let _playMismatchSince = null;
   let _lastReconcilePos = null;
+  let _stallTicks = 0; // consecutive ticks with no position change
 
   function startReconcile() {
     if (reconcileInterval) return;
@@ -642,18 +643,31 @@
 
       const localPosition = hookedVideo.currentTime;
 
-      // Stall detection: if position hasn't advanced since last tick,
-      // video is buffering even if the 'waiting' event didn't fire.
+      // Stall detection: if position hasn't advanced for 3+ consecutive
+      // ticks (1.5s), video is buffering. Single-tick stalls are normal
+      // during playback and should not trigger buffering.
       if (_lastReconcilePos !== null && Math.abs(localPosition - _lastReconcilePos) < 0.1) {
-        if (!isBuffering) {
+        _stallTicks++;
+        if (_stallTicks >= 3 && !isBuffering) {
           isBuffering = true;
           showBufferingOverlay();
           updateSyncBarStatus(SyncStatus.BUFFERING);
-          _log("reconcile: stall detected (pos unchanged), entering buffering");
+          _log("reconcile: buffering (stalled", _stallTicks, "ticks)");
           if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
         }
-        _lastReconcilePos = localPosition;
-        return; // Don't drift-correct while buffering
+        if (isBuffering) {
+          _lastReconcilePos = localPosition;
+          return; // Don't drift-correct while buffering
+        }
+      } else {
+        if (_stallTicks >= 3 && isBuffering) {
+          isBuffering = false;
+          hideBufferingOverlay();
+          updateSyncBarStatus(SyncStatus.PLAYING);
+          _log("reconcile: buffering cleared, pos advancing");
+          if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: localPosition, duration: hookedVideo.duration || 0, playing: true });
+        }
+        _stallTicks = 0;
       }
       _lastReconcilePos = localPosition;
 
@@ -696,6 +710,7 @@
     }
     _playMismatchSince = null;
     _lastReconcilePos = null;
+    _stallTicks = 0;
     if (hookedVideo && hookedVideo.playbackRate !== 1.0) {
       hookedVideo.playbackRate = 1.0;
     }
