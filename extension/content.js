@@ -470,45 +470,23 @@
     }
   }
 
-  // Event handlers — user-initiated actions sent to server.
-  // Short fixed guard (300ms) absorbs the immediate browser echo without
-  // blocking subsequent user actions. The adaptive guard (startCommandGuard)
-  // is only used for incoming server commands where the site needs time
-  // to settle after programmatic play/pause/seek.
+  // Event handlers — observe video state changes but DON'T send to server.
+  // The reconcile loop is the sole mechanism for communicating state to the
+  // server. This prevents site-initiated events (DRM, buffering, auto-resume)
+  // from overriding the server's authoritative state.
+  //
+  // When the user deliberately plays/pauses, the reconcile loop detects that
+  // the actual state differs from expectedPlayState and sends the update
+  // after confirming stability (~1.5s). Seeks are an exception — sent
+  // immediately since they're always user-initiated.
+
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-    if (!synced || commandGuard || isBuffering) return;
-    // Server is authoritative. If expectedPlayState is already PLAYING,
-    // this is a redundant/site-initiated event (DRM, buffering recovery).
-    // Only send to server if this CHANGES the state (user intent).
-    if (expectedPlayState === State.PLAYING) {
-      _log("play IGNORED (already expected playing)");
-      return;
-    }
-    _log("play →server", hookedVideo.currentTime);
-    expectedPlayState = State.PLAYING;
-    updateServerRef(hookedVideo.currentTime, State.PLAYING);
-    if (port && hookedVideo) {
-      port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
-    }
-    if (commandGuard) clearTimeout(commandGuard);
-    commandGuard = setTimeout(() => { commandGuard = null; }, 300);
+    _log("video:play event", hookedVideo?.currentTime, "expected=", expectedPlayState);
   }
 
   function onVideoPause() {
-    if (!synced || commandGuard || isBuffering) return;
-    if (expectedPlayState === State.PAUSED) {
-      _log("pause IGNORED (already expected paused)");
-      return;
-    }
-    _log("pause →server", hookedVideo.currentTime);
-    expectedPlayState = State.PAUSED;
-    updateServerRef(hookedVideo.currentTime, State.PAUSED);
-    if (port && hookedVideo) {
-      port.postMessage({ type: Msg.VIDEO_PAUSE, position: hookedVideo.currentTime });
-    }
-    if (commandGuard) clearTimeout(commandGuard);
-    commandGuard = setTimeout(() => { commandGuard = null; }, 300);
+    _log("video:pause event", hookedVideo?.currentTime, "expected=", expectedPlayState);
   }
 
   function onVideoSeeked() {
@@ -520,7 +498,7 @@
     }
     if (commandGuard) clearTimeout(commandGuard);
     commandGuard = setTimeout(() => { commandGuard = null; }, 500);
-    _log("seek", hookedVideo.currentTime);
+    _log("seek →server", hookedVideo.currentTime);
   }
 
   let isBuffering = false;
@@ -558,6 +536,7 @@
   // and paused position correction. This is the single source of truth
   // for keeping the client in sync — commandGuard only prevents echoes.
   let _playMismatchSince = null;
+  let _playMismatchAttempts = 0;
 
   function startReconcile() {
     if (reconcileInterval) return;
@@ -570,37 +549,53 @@
       const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
 
       // --- Play/pause state reconciliation ---
+      // If actual state differs from server-expected state, one of two things:
+      // 1. Site glitch (DRM, buffering) — correct locally after 1.5s
+      // 2. User deliberately changed state — update server after 1.5s
+      // We distinguish by trying to correct first. If correction fails
+      // (play() rejected) or the state keeps reverting, accept user intent.
       if (actual !== expectedPlayState && expectedPlayState) {
         if (!_playMismatchSince) {
           _playMismatchSince = now;
+          _playMismatchAttempts = 0;
           _log("reconcile: mismatch", actual, "≠ expected", expectedPlayState);
         } else if (now - _playMismatchSince > 1500) {
-          // Mismatch persisted — try to correct
-          if (expectedPlayState === State.PLAYING) {
-            // Enter buffering if not already
-            if (!isBuffering) {
-              isBuffering = true;
-              showBufferingOverlay();
-              updateSyncBarStatus(SyncStatus.BUFFERING);
-              if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: false });
+          _playMismatchAttempts++;
+
+          if (_playMismatchAttempts <= 2) {
+            // First 2 attempts: try to correct local state to match server
+            if (expectedPlayState === State.PLAYING) {
+              hookedVideo.play().catch(() => {
+                // Play failed — need user gesture
+                isBuffering = false;
+                hideBufferingOverlay();
+                synced = false;
+                needsGesture = true;
+                expectedPlayState = null;
+                serverRef = null;
+                stopReconcile();
+                updateSyncBarStatus(SyncStatus.CLICKJOIN);
+                showJoinToast(Copy.CLICK_PLAY_TOAST);
+                waitForNativePlay();
+              });
+            } else {
+              hookedVideo.pause();
             }
-            hookedVideo.play().catch(() => {
-              // Play failed — need user gesture
-              isBuffering = false;
-              hideBufferingOverlay();
-              synced = false;
-              needsGesture = true;
-              expectedPlayState = null;
-              serverRef = null;
-              stopReconcile();
-              updateSyncBarStatus(SyncStatus.CLICKJOIN);
-              showJoinToast(Copy.CLICK_PLAY_TOAST);
-              waitForNativePlay();
-            });
-            _playMismatchSince = now; // reset — give play() time to take effect
+            _playMismatchSince = now; // give correction time
           } else {
-            hookedVideo.pause();
+            // 3rd attempt: accept that user changed state, update server
+            _log("reconcile: accepting user state change →", actual);
+            expectedPlayState = actual;
+            updateServerRef(hookedVideo.currentTime, actual);
+            if (port) {
+              if (actual === State.PLAYING) {
+                port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
+              } else {
+                port.postMessage({ type: Msg.VIDEO_PAUSE, position: hookedVideo.currentTime });
+              }
+            }
             _playMismatchSince = null;
+            _playMismatchAttempts = 0;
           }
         }
         return; // Don't drift-correct while play state is wrong
