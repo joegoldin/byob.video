@@ -162,6 +162,7 @@
   // NTP clock sync — offset to convert Date.now() to server monotonic time
   let clockOffset = 0; // serverMonotonic ≈ Date.now() + clockOffset
   let clockRtt = 0;
+  let clockSynced = false; // true after first NTP burst completes
   let syncToleranceMs = 250; // room-wide dead zone — 250ms default, 500ms if high latency
 
   // Signal extension is installed — only on our domain so other sites can't detect it
@@ -579,6 +580,11 @@
         if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: actual === State.PLAYING });
       }
 
+      // Don't do any position correction until clock sync is established.
+      // Without it, Date.now() (epoch ~1.7T) vs server monotonic (~millions)
+      // produces billions of seconds of fake elapsed time → seeks past end.
+      if (!clockSynced) return;
+
       const recentSeek = (now - lastSeekAt) < 5000;
 
       // --- Paused position correction ---
@@ -746,6 +752,7 @@
     if (msg.type === "byob:clock-sync") {
       clockOffset = msg.offset;
       clockRtt = msg.rtt;
+      clockSynced = true;
       return;
     }
 
