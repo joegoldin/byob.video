@@ -284,10 +284,12 @@
         duration: hookedVideo.duration || 0,
         playing: !hookedVideo.paused,
       };
-      // Only send state to server when synced (prevents corrupting canonical state)
-      if (synced && port) port.postMessage(msg);
-      // Always send bar update via port so background can relay to top frame
-      if (port) port.postMessage({ type: "byob:bar-update", position: msg.position, duration: msg.duration, playing: msg.playing });
+      // Only send state/bar updates when synced — unsynced clients at wrong
+      // positions would make the sync bar flicker between correct and wrong pos.
+      if (synced && port) {
+        port.postMessage(msg);
+        port.postMessage({ type: "byob:bar-update", position: msg.position, duration: msg.duration, playing: msg.playing });
+      }
     }, 500);
   }
 
@@ -458,12 +460,14 @@
       return;
     }
 
-    // Server correction — in follower mode, actively seek to stay synced.
-    // In normal mode, ignore (v3.6.3 doesn't have drift correction).
-    if (msg.type === "sync:correction" && hookedVideo && followerMode) {
+    // Server correction — seek to expected position if drift > 3s.
+    // In follower mode: always apply. In normal mode: only for large drift
+    // (handles post-seek buffering where one client falls behind).
+    if (msg.type === "sync:correction" && hookedVideo && synced) {
       if (msg.expected_time != null && !hookedVideo.paused) {
         const drift = Math.abs(hookedVideo.currentTime - msg.expected_time);
-        if (drift > 2) {
+        const threshold = followerMode ? 2 : 5; // tighter in follower mode
+        if (drift > threshold) {
           suppress("seeked");
           hookedVideo.currentTime = msg.expected_time;
         }
