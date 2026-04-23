@@ -523,6 +523,7 @@
     lastSeekAt = Date.now();
     _stallTicks = 0;
     _lastReconcilePos = null;
+    _hardSeekFailures = 0; // user seek works — reset failure counter
     updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
@@ -567,6 +568,7 @@
   // for keeping the client in sync — commandGuard only prevents echoes.
   let _playMismatchSince = null;
   let _lastReconcilePos = null;
+  let _hardSeekFailures = 0; // consecutive hard seeks where site didn't honor the position
   let _stallTicks = 0;
 
   // Returns "buffering" if in buffering state, null otherwise.
@@ -759,15 +761,25 @@
         if (hookedVideo.playbackRate !== 1.0) {
           hookedVideo.playbackRate = 1.0;
         }
-      } else if (absDrift > 5.0 && !recentSeek) {
-        // Hard seek — but NOT if user recently seeked. Their seek updated
-        // serverRef and the next correction will arrive with the right pos.
-        _log(`reconcile: HARD SEEK drift=${drift.toFixed(1)}s expected=${expectedPosition.toFixed(1)} local=${localPosition.toFixed(1)}`);
+        _hardSeekFailures = 0; // drift is small, seeks are working
+      } else if (absDrift > 5.0 && !recentSeek && _hardSeekFailures < 2) {
+        // Hard seek — but give up after 2 failures (site doesn't honor seeks while playing).
+        _log(`reconcile: HARD SEEK drift=${drift.toFixed(1)}s expected=${expectedPosition.toFixed(1)} local=${localPosition.toFixed(1)} attempt=${_hardSeekFailures + 1}`);
+        _hardSeekFailures++;
         lastSeekAt = now;
         if (commandGuard) clearTimeout(commandGuard);
         commandGuard = setTimeout(() => { commandGuard = null; }, 2000);
         hookedVideo.currentTime = expectedPosition;
         hookedVideo.playbackRate = 1.0;
+      } else if (absDrift > 5.0 && _hardSeekFailures >= 2) {
+        // Site won't honor seeks — accept its position and update server
+        _log(`reconcile: giving up on hard seek, accepting site pos=${localPosition.toFixed(1)}`);
+        _hardSeekFailures = 0;
+        updateServerRef(localPosition, expectedPlayState);
+        if (synced && port) {
+          port.postMessage({ type: Msg.VIDEO_SEEK, position: localPosition });
+        }
+        lastSeekAt = now;
       } else if (absDrift > deadZone) {
         // Medium drift — proportional rate adjustment
         // Negative drift (behind) → speed up; positive (ahead) → slow down
