@@ -279,13 +279,8 @@ function connectToRoom(roomId, serverUrl, token, username) {
   });
 
   channel.on("video:change", (data) => {
-    // Video changed (queue advance or new selection) — close all extension tabs
-    // so the user returns to byob.video where the new video will load.
-    for (const entry of [...ports]) {
-      if (entry.tabId != null) {
-        try { chrome.tabs.remove(entry.tabId); } catch (_) {}
-      }
-    }
+    // New video selected — content script doesn't need to do anything
+    // since the user navigates to the video themselves
   });
 
   socket.onOpen(() => console.log("[byob] WebSocket connected to", wsUrl));
@@ -297,10 +292,12 @@ function connectToRoom(roomId, serverUrl, token, username) {
     currentRoomId = null;
     lastReadyCount = null;
     stopClockSyncMaintenance();
-    // Don't disconnect ports — keep them alive so content scripts don't
-    // trigger a reconnection storm. The next "connect" message from any
-    // port will re-establish the socket/channel. Messages sent while
-    // disconnected will simply fail silently (channel null guard).
+    // Disconnect all ports — content scripts will reconnect with backoff.
+    // The 3s connection cooldown prevents reconnection storms.
+    for (const entry of [...ports]) {
+      try { entry.port.disconnect(); } catch (_) {}
+    }
+    ports.length = 0;
   });
 
   channel
