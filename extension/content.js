@@ -13,7 +13,7 @@
   let expectedState = null;
   let safetyTimeout = null;
   let timeReportInterval = null;
-  let syncCooldownUntil = 0; // suppress ALL outbound events for N ms after sync
+  let syncCooldown = null; // { position, playState } — suppress outbound until video matches
 
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
@@ -253,6 +253,16 @@
     // Send periodic state updates (position, duration, playing) for relay to room + sync bar
     timeReportInterval = setInterval(() => {
       if (!hookedVideo) return;
+
+      // Check if sync cooldown can be cleared — video matches target state
+      if (syncCooldown && hookedVideo) {
+        const posDist = Math.abs(hookedVideo.currentTime - syncCooldown.position);
+        const actualState = hookedVideo.paused ? "paused" : "playing";
+        if (posDist < 3 && actualState === syncCooldown.playState) {
+          syncCooldown = null; // settled — outbound events can flow
+        }
+      }
+
       const msg = {
         type: "video:state",
         position: hookedVideo.currentTime,
@@ -285,7 +295,7 @@
 
   // Event handlers — with suppression
   function onVideoPlay() {
-    if (!synced || Date.now() < syncCooldownUntil) return;
+    if (!synced || syncCooldown) return;
     if (shouldSuppress("playing")) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -296,7 +306,7 @@
   }
 
   function onVideoPause() {
-    if (!synced || Date.now() < syncCooldownUntil) return;
+    if (!synced || syncCooldown) return;
     if (shouldSuppress("paused")) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -307,7 +317,7 @@
   }
 
   function onVideoSeeked() {
-    if (!synced || Date.now() < syncCooldownUntil) return;
+    if (!synced || syncCooldown) return;
     if (shouldSuppress(null)) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -442,8 +452,14 @@
       const wasAlreadySynced = synced;
       synced = true;
       needsGesture = false;
-      // Suppress ALL outbound events for 3s so the site can settle after sync.
-      syncCooldownUntil = Date.now() + 3000;
+      // Suppress outbound events until video matches the sync target.
+      // Target comes from the preceding command:play/pause/seek.
+      if (hookedVideo) {
+        syncCooldown = {
+          position: hookedVideo.currentTime, // position we were just seeked to
+          playState: expectedState === "playing" ? "playing" : "paused",
+        };
+      }
       hideJoinToast();
       if (hookedVideo) {
         updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
