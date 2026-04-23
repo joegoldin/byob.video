@@ -236,29 +236,30 @@ defmodule Byob.RoomServer do
   def handle_call({:join, user_id, username, opts}, _from, state) do
     is_extension = Keyword.get(opts, :is_extension, false)
 
-    # Clean up stale extension users with the same username (SW reconnections
-    # create new user IDs, leaving orphaned entries)
-    state =
-      if is_extension do
-        stale_ids =
-          state.users
-          |> Enum.filter(fn {uid, u} ->
-            uid != user_id && u.username == username && Map.get(u, :is_extension, false)
-          end)
-          |> Enum.map(fn {uid, _} -> uid end)
+    # Clean up stale disconnected users — reconnections create new user IDs
+    # (extension) or re-use existing ones (LiveView). Remove disconnected
+    # entries that would show as gray in the user list.
+    stale_ids =
+      state.users
+      |> Enum.filter(fn {uid, u} ->
+        uid != user_id && !u.connected &&
+          (Map.get(u, :is_extension, false) == is_extension) &&
+          u.username == username
+      end)
+      |> Enum.map(fn {uid, _} -> uid end)
 
-        # Also clean orphaned open_tabs/ready_tabs for stale users
-        ready_tabs = Map.get(state, :ready_tabs, %{})
-        open_tabs = Map.get(state, :open_tabs, %{})
-        cleaned_ready = ready_tabs |> Enum.reject(fn {_, owner} -> owner in stale_ids end) |> Map.new()
-        cleaned_open = open_tabs |> Enum.reject(fn {_, owner} -> owner in stale_ids end) |> Map.new()
+    state = if length(stale_ids) > 0 do
+      ready_tabs = Map.get(state, :ready_tabs, %{})
+      open_tabs = Map.get(state, :open_tabs, %{})
+      cleaned_ready = ready_tabs |> Enum.reject(fn {_, owner} -> owner in stale_ids end) |> Map.new()
+      cleaned_open = open_tabs |> Enum.reject(fn {_, owner} -> owner in stale_ids end) |> Map.new()
 
-        %{state | users: Map.drop(state.users, stale_ids)}
-        |> Map.put(:ready_tabs, cleaned_ready)
-        |> Map.put(:open_tabs, cleaned_open)
-      else
-        state
-      end
+      %{state | users: Map.drop(state.users, stale_ids)}
+      |> Map.put(:ready_tabs, cleaned_ready)
+      |> Map.put(:open_tabs, cleaned_open)
+    else
+      state
+    end
 
     state =
       state
