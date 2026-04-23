@@ -341,7 +341,7 @@ defmodule ByobWeb.RoomLive.Components do
           </a>
         </div>
         <%!-- Details for nerds --%>
-        <details class="mt-4 pt-4 border-t border-base-300">
+        <details class="mt-4 pt-4 border-t border-base-300" id="details-for-nerds">
           <summary class="text-xs text-base-content/40 cursor-pointer hover:text-base-content/60 select-none">
             Details for nerds
           </summary>

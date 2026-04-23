@@ -4,9 +4,25 @@
 
 # v5.0.1
 
-- **Ready count fix:** `video:ready` now sent only after follower mode exits (client proved stability), not on first sync. Prevents premature 2/2 before user clicks play.
-- **Ready count total:** Uses open tab count instead of all connected users — closing a video tab correctly reduces the count even if the byob.video tab stays open.
-- **Ready capped to has_tab:** Ready count can't exceed users with open tabs.
+### Ready count
+- **`video:ready` sent after stability**, not on first sync. Prevents premature 2/2.
+- **Ready capped to `has_tab`** — can't be ready without an open tab.
+- **Stale tab cleanup** — orphaned open_tabs/ready_tabs cleaned when extension users reconnect.
+- **Total shows all users** — closing a video tab shows `1/2` not `1/1`.
+
+### Drift correction
+- **250ms tolerance** with proportional rate correction (0.9–1.1x).
+- **1s correction interval** for tight sync.
+- **Deterministic seek protection** — stale corrections ignored until server reflects user's seek position.
+- **Correction hard seek max once per 5s** on sites that ignore `currentTime`.
+
+### Sync stats panel
+- **Per-client drift/state** computed server-side from `video:state` (works while paused).
+- **Live updates** via PubSub — shows drift (color-coded), server position, play state.
+
+### Sync bar
+- **Debounced status** — brief DRM pauses don't flicker "Paused".
+- **Bar updates only when synced** — unsynced clients don't flicker the seek bar.
 
 ---
 
