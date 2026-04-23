@@ -592,11 +592,6 @@
       case "command:seek":
         suppress(null);
         hookedVideo.currentTime = msg.position;
-        // On DRM/MSE sites (Crunchyroll), a programmatic seek can stall
-        // the video pipeline. Re-calling play() restarts it.
-        if (!hookedVideo.paused) {
-          hookedVideo.play().catch(() => {});
-        }
         break;
 
     }
