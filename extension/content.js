@@ -560,6 +560,7 @@
   // and paused position correction. This is the single source of truth
   // for keeping the client in sync — commandGuard only prevents echoes.
   let _playMismatchSince = null;
+  let _lastReconcilePos = null;
 
   function startReconcile() {
     if (reconcileInterval) return;
@@ -628,9 +629,10 @@
         const posDrift = Math.abs(hookedVideo.currentTime - serverRef.position);
         if (posDrift > 1.0 && !recentSeek) {
           lastSeekAt = now;
-          startCommandGuard();
+          if (commandGuard) clearTimeout(commandGuard);
+          commandGuard = setTimeout(() => { commandGuard = null; }, 2000);
           hookedVideo.currentTime = serverRef.position;
-          console.log(`[byob] Paused position correction: drift=${posDrift.toFixed(1)}s`);
+          _log(`paused position correction: drift=${posDrift.toFixed(1)}s`);
         }
         return;
       }
@@ -638,11 +640,27 @@
       // --- Position drift correction (while playing) ---
       if (serverRef.playState !== State.PLAYING || actual !== State.PLAYING) return;
 
+      const localPosition = hookedVideo.currentTime;
+
+      // Stall detection: if position hasn't advanced since last tick,
+      // video is buffering even if the 'waiting' event didn't fire.
+      if (_lastReconcilePos !== null && Math.abs(localPosition - _lastReconcilePos) < 0.1) {
+        if (!isBuffering) {
+          isBuffering = true;
+          showBufferingOverlay();
+          updateSyncBarStatus(SyncStatus.BUFFERING);
+          _log("reconcile: stall detected (pos unchanged), entering buffering");
+          if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
+        }
+        _lastReconcilePos = localPosition;
+        return; // Don't drift-correct while buffering
+      }
+      _lastReconcilePos = localPosition;
+
       // Use synced clock: serverMonotonic ≈ Date.now() + clockOffset
       const serverNow = now + clockOffset;
       const elapsed = (serverNow - serverRef.serverTime) / 1000;
       const expectedPosition = serverRef.position + elapsed;
-      const localPosition = hookedVideo.currentTime;
       const drift = localPosition - expectedPosition; // positive = ahead, negative = behind
 
       // Dead zone from room tolerance. Wider after a recent seek to prevent bounce.
@@ -656,10 +674,12 @@
       } else if (absDrift > 5.0) {
         _log(`reconcile: HARD SEEK drift=${drift.toFixed(1)}s expected=${expectedPosition.toFixed(1)} local=${localPosition.toFixed(1)}`);
         lastSeekAt = now;
-        startCommandGuard();
+        // Fixed 2s guard for hard seeks — prevents site snap-back from
+        // sending a seeked event that overwrites the server position.
+        if (commandGuard) clearTimeout(commandGuard);
+        commandGuard = setTimeout(() => { commandGuard = null; }, 2000);
         hookedVideo.currentTime = expectedPosition;
         hookedVideo.playbackRate = 1.0;
-        console.log(`[byob] Hard seek: drift=${drift.toFixed(1)}s, seeking to ${expectedPosition.toFixed(1)}`);
       } else {
         // Medium drift — proportional rate adjustment
         // Negative drift (behind) → speed up; positive (ahead) → slow down
@@ -675,6 +695,7 @@
       reconcileInterval = null;
     }
     _playMismatchSince = null;
+    _lastReconcilePos = null;
     if (hookedVideo && hookedVideo.playbackRate !== 1.0) {
       hookedVideo.playbackRate = 1.0;
     }
