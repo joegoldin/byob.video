@@ -565,13 +565,11 @@
   // Handles: play/pause mismatch, buffering detection, position drift,
   // and paused position correction. This is the single source of truth
   // for keeping the client in sync — commandGuard only prevents echoes.
-  let _playMismatchSince = null;
   let _lastReconcilePos = null;
   let _hardSeekFailures = 0;
 
   function startReconcile() {
     if (reconcileInterval) return;
-    _playMismatchSince = null;
 
     reconcileInterval = setInterval(() => {
       if (!hookedVideo || !synced || !serverRef || commandGuard || needsGesture) return;
@@ -589,37 +587,11 @@
       // During settling: read-only mode. Don't send anything to server.
       if (isSettling()) return;
 
-      if (actual !== expectedPlayState && expectedPlayState) {
-        // Cancel any pending debounced play/pause — the reconcile is handling this
-        if (_pendingPlayPause) { clearTimeout(_pendingPlayPause); _pendingPlayPause = null; }
-
-        if (!_playMismatchSince) {
-          _playMismatchSince = now;
-          _log("reconcile: mismatch", actual, "≠ expected", expectedPlayState);
-        } else if (now - _playMismatchSince > 1500) {
-          _log("reconcile: correcting", actual, "→", expectedPlayState);
-          if (expectedPlayState === State.PLAYING) {
-            hookedVideo.play().catch(() => {
-              // Play failed — need user gesture
-              isBuffering = false;
-              hideBufferingOverlay();
-              synced = false;
-              needsGesture = true;
-              expectedPlayState = null;
-              serverRef = null;
-              stopReconcile();
-              updateSyncBarStatus(SyncStatus.CLICKJOIN);
-              showJoinToast(Copy.CLICK_PLAY_TOAST);
-              waitForNativePlay();
-            });
-          } else {
-            hookedVideo.pause();
-          }
-          _playMismatchSince = now; // reset — give correction time
-        }
-        return; // Don't drift-correct while play state is wrong
-      }
-      _playMismatchSince = null;
+      // Don't drift-correct while play state doesn't match — the site is
+      // transitioning (DRM, buffering). The debounced event handlers will
+      // update the server if the state change persists. Don't call play()
+      // or pause() here — that fights the site and the user.
+      if (actual !== expectedPlayState && expectedPlayState) return;
 
       const recentSeek = (now - lastSeekAt) < 5000;
 
@@ -690,7 +662,6 @@
       clearInterval(reconcileInterval);
       reconcileInterval = null;
     }
-    _playMismatchSince = null;
     _lastReconcilePos = null;
     if (hookedVideo && hookedVideo.playbackRate !== 1.0) {
       hookedVideo.playbackRate = 1.0;
