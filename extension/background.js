@@ -132,13 +132,19 @@ function handleContentMessage(msg, port, tabId) {
             port.postMessage({ type: "command:pause", position: resp.current_time, server_time: resp.server_time });
           }
           // Wait for seek to settle before enabling bidirectional sync.
-          // Broadcast to same-tab ports only (top frame + iframe) so the
-          // top frame can hide the toast without affecting other tabs.
+          // Include server state so every port can initialize expectedPlayState
+          // even if it missed the preceding play/pause command.
           setTimeout(() => {
+            const syncedMsg = {
+              type: "command:synced",
+              play_state: resp.play_state,
+              position: resp.current_time,
+              server_time: resp.server_time,
+            };
             if (tabId != null) {
-              broadcastToTab(tabId, { type: "command:synced" });
+              broadcastToTab(tabId, syncedMsg);
             } else {
-              broadcastToContentScripts({ type: "command:synced" });
+              broadcastToContentScripts(syncedMsg);
             }
           }, 500);
         });

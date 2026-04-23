@@ -843,12 +843,34 @@
       const wasAlreadySynced = synced;
       synced = true;
       needsGesture = false;
-      settlingUntil = Date.now() + 3000; // suppress contradictory events for 3s
+      settlingUntil = Date.now() + 3000;
+
+      // Initialize expectedPlayState from synced message — ensures it's
+      // set even if the preceding play/pause command was lost.
+      if (msg.play_state && !expectedPlayState) {
+        expectedPlayState = msg.play_state === "playing" ? State.PLAYING : State.PAUSED;
+        updateServerRef(msg.position ?? 0, expectedPlayState, msg.server_time);
+      }
+
       hideJoinToast();
-      _log("synced!", "settling 3s, hasVideo=", !!hookedVideo, "clockSynced=", clockSynced, "expected=", expectedPlayState);
+      _log("synced!", "settling 3s, expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
+
       if (hookedVideo) {
         updateSyncBarStatus(hookedVideo.paused ? State.PAUSED : State.PLAYING);
         if (!wasAlreadySynced && port) port.postMessage({ type: Msg.VIDEO_READY });
+
+        // Apply server state if video disagrees — handles join into paused room
+        // where video auto-played, or join into playing room where video is paused.
+        if (expectedPlayState === State.PAUSED && !hookedVideo.paused) {
+          hookedVideo.pause();
+          if (msg.position != null) hookedVideo.currentTime = msg.position;
+          _log("synced: forcing pause to match server");
+        } else if (expectedPlayState === State.PLAYING && hookedVideo.paused) {
+          if (msg.position != null) hookedVideo.currentTime = msg.position;
+          hookedVideo.play().catch(() => {});
+          _log("synced: forcing play to match server");
+        }
+
         startReconcile();
       }
       return;
