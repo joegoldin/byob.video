@@ -521,10 +521,8 @@
   function onVideoSeeked() {
     if (!synced || commandGuard || isSettling()) return;
     lastSeekAt = Date.now();
-    _stallTicks = 0;
     _lastReconcilePos = null;
     _hardSeekFailures = 0;
-    _seekTarget = { position: hookedVideo.currentTime, at: Date.now() };
     updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
@@ -571,82 +569,6 @@
   let _lastReconcilePos = null;
   let _hardSeekFailures = 0;
 
-  // Seek buffering: after a seek command, wait for video to arrive at target.
-  // If it hasn't arrived after 1.5s → pause server. When it arrives → resume.
-  let _seekTarget = null; // { position, at: Date.now() }
-  let _seekBufferingPaused = false; // true if we've paused the server waiting for seek
-  let _stallTicks = 0;
-
-  // Returns "buffering" if in buffering state, null otherwise.
-  // When buffering: pauses the server, shows overlay, notifies peers.
-  // _bufferingPause prevents the echo of our own pause from triggering
-  // the reconcile's play/pause correction on this client.
-  let _bufferingPause = false;
-
-  function checkStall(localPosition) {
-    const posAdvance = _lastReconcilePos !== null ? (localPosition - _lastReconcilePos) : 1;
-    if (posAdvance < 0.05) {
-      _stallTicks++;
-      // 3 ticks (1.5s) = show local buffering overlay
-      // 10 ticks (5s) = pause server (genuinely stuck, not just a hiccup)
-      if (_stallTicks >= 3 && !isBuffering) {
-        if (isSettling() || localPosition < 1) {
-          _stallTicks = 0;
-          return null;
-        }
-        isBuffering = true;
-        showBufferingOverlay();
-        updateSyncBarStatus(SyncStatus.BUFFERING);
-        _log("reconcile: buffering (local overlay)");
-        if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
-      }
-      // Stall-based buffering is local overlay only.
-      // Server pausing is handled by seek buffering (_seekTarget) above.
-      if (isBuffering) {
-        if (_stallTicks >= 20) {
-          _log("reconcile: buffering timeout, accepting pos=", localPosition);
-          _bufferingPause = false;
-          isBuffering = false;
-          hideBufferingOverlay();
-          // Resume from wherever the video actually is
-          expectedPlayState = State.PLAYING;
-          updateServerRef(localPosition, State.PLAYING);
-          if (synced && port) {
-            port.postMessage({ type: Msg.VIDEO_SEEK, position: localPosition });
-            port.postMessage({ type: Msg.VIDEO_PLAY, position: localPosition });
-          }
-          updateSyncBarStatus(SyncStatus.PLAYING);
-          _stallTicks = 0;
-          return null;
-        }
-        return "buffering";
-      }
-    } else {
-      if (isBuffering) {
-        _stallTicks = Math.max(0, _stallTicks - 1);
-        if (_stallTicks <= 0) {
-          isBuffering = false;
-          _bufferingPause = false;
-          hideBufferingOverlay();
-          _log("reconcile: buffering cleared — resuming server");
-          if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: localPosition, duration: hookedVideo.duration || 0, playing: true });
-          // Resume from current position
-          expectedPlayState = State.PLAYING;
-          updateServerRef(localPosition, State.PLAYING);
-          if (synced && port) {
-            port.postMessage({ type: Msg.VIDEO_PLAY, position: localPosition });
-          }
-          updateSyncBarStatus(SyncStatus.PLAYING);
-        } else {
-          return "buffering";
-        }
-      } else {
-        _stallTicks = 0;
-      }
-    }
-    return null;
-  }
-
   function startReconcile() {
     if (reconcileInterval) return;
     _playMismatchSince = null;
@@ -661,20 +583,11 @@
       // Periodic state dump every 5s for debugging
       if (now % 5000 < 500) {
         _log("STATE", "actual=", actual, "expected=", expectedPlayState, "pos=", pos?.toFixed(1),
-          "settling=", isSettling(), "buffering=", isBuffering, "bufPause=", _bufferingPause,
-          "stallTicks=", _stallTicks, "clockSynced=", clockSynced);
+          "settling=", isSettling(), "clockSynced=", clockSynced);
       }
 
-      // --- During settling: read-only mode. Don't send anything to server.
-      // Only apply incoming commands and do local stall detection. ---
-      if (isSettling()) {
-        // Still run stall detection for overlay display, but checkStall
-        // won't send to server during settling (it checks settlingUntil).
-        return;
-      }
-
-      // Skip if we're in a buffering-pause
-      if (_bufferingPause && isBuffering) return;
+      // During settling: read-only mode. Don't send anything to server.
+      if (isSettling()) return;
 
       if (actual !== expectedPlayState && expectedPlayState) {
         // Cancel any pending debounced play/pause — the reconcile is handling this
@@ -708,68 +621,7 @@
       }
       _playMismatchSince = null;
 
-      // Clear buffering if we were buffering but state now matches
-      if (isBuffering) {
-        isBuffering = false;
-        hideBufferingOverlay();
-        updateSyncBarStatus(actual === State.PLAYING ? SyncStatus.PLAYING : SyncStatus.PAUSED);
-        if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: actual === State.PLAYING });
-      }
-
       const recentSeek = (now - lastSeekAt) < 5000;
-
-      // --- Seek buffering: we told the client to seek, waiting for it to arrive ---
-      if (_seekTarget && !isSettling()) {
-        const seekAge = now - _seekTarget.at;
-        const seekDist = Math.abs(hookedVideo.currentTime - _seekTarget.position);
-
-        if (seekDist < 3) {
-          // Arrived at target — clear seek buffering
-          if (_seekBufferingPaused) {
-            _log("seek buffering cleared — resuming server from pos=", hookedVideo.currentTime.toFixed(1));
-            _seekBufferingPaused = false;
-            isBuffering = false;
-            hideBufferingOverlay();
-            expectedPlayState = State.PLAYING;
-            updateServerRef(hookedVideo.currentTime, State.PLAYING);
-            if (synced && port) {
-              port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
-            }
-            updateSyncBarStatus(SyncStatus.PLAYING);
-            if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: true });
-          }
-          _seekTarget = null;
-        } else if (seekAge > 1500 && !_seekBufferingPaused) {
-          // 1.5s and still not at target — pause server, show overlay
-          _log("seek buffering — pausing server (target=", _seekTarget.position.toFixed(1), "local=", hookedVideo.currentTime.toFixed(1), ")");
-          _seekBufferingPaused = true;
-          isBuffering = true;
-          showBufferingOverlay();
-          updateSyncBarStatus(SyncStatus.BUFFERING);
-          if (synced && port) {
-            port.postMessage({ type: Msg.VIDEO_PAUSE, position: _seekTarget.position });
-            port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: false });
-          }
-          expectedPlayState = State.PAUSED;
-          updateServerRef(_seekTarget.position, State.PAUSED);
-        } else if (seekAge > 15000) {
-          // 15s timeout — give up, accept site's position
-          _log("seek buffering timeout — accepting pos=", hookedVideo.currentTime.toFixed(1));
-          _seekTarget = null;
-          _seekBufferingPaused = false;
-          isBuffering = false;
-          hideBufferingOverlay();
-          updateServerRef(hookedVideo.currentTime, State.PLAYING);
-          if (synced && port) {
-            port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
-            port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
-          }
-          expectedPlayState = State.PLAYING;
-          updateSyncBarStatus(SyncStatus.PLAYING);
-        }
-
-        if (_seekBufferingPaused) return; // skip drift correction while seek-buffering
-      }
 
       if (!clockSynced) return;
 
@@ -840,7 +692,6 @@
     }
     _playMismatchSince = null;
     _lastReconcilePos = null;
-    _stallTicks = 0;
     if (hookedVideo && hookedVideo.playbackRate !== 1.0) {
       hookedVideo.playbackRate = 1.0;
     }
@@ -1120,7 +971,6 @@
       case Msg.COMMAND_SEEK:
         _log("cmd:seek", "pos=", msg.position, "server_time=", msg.server_time);
         lastSeekAt = Date.now();
-        _seekTarget = { position: msg.position, at: Date.now() };
         updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time);
         if (commandGuard) clearTimeout(commandGuard);
         commandGuard = setTimeout(() => { commandGuard = null; }, 1000);
