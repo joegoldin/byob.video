@@ -162,7 +162,6 @@
   let needsGesture = true; // True until video actually plays — blocks commands
   let pauseEnforcer = null;
   let timeReportInterval = null;
-  let lastServerCommandAt = 0; // suppress site-initiated play/pause for 3s after server commands
   let commandGuard = null; // brief echo prevention when executing a server command
   let expectedPlayState = null; // "playing" or "paused" — what the server wants
   let reconcileInterval = null;
@@ -479,13 +478,14 @@
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced || commandGuard || isBuffering) return;
-    // Suppress site-initiated plays within 3s of a server command.
-    // Without this, the site resuming after our programmatic pause()
-    // would override the server state and desync all clients.
-    if (Date.now() - lastServerCommandAt < 3000) {
-      _log("play SUPPRESSED (within 3s of server command)", hookedVideo.currentTime);
+    // Server is authoritative. If expectedPlayState is already PLAYING,
+    // this is a redundant/site-initiated event (DRM, buffering recovery).
+    // Only send to server if this CHANGES the state (user intent).
+    if (expectedPlayState === State.PLAYING) {
+      _log("play IGNORED (already expected playing)");
       return;
     }
+    _log("play →server", hookedVideo.currentTime);
     expectedPlayState = State.PLAYING;
     updateServerRef(hookedVideo.currentTime, State.PLAYING);
     if (port && hookedVideo) {
@@ -493,15 +493,15 @@
     }
     if (commandGuard) clearTimeout(commandGuard);
     commandGuard = setTimeout(() => { commandGuard = null; }, 300);
-    _log("play", hookedVideo.currentTime);
   }
 
   function onVideoPause() {
     if (!synced || commandGuard || isBuffering) return;
-    if (Date.now() - lastServerCommandAt < 3000) {
-      _log("pause SUPPRESSED (within 3s of server command)", hookedVideo.currentTime);
+    if (expectedPlayState === State.PAUSED) {
+      _log("pause IGNORED (already expected paused)");
       return;
     }
+    _log("pause →server", hookedVideo.currentTime);
     expectedPlayState = State.PAUSED;
     updateServerRef(hookedVideo.currentTime, State.PAUSED);
     if (port && hookedVideo) {
@@ -509,7 +509,6 @@
     }
     if (commandGuard) clearTimeout(commandGuard);
     commandGuard = setTimeout(() => { commandGuard = null; }, 300);
-    _log("pause", hookedVideo.currentTime);
   }
 
   function onVideoSeeked() {
@@ -889,11 +888,6 @@
         _log(`Ignoring stale ${msg.type}: server_time=${msg.server_time} <= ${serverRef.serverTime}`);
         return;
       }
-    }
-
-    // Mark server command timestamp — suppresses site-initiated events for 3s
-    if (msg.type === Msg.COMMAND_PLAY || msg.type === Msg.COMMAND_PAUSE || msg.type === Msg.COMMAND_SEEK) {
-      lastServerCommandAt = Date.now();
     }
 
     switch (msg.type) {
