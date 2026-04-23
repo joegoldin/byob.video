@@ -355,6 +355,21 @@ defmodule ByobWeb.RoomLive.Components do
               <span>250ms</span>
             </div>
             <%= if Map.has_key?(@sync_stats, :clients) and map_size(@sync_stats.clients) > 0 do %>
+              <% drifts = @sync_stats.clients |> Map.values() |> Enum.map(& &1.drift_ms) %>
+              <% avg = div(Enum.sum(drifts), length(drifts)) %>
+              <% {mn, mx} = Enum.min_max(drifts) %>
+              <div class="flex justify-between">
+                <span>Drift avg / min / max</span>
+                <span class={
+                  cond do
+                    abs(avg) > 1000 -> "text-error"
+                    abs(avg) > 250 -> "text-warning"
+                    true -> "text-success"
+                  end
+                }>{avg}ms / {mn}ms / {mx}ms</span>
+              </div>
+            <% end %>
+            <%= if Map.has_key?(@sync_stats, :clients) and map_size(@sync_stats.clients) > 0 do %>
               <div class="mt-2 pt-2 border-t border-base-300/50">
                 <div class="text-base-content/40 mb-1">Extension clients</div>
                 <%= for {client_id, info} <- @sync_stats.clients do %>

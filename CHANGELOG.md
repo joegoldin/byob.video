@@ -2,6 +2,14 @@
 
 ---
 
+# v5.0.3
+
+- **Drift summary:** Details for nerds shows avg/min/max drift across all extension clients.
+- **Settings modal stays open:** PreserveModal hook keeps dialog open during live stat updates.
+- **Details for nerds stays expanded:** PreserveDetails hook preserves open/closed state across re-renders.
+
+---
+
 # v5.0.2
 
 - **Position-based ended detection:** Removed unreliable browser `ended` event listener. Video end detected via position check in time report (pos >= duration - 3s, duration > 60s, playing). More reliable on third-party sites.
