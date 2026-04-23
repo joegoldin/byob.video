@@ -477,20 +477,22 @@
   let settlingUntil = 0;
 
   // Play/pause handlers DON'T check commandGuard — that's only for seek
-  // echo prevention. Settling guard handles post-sync suppression.
+  // Settling = read-only mode after sync. Client receives and applies
+  // commands but sends NOTHING to the server until settled. Prevents
+  // join process from disrupting already-playing clients.
+  function isSettling() { return Date.now() < settlingUntil; }
+
   // Debounced play/pause — only sends if state is stable for 500ms.
-  // Sites that fight our commands (rapid play/pause toggles from DRM,
-  // buffering, ad transitions) cancel each other out.
   let _pendingPlayPause = null;
 
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-    if (!synced || isBuffering) return;
+    if (!synced || isBuffering || isSettling()) return;
     if (expectedPlayState === State.PLAYING) return;
     if (_pendingPlayPause) clearTimeout(_pendingPlayPause);
     _pendingPlayPause = setTimeout(() => {
       _pendingPlayPause = null;
-      if (!hookedVideo || hookedVideo.paused) return; // state changed during debounce
+      if (!hookedVideo || hookedVideo.paused || isSettling()) return;
       expectedPlayState = State.PLAYING;
       updateServerRef(hookedVideo.currentTime, State.PLAYING);
       if (port && hookedVideo) {
@@ -501,12 +503,12 @@
   }
 
   function onVideoPause() {
-    if (!synced || isBuffering) return;
+    if (!synced || isBuffering || isSettling()) return;
     if (expectedPlayState === State.PAUSED) return;
     if (_pendingPlayPause) clearTimeout(_pendingPlayPause);
     _pendingPlayPause = setTimeout(() => {
       _pendingPlayPause = null;
-      if (!hookedVideo || !hookedVideo.paused) return;
+      if (!hookedVideo || !hookedVideo.paused || isSettling()) return;
       expectedPlayState = State.PAUSED;
       updateServerRef(hookedVideo.currentTime, State.PAUSED);
       if (port && hookedVideo) {
@@ -517,9 +519,9 @@
   }
 
   function onVideoSeeked() {
-    if (!synced || commandGuard) return;
+    if (!synced || commandGuard || isSettling()) return;
     lastSeekAt = Date.now();
-    _stallTicks = 0; // reset stall counter — seeking to new position needs buffer time
+    _stallTicks = 0;
     _lastReconcilePos = null;
     updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
     if (port && hookedVideo) {
@@ -533,11 +535,10 @@
   let isBuffering = false;
 
   function onVideoWaiting() {
-    if (!synced) return;
+    if (!synced || isSettling()) return;
     isBuffering = true;
     showBufferingOverlay();
     updateSyncBarStatus(SyncStatus.LOADING);
-    // Notify server immediately
     if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: hookedVideo?.currentTime || 0, duration: hookedVideo?.duration || 0, playing: false });
   }
 
@@ -652,19 +653,17 @@
       const now = Date.now();
       const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
 
-      // --- Play/pause state reconciliation ---
-      // Skip if we're in a buffering-pause — the video is playing but we
-      // intentionally paused the server. Don't try to "correct" this.
-      if (_bufferingPause && isBuffering) {
-        // Let checkStall handle exit
+      // --- During settling: read-only mode. Don't send anything to server.
+      // Only apply incoming commands and do local stall detection. ---
+      if (isSettling()) {
+        // Still run stall detection for overlay display, but checkStall
+        // won't send to server during settling (it checks settlingUntil).
         return;
       }
 
-      // If actual state differs from server-expected state, one of two things:
-      // 1. Site glitch (DRM, buffering) — correct locally after 1.5s
-      // 2. User deliberately changed state — update server after 1.5s
-      // We distinguish by trying to correct first. If correction fails
-      // (play() rejected) or the state keeps reverting, accept user intent.
+      // Skip if we're in a buffering-pause
+      if (_bufferingPause && isBuffering) return;
+
       if (actual !== expectedPlayState && expectedPlayState) {
         if (!_playMismatchSince) {
           _playMismatchSince = now;
@@ -945,7 +944,7 @@
       const wasAlreadySynced = synced;
       synced = true;
       needsGesture = false;
-      settlingUntil = Date.now() + 3000;
+      settlingUntil = Date.now() + 5000; // 5s read-only mode after sync
 
       // Initialize expectedPlayState from synced message — ensures it's
       // set even if the preceding play/pause command was lost.
