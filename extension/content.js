@@ -478,7 +478,9 @@
 
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-    if (!synced || commandGuard || isBuffering) return;
+    if (!synced || isBuffering) return;
+    // Play/pause override any active commandGuard — they're new user intent
+    if (commandGuard) { clearTimeout(commandGuard); commandGuard = null; }
     // During settling, suppress plays that contradict server state
     if (Date.now() < settlingUntil && expectedPlayState === State.PAUSED) {
       _log("play SUPPRESSED (settling after sync, server expects paused)");
@@ -495,7 +497,8 @@
   }
 
   function onVideoPause() {
-    if (!synced || commandGuard || isBuffering) return;
+    if (!synced || isBuffering) return;
+    if (commandGuard) { clearTimeout(commandGuard); commandGuard = null; }
     if (Date.now() < settlingUntil && expectedPlayState === State.PLAYING) {
       _log("pause SUPPRESSED (settling after sync, server expects playing)");
       return;
