@@ -1,6 +1,7 @@
 defmodule ByobWeb.ExtensionChannel do
   use ByobWeb, :channel
 
+  require Logger
   alias Byob.{RoomManager, RoomServer, SyncLog}
 
   @impl true
@@ -226,6 +227,14 @@ defmodule ByobWeb.ExtensionChannel do
     t2 = System.monotonic_time(:millisecond)
     t3 = System.monotonic_time(:millisecond)
     {:reply, {:ok, %{t1: t1, t2: t2, t3: t3}}, socket}
+  end
+
+  def handle_in("debug:log", %{"message" => message} = payload, socket) do
+    room_id = socket.assigns.room_id
+    tab_id = payload["tab_id"] || "?"
+    user_id = socket.assigns.user_id |> String.slice(0..7)
+    Logger.debug("[ext:debug] room=#{room_id} user=#{user_id} tab=#{tab_id} #{message}")
+    {:noreply, socket}
   end
 
   def handle_in(_event, _payload, socket) do

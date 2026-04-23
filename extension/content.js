@@ -3,6 +3,14 @@
 (() => {
   "use strict";
 
+  const _debug = true;
+  const _log = (...args) => {
+    if (!_debug) return;
+    const msg = args.map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ");
+    console.log("[byob]", ...args);
+    if (port) port.postMessage({ type: "debug:log", message: msg });
+  };
+
   let port = null;
   let hookedVideo = null;
   let synced = false; // Don't send events until initial sync is done
@@ -20,6 +28,7 @@
   let followerMode = false;
   let followerStableTicks = 0;
   let _barPausedCount = 0;
+  let _statusPausedCount = 0;
   let _endedReported = false;
   let _lastCorrectionSeek = 0;
   let _pendingSeekPos = null; // after user seek, ignore corrections until server reflects new position
@@ -239,6 +248,7 @@
 
     video.addEventListener("play", onVideoPlay);
     video.addEventListener("pause", onVideoPause);
+    video.addEventListener("seeking", onVideoSeeking);
     video.addEventListener("seeked", onVideoSeeked);
     // No "ended" listener — position-based detection in time report is more reliable
 
@@ -311,6 +321,7 @@
     if (!hookedVideo) return;
     hookedVideo.removeEventListener("play", onVideoPlay);
     hookedVideo.removeEventListener("pause", onVideoPause);
+    hookedVideo.removeEventListener("seeking", onVideoSeeking);
     hookedVideo.removeEventListener("seeked", onVideoSeeked);
     if (_nativePlayListener) {
       hookedVideo.removeEventListener("play", _nativePlayListener);
@@ -325,8 +336,19 @@
 
   // Event handlers — with suppression
   function onVideoPlay() {
-    if (!synced || followerMode) return;
-    if (shouldSuppress("playing")) return;
+    if (!synced || followerMode) {
+      _log("onVideoPlay SKIP synced=", synced, "follower=", followerMode);
+      return;
+    }
+    if (Date.now() < _postSeekSuppressUntil) {
+      _log("onVideoPlay SUPPRESSED (postSeek)", "pos=", hookedVideo?.currentTime);
+      return;
+    }
+    if (shouldSuppress("playing")) {
+      _log("onVideoPlay SUPPRESSED (gen)", "pos=", hookedVideo?.currentTime);
+      return;
+    }
+    _log("onVideoPlay SEND pos=", hookedVideo?.currentTime);
     if (port && hookedVideo) {
       port.postMessage({
         type: "video:play",
@@ -336,20 +358,76 @@
   }
 
   function onVideoPause() {
-    if (!synced || followerMode) return;
-    if (shouldSuppress("paused")) return;
-    if (port && hookedVideo) {
-      port.postMessage({
-        type: "video:pause",
-        position: hookedVideo.currentTime,
-      });
+    if (!synced || followerMode) {
+      _log("onVideoPause SKIP synced=", synced, "follower=", followerMode);
+      return;
+    }
+    if (Date.now() < _postSeekSuppressUntil) {
+      _log("onVideoPause SUPPRESSED (postSeek)", "pos=", hookedVideo?.currentTime);
+      return;
+    }
+    if (shouldSuppress("paused")) {
+      _log("onVideoPause SUPPRESSED (gen)", "pos=", hookedVideo?.currentTime);
+      return;
+    }
+    if (!port || !hookedVideo) return;
+    if (_isDrmSite) {
+      _log("onVideoPause DEBOUNCE pos=", hookedVideo.currentTime);
+      if (_drmPauseTimer) clearTimeout(_drmPauseTimer);
+      _drmPauseTimer = setTimeout(() => {
+        _drmPauseTimer = null;
+        // Only send if video is STILL paused — DRM rebuffer pauses resolve quickly
+        if (port && hookedVideo && hookedVideo.paused) {
+          _log("onVideoPause SEND (debounced) pos=", hookedVideo.currentTime);
+          port.postMessage({ type: "video:pause", position: hookedVideo.currentTime });
+        } else {
+          _log("onVideoPause DROPPED (resumed) pos=", hookedVideo?.currentTime);
+        }
+      }, 300);
+    } else {
+      _log("onVideoPause SEND pos=", hookedVideo.currentTime);
+      port.postMessage({ type: "video:pause", position: hookedVideo.currentTime });
+    }
+  }
+
+  let _postSeekSuppressUntil = 0; // absorb DRM play/pause noise during seek
+  let _drmPauseTimer = null; // debounced pause for DRM sites
+  let _programmaticSeek = false; // true while we're doing a seek from a command
+  const _isDrmSite = /crunchyroll\.com|funimation\.com|hulu\.com|netflix\.com|disneyplus\.com|peacocktv\.com|paramountplus\.com|hbomax\.com|max\.com/i.test(window.location.hostname);
+
+  function onVideoSeeking() {
+    if (!synced || followerMode) {
+      _log("onVideoSeeking SKIP synced=", synced, "follower=", followerMode);
+      return;
+    }
+    if (_programmaticSeek) {
+      _log("onVideoSeeking SKIP (programmatic) pos=", hookedVideo?.currentTime);
+      return;
+    }
+    if (_isDrmSite) {
+      const cancelled = !!_drmPauseTimer;
+      if (_drmPauseTimer) { clearTimeout(_drmPauseTimer); _drmPauseTimer = null; }
+      _postSeekSuppressUntil = Date.now() + 1000;
+      _log("onVideoSeeking DRM suppress set, cancelledPause=", cancelled, "pos=", hookedVideo?.currentTime);
+    } else {
+      _log("onVideoSeeking pos=", hookedVideo?.currentTime);
     }
   }
 
   function onVideoSeeked() {
-    if (!synced || followerMode) return;
-    if (shouldSuppress(null)) return;
+    // Seek completed — DRM noise window is over, allow real events through
+    _postSeekSuppressUntil = 0;
+
+    if (!synced || followerMode) {
+      _log("onVideoSeeked SKIP synced=", synced, "follower=", followerMode);
+      return;
+    }
+    if (shouldSuppress(null)) {
+      _log("onVideoSeeked SUPPRESSED (gen) pos=", hookedVideo?.currentTime);
+      return;
+    }
     _pendingSeekPos = hookedVideo.currentTime;
+    _log("onVideoSeeked SEND pos=", hookedVideo.currentTime);
     if (port && hookedVideo) {
       port.postMessage({
         type: "video:seek",
@@ -487,9 +565,11 @@
         // If we have a pending user seek, check if server caught up
         if (_pendingSeekPos != null) {
           if (Math.abs(msg.expected_time - _pendingSeekPos) < 3) {
-            _pendingSeekPos = null; // server reflects our seek — resume corrections
+            _log("correction: pendingSeek cleared, server caught up");
+            _pendingSeekPos = null;
           } else {
-            return; // stale correction from before our seek — ignore
+            _log("correction: SKIP stale, pending=", _pendingSeekPos, "expected=", msg.expected_time);
+            return;
           }
         }
 
@@ -498,14 +578,21 @@
         const threshold = followerMode ? 0.5 : 0.25;
 
         if (absDrift < threshold) {
-          if (hookedVideo.playbackRate !== 1.0) hookedVideo.playbackRate = 1.0;
+          if (hookedVideo.playbackRate !== 1.0) {
+            _log("correction: drift ok, reset rate to 1.0, drift=", drift.toFixed(3));
+            hookedVideo.playbackRate = 1.0;
+          }
         } else if (absDrift < 3.0) {
           const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
+          _log("correction: rate adjust to", rate.toFixed(3), "drift=", drift.toFixed(3));
           hookedVideo.playbackRate = rate;
         } else if (Date.now() - _lastCorrectionSeek > 5000) {
+          _log("correction: HARD SEEK drift=", drift.toFixed(1), "from=", hookedVideo.currentTime.toFixed(1), "to=", msg.expected_time.toFixed(1));
           _lastCorrectionSeek = Date.now();
-          suppress(null); // match what shouldSuppress(null) expects from onVideoSeeked
+          suppress(null);
+          _programmaticSeek = true;
           hookedVideo.currentTime = msg.expected_time;
+          _programmaticSeek = false;
           hookedVideo.playbackRate = 1.0;
         }
 
@@ -562,26 +649,38 @@
 
     switch (msg.type) {
       case "command:play":
+        _log("CMD:play pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         suppress("playing");
-        // Seek if needed, then play. Don't use tryPlay() here — if the user
-        // already clicked play (requestSync flow), the video is playing and
-        // we just need to adjust position. play() on an already-playing video
-        // resolves immediately without needing a gesture.
+        suppress(null); // suppress seeked echo from position set
+        _programmaticSeek = true;
         if (msg.position != null) hookedVideo.currentTime = msg.position;
-        // Always call play() — on DRM sites the pipeline may stall after
-        // a seek even though paused===false. play() restarts it.
-        hookedVideo.play().catch(() => {});
+        hookedVideo.play().then(() => {
+          _log("CMD:play play() resolved, paused=", hookedVideo?.paused, "pos=", hookedVideo?.currentTime);
+        }).catch((e) => {
+          _log("CMD:play play() REJECTED:", e?.message);
+        });
+        if (_isDrmSite) {
+          // DRM pipeline needs a real seek to restart frame rendering.
+          // Same-position seeks are no-ops, so offset by 0.01s to force it.
+          const kickPos = (msg.position ?? hookedVideo.currentTime) + 0.01;
+          hookedVideo.currentTime = kickPos;
+          _log("CMD:play DRM kick seek to", kickPos);
+        }
+        _programmaticSeek = false;
         break;
 
       case "command:pause":
+        _log("CMD:pause pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
         suppress("paused");
+        _programmaticSeek = true;
         if (msg.position != null) hookedVideo.currentTime = msg.position;
+        _programmaticSeek = false;
         hookedVideo.pause();
-        // Enforce pause for 2s — fights autoplay/delayed play from sites
         if (pauseEnforcer) clearInterval(pauseEnforcer);
         pauseEnforcer = setInterval(() => {
           if (hookedVideo && !hookedVideo.paused) {
+            _log("CMD:pause enforcer re-pausing");
             suppress("paused");
             hookedVideo.pause();
           }
@@ -590,8 +689,11 @@
         break;
 
       case "command:seek":
+        _log("CMD:seek pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
         suppress(null);
+        _programmaticSeek = true;
         hookedVideo.currentTime = msg.position;
+        _programmaticSeek = false;
         break;
 
     }
@@ -919,7 +1021,13 @@
     // Only update status when synced — before that, status is managed by
     // tryAutoSync/tryPlay/waitForNativePlay
     if (synced && !_countdownInterval) {
-      updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+      if (hookedVideo.paused) {
+        _statusPausedCount++;
+        if (_statusPausedCount >= 2) updateSyncBarStatus("paused");
+      } else {
+        _statusPausedCount = 0;
+        updateSyncBarStatus("playing");
+      }
     }
   }, 250);
 

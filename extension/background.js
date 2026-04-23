@@ -147,6 +147,10 @@ function handleContentMessage(msg, port, tabId) {
       // Relay bar updates to all ports (so top frame can update its sync bar)
       broadcastToContentScripts(msg);
       break;
+
+    case "debug:log":
+      if (channel) channel.push("debug:log", { message: msg.message, tab_id: String(tabId) });
+      break;
   }
 }
 

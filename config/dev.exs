@@ -62,7 +62,7 @@ config :byob, dev_routes: true
 
 # Include timestamps in development logs, info level to reduce noise
 config :logger, :default_formatter, format: "$time [$level] $message\n"
-config :logger, level: :info
+config :logger, level: :debug
 
 # Set a higher stacktrace during development. Avoid configuring such
 # in production as building large stacktraces may be expensive.
