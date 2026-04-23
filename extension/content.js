@@ -675,11 +675,13 @@
       if (_bufferingPause && isBuffering) return;
 
       if (actual !== expectedPlayState && expectedPlayState) {
+        // Cancel any pending debounced play/pause — the reconcile is handling this
+        if (_pendingPlayPause) { clearTimeout(_pendingPlayPause); _pendingPlayPause = null; }
+
         if (!_playMismatchSince) {
           _playMismatchSince = now;
           _log("reconcile: mismatch", actual, "≠ expected", expectedPlayState);
         } else if (now - _playMismatchSince > 1500) {
-          // Mismatch persisted — try to correct local state to match server
           _log("reconcile: correcting", actual, "→", expectedPlayState);
           if (expectedPlayState === State.PLAYING) {
             hookedVideo.play().catch(() => {
@@ -1023,6 +1025,9 @@
         return;
       }
     }
+
+    // Cancel any pending debounced play/pause — server command takes precedence
+    if (_pendingPlayPause) { clearTimeout(_pendingPlayPause); _pendingPlayPause = null; }
 
     switch (msg.type) {
       case Msg.COMMAND_PLAY:
