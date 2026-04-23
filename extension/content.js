@@ -305,8 +305,11 @@
       }
 
       // Stall detection: video reports !paused but frames aren't advancing.
-      // Common on DRM sites when MSE pipeline wedges after programmatic seek.
-      if (synced && !followerMode && !_recoveryInProgress) {
+      // Disabled on DRM sites — we no longer auto-seek on drift there, so the
+      // MSE pipeline shouldn't wedge from our actions. Natural rebuffering can
+      // false-positive here, and the recovery path prompts a user click that
+      // users find annoying.
+      if (synced && !followerMode && !_recoveryInProgress && !_isDrmSite) {
         if (!hookedVideo.paused) {
           const pos = hookedVideo.currentTime;
           if (_lastTickPosition != null && Math.abs(pos - _lastTickPosition) < 0.05) {
@@ -701,11 +704,15 @@
 
     // Server correction — proportional rate correction for tight sync.
     if (msg.type === "sync:correction" && hookedVideo && synced) {
-      // Always track expected server position — stall detector uses this
-      // to compute a recovery target even when we're not actively drift-correcting.
       if (msg.expected_time != null) {
         _lastExpectedPos = msg.expected_time;
         _lastExpectedAt = Date.now();
+      }
+      // DRM sites: accept drift. Any programmatic action here (rate change,
+      // seek) risks wedging the MSE pipeline. Only explicit user commands
+      // (play/pause/seek from another client) touch the player.
+      if (_isDrmSite) {
+        return;
       }
       if (msg.expected_time != null && !hookedVideo.paused) {
         // If we have a pending user seek, check if server caught up
@@ -732,10 +739,6 @@
           const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
           _log("correction: rate adjust to", rate.toFixed(3), "drift=", drift.toFixed(3));
           hookedVideo.playbackRate = rate;
-        } else if (_isDrmSite) {
-          // DRM sites: HARD SEEK doesn't un-stall a wedged pipeline, it just moves
-          // the stall target. Accept large drift; stall detector handles real stalls.
-          _log("correction: DRM large drift, skipping HARD SEEK, drift=", drift.toFixed(1));
         } else if (Date.now() - _lastCorrectionSeek > 5000) {
           _log("correction: HARD SEEK drift=", drift.toFixed(1), "from=", hookedVideo.currentTime.toFixed(1), "to=", msg.expected_time.toFixed(1));
           _lastCorrectionSeek = Date.now();

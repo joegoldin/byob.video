@@ -2,6 +2,16 @@
 
 ---
 
+# v5.0.7
+
+### DRM sites: minimal-intervention sync (minimal-intervention sync)
+
+- **No auto drift correction on DRM.** `sync:correction` now returns early on DRM hosts (Crunchyroll, Netflix, Disney+, etc.) — no rate adjustment, no hard seek. The MSE pipeline wedges from any programmatic seek on a playing stream, and the resulting "click play to resync" loop was worse than the drift it was trying to fix. Drift accumulates silently; explicit user actions (play/pause/seek from another client) still propagate.
+- **No stall detection on DRM.** Without our own auto-seeks wedging the pipeline, stalls shouldn't originate from us. The detector was also false-positiving on natural rebuffering and triggering the user-gesture prompt. Disabled on DRM; non-DRM sites still use it.
+- **Rationale:** DRM playback handling has zero drift correction and zero stall handling, just direct `video.play/pause` and `currentTime =` assignment relayed from the room. Our aggressive clock-sync model is a net negative on DRM; this change adopts the same "don't fight the pipeline" approach.
+
+---
+
 # v5.0.6
 
 - **Fix DRM stall recovery click loop:** On stall recovery, the user's click no longer re-seeks to the server's position (which just re-wedged the pipeline and caused another stall). Instead, the video resumes from its current position and we announce that position to the server. This breaks the click→stall→click→stall loop on Crunchyroll.
