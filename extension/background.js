@@ -147,25 +147,25 @@ function handleContentMessage(msg, port, tabId) {
 
     case "video:play":
       markOrigin(port, "play");
-      if (channel) channel.push("video:play", { position: msg.position });
+      if (channel) channel.push("video:play", { position: msg.position, tab_id: String(tabId) });
       break;
 
     case "video:pause":
       markOrigin(port, "pause");
-      if (channel) channel.push("video:pause", { position: msg.position });
+      if (channel) channel.push("video:pause", { position: msg.position, tab_id: String(tabId) });
       break;
 
     case "video:seek":
       markOrigin(port, "seek");
-      if (channel) channel.push("video:seek", { position: msg.position });
+      if (channel) channel.push("video:seek", { position: msg.position, tab_id: String(tabId) });
       break;
 
     case "video:ended":
-      if (channel) channel.push("video:ended", {});
+      if (channel) channel.push("video:ended", { tab_id: String(tabId) });
       break;
 
     case "video:state":
-      if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing, buffering: msg.buffering || false });
+      if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing, buffering: msg.buffering || false, tab_id: String(tabId) });
       // Relay local buffering state to top frame so it can show/hide overlay
       // without waiting for server round-trip
       if (msg.buffering != null) {

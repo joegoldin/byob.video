@@ -30,21 +30,24 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   @impl true
-  def handle_in("video:play", %{"position" => position}, socket) do
-    RoomServer.play(socket.assigns.room_pid, socket.assigns.user_id, position)
-    SyncLog.ext_event(socket.assigns.room_id, "play", socket.assigns.user_id)
+  def handle_in("video:play", %{"position" => position} = payload, socket) do
+    uid = ext_tab_user_id(socket, payload)
+    RoomServer.play(socket.assigns.room_pid, uid, position)
+    SyncLog.ext_event(socket.assigns.room_id, "play", uid)
     {:noreply, socket}
   end
 
-  def handle_in("video:pause", %{"position" => position}, socket) do
-    RoomServer.pause(socket.assigns.room_pid, socket.assigns.user_id, position)
-    SyncLog.ext_event(socket.assigns.room_id, "pause", socket.assigns.user_id)
+  def handle_in("video:pause", %{"position" => position} = payload, socket) do
+    uid = ext_tab_user_id(socket, payload)
+    RoomServer.pause(socket.assigns.room_pid, uid, position)
+    SyncLog.ext_event(socket.assigns.room_id, "pause", uid)
     {:noreply, socket}
   end
 
-  def handle_in("video:seek", %{"position" => position}, socket) do
-    RoomServer.seek(socket.assigns.room_pid, socket.assigns.user_id, position)
-    SyncLog.ext_event(socket.assigns.room_id, "seek", socket.assigns.user_id)
+  def handle_in("video:seek", %{"position" => position} = payload, socket) do
+    uid = ext_tab_user_id(socket, payload)
+    RoomServer.seek(socket.assigns.room_pid, uid, position)
+    SyncLog.ext_event(socket.assigns.room_id, "seek", uid)
     {:noreply, socket}
   end
 
@@ -309,4 +312,13 @@ defmodule ByobWeb.ExtensionChannel do
       title: item.title
     }
   end
+
+  # Build a per-tab user_id for extension clients so two tabs in the same
+  # browser (normal + incognito, sharing one SW/WebSocket) are treated as
+  # separate users by the room server.
+  defp ext_tab_user_id(socket, %{"tab_id" => tab_id}) when is_binary(tab_id) do
+    "#{socket.assigns.user_id}:#{tab_id}"
+  end
+
+  defp ext_tab_user_id(socket, _payload), do: socket.assigns.user_id
 end

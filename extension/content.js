@@ -144,6 +144,10 @@
   const PORT_NAME = "watchparty";
   const EXT_ATTR = "data-byob-extension";
 
+  // Debug logging — visible in devtools console. Filter by [byob].
+  const _DEBUG = true;
+  function _log(...args) { if (_DEBUG) console.log("[byob]", ...args); }
+
   let port = null;
   let hookedVideo = null;
   let synced = false; // Don't send events until initial sync is done
@@ -458,7 +462,10 @@
     }
   }
 
-  // Event handlers — user-initiated actions sent to server
+  // Event handlers — user-initiated actions sent to server.
+  // Each starts a commandGuard after sending, so the site's settling
+  // (DRM init, buffering, player state transitions) doesn't leak as
+  // additional events to the server.
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced || commandGuard || isBuffering) return;
@@ -467,6 +474,8 @@
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
     }
+    startCommandGuard(); // hold until site settles to playing
+    _log("play", hookedVideo.currentTime);
   }
 
   function onVideoPause() {
@@ -476,17 +485,21 @@
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_PAUSE, position: hookedVideo.currentTime });
     }
+    startCommandGuard(); // hold until site settles to paused
+    _log("pause", hookedVideo.currentTime);
   }
 
   function onVideoSeeked() {
     if (!synced || commandGuard) return;
     lastSeekAt = Date.now();
-    // Update serverRef immediately so reconcile loop doesn't see the new
-    // position as "drift" and snap back to the old position.
     updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
     }
+    // Fixed 1s guard for user-initiated seeks
+    if (commandGuard) clearTimeout(commandGuard);
+    commandGuard = setTimeout(() => { commandGuard = null; }, 1000);
+    _log("seek", hookedVideo.currentTime);
   }
 
   let isBuffering = false;
@@ -539,6 +552,7 @@
       if (actual !== expectedPlayState && expectedPlayState) {
         if (!_playMismatchSince) {
           _playMismatchSince = now;
+          _log("reconcile: mismatch", actual, "≠ expected", expectedPlayState);
         } else if (now - _playMismatchSince > 1500) {
           // Mismatch persisted — try to correct
           if (expectedPlayState === State.PLAYING) {
@@ -615,12 +629,11 @@
       const absDrift = Math.abs(drift);
 
       if (absDrift < deadZone) {
-        // Within dead zone — reset rate to normal
         if (hookedVideo.playbackRate !== 1.0) {
           hookedVideo.playbackRate = 1.0;
         }
       } else if (absDrift > 5.0) {
-        // Large drift — hard seek
+        _log(`reconcile: HARD SEEK drift=${drift.toFixed(1)}s expected=${expectedPosition.toFixed(1)} local=${localPosition.toFixed(1)}`);
         lastSeekAt = now;
         startCommandGuard();
         hookedVideo.currentTime = expectedPosition;
@@ -753,6 +766,7 @@
       clockOffset = msg.offset;
       clockRtt = msg.rtt;
       clockSynced = true;
+      _log("clock synced: offset=", clockOffset, "rtt=", clockRtt);
       return;
     }
 
@@ -812,9 +826,9 @@
       synced = true;
       needsGesture = false;
       hideJoinToast();
+      _log("synced!", "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced, "serverRef=", serverRef);
       if (hookedVideo) {
         updateSyncBarStatus(hookedVideo.paused ? State.PAUSED : State.PLAYING);
-        // Only send video:ready once, from the frame that has the video
         if (!wasAlreadySynced && port) port.postMessage({ type: Msg.VIDEO_READY });
         startReconcile();
       }
@@ -841,6 +855,7 @@
 
     switch (msg.type) {
       case Msg.COMMAND_PLAY:
+        _log("cmd:play", "pos=", msg.position, "server_time=", msg.server_time);
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         expectedPlayState = State.PLAYING;
         updateServerRef(msg.position ?? hookedVideo.currentTime, State.PLAYING, msg.server_time);
@@ -853,6 +868,7 @@
         break;
 
       case Msg.COMMAND_PAUSE:
+        _log("cmd:pause", "pos=", msg.position, "server_time=", msg.server_time);
         expectedPlayState = State.PAUSED;
         updateServerRef(msg.position ?? hookedVideo.currentTime, State.PAUSED, msg.server_time);
         startCommandGuard();
@@ -870,6 +886,7 @@
         break;
 
       case Msg.COMMAND_SEEK:
+        _log("cmd:seek", "pos=", msg.position, "server_time=", msg.server_time);
         lastSeekAt = Date.now();
         updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time);
         // Fixed 1s guard for seeks (adaptive guard checks play state, not position)
@@ -882,6 +899,7 @@
         // Server sends expected position every 3s — update reference for drift correction.
         // Corrections always accepted (no staleness check — they're periodic refreshes).
         if (msg.expected_time != null) {
+          _log("correction", "expected=", msg.expected_time.toFixed(1), "local=", hookedVideo?.currentTime?.toFixed(1), "server_time=", msg.server_time);
           updateServerRef(msg.expected_time, serverRef?.playState ?? expectedPlayState, msg.server_time);
         }
         break;
