@@ -13,6 +13,7 @@
   let expectedState = null;
   let safetyTimeout = null;
   let timeReportInterval = null;
+  let syncCooldownUntil = 0; // suppress ALL outbound events for N ms after sync
 
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
@@ -284,7 +285,7 @@
 
   // Event handlers — with suppression
   function onVideoPlay() {
-    if (!synced) return;
+    if (!synced || Date.now() < syncCooldownUntil) return;
     if (shouldSuppress("playing")) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -295,7 +296,7 @@
   }
 
   function onVideoPause() {
-    if (!synced) return;
+    if (!synced || Date.now() < syncCooldownUntil) return;
     if (shouldSuppress("paused")) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -306,7 +307,7 @@
   }
 
   function onVideoSeeked() {
-    if (!synced) return;
+    if (!synced || Date.now() < syncCooldownUntil) return;
     if (shouldSuppress(null)) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -441,10 +442,11 @@
       const wasAlreadySynced = synced;
       synced = true;
       needsGesture = false;
+      // Suppress ALL outbound events for 3s so the site can settle after sync.
+      syncCooldownUntil = Date.now() + 3000;
       hideJoinToast();
       if (hookedVideo) {
         updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
-        // Only send video:ready once, from the frame that has the video
         if (!wasAlreadySynced && port) port.postMessage({ type: "video:ready" });
       }
       return;
