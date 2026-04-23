@@ -53,7 +53,8 @@ defmodule ByobWeb.RoomLive do
         comments_collapsed: false,
         comments_expanded: false,
         round: nil,
-        round_collapsed: false
+        round_collapsed: false,
+        sync_stats: %{correction_interval_ms: 3000, client_rtts: %{}}
       )
 
     if connected?(socket) do
@@ -416,6 +417,7 @@ defmodule ByobWeb.RoomLive do
       sb_settings={@sb_settings}
       api_key={@api_key}
       show_comments={@show_comments}
+      sync_stats={@sync_stats}
     />
     <Components.autoplay_help_modal />
 

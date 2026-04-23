@@ -354,10 +354,10 @@
     }
   }
 
-  // Suppression — single-shot for HTML5 <video> elements.
-  // Unlike YouTube (which fires multi-event sequences like BUFFERING→PLAYING),
-  // HTML5 video fires clean single events. Suppress only the expected event;
-  // let non-matching events through so fast user actions aren't swallowed.
+  // Suppression — time-window for HTML5 <video> elements.
+  // Suppresses ALL matching events for the duration (1.5s) instead of just
+  // the first one. Sites with DRM/buffering fire multiple play/pause events
+  // during transitions — all need to be absorbed.
   function suppress(state) {
     suppressGen++;
     suppressUntilGen = suppressGen;
@@ -372,10 +372,8 @@
   function shouldSuppress(currentState) {
     if (suppressUntilGen === 0) return false;
     if (currentState === expectedState || expectedState === null) {
-      // Expected event — swallow it and clear suppression
-      suppressUntilGen = 0;
-      expectedState = null;
-      if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
+      // Expected event — swallow it. DON'T clear suppression — keep
+      // absorbing matching events until the safety timeout clears it.
       return true;
     }
     // Non-matching event (e.g. user quickly paused while we expected "playing")

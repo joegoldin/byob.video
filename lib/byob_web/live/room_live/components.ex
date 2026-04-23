@@ -254,6 +254,7 @@ defmodule ByobWeb.RoomLive.Components do
   attr :sb_settings, :any, required: true
   attr :api_key, :any, default: nil
   attr :show_comments, :boolean, default: true
+  attr :sync_stats, :any, default: nil
 
   def settings_modal(assigns) do
     ~H"""
@@ -339,6 +340,39 @@ defmodule ByobWeb.RoomLive.Components do
             API Documentation
           </a>
         </div>
+        <%!-- Details for nerds --%>
+        <details class="mt-4 pt-4 border-t border-base-300">
+          <summary class="text-xs text-base-content/40 cursor-pointer hover:text-base-content/60 select-none">
+            Details for nerds
+          </summary>
+          <div class="mt-2 text-xs text-base-content/50 space-y-1 font-mono">
+            <%= if @sync_stats do %>
+              <div class="flex justify-between">
+                <span>Correction interval</span>
+                <span>{@sync_stats.correction_interval_ms}ms</span>
+              </div>
+              <%= if map_size(@sync_stats.client_rtts) > 0 do %>
+                <div class="mt-1 pt-1 border-t border-base-300/50">
+                  <div class="text-base-content/40 mb-1">Extension clients</div>
+                  <%= for {_user_id, rtt} <- @sync_stats.client_rtts do %>
+                    <div class="flex justify-between">
+                      <span>RTT</span>
+                      <span class={
+                        cond do
+                          rtt > 250 -> "text-error"
+                          rtt > 100 -> "text-warning"
+                          true -> "text-success"
+                        end
+                      }>{rtt}ms</span>
+                    </div>
+                  <% end %>
+                </div>
+              <% end %>
+            <% else %>
+              <div class="text-base-content/30">No extension clients connected</div>
+            <% end %>
+          </div>
+        </details>
         <%!-- Attribution --%>
         <div class="mt-4 pt-4 border-t border-base-300 text-xs text-base-content/40 space-y-1">
           <p>

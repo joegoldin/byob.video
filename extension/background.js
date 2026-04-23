@@ -154,11 +154,22 @@ function closeExtensionTabs() {
   }
 }
 
-function connectToRoom(roomId, serverUrl, token, username) {
+async function connectToRoom(roomId, serverUrl, token, username) {
   // Don't reconnect if already connected to this room
   if (currentRoomId === roomId && channel) return;
 
+  // Cross-SW cooldown via shared storage — works across normal + incognito
   const now = Date.now();
+  try {
+    const stored = await chrome.storage.local.get("_byob_last_connect");
+    const lastConnect = stored._byob_last_connect || 0;
+    if (now - lastConnect < 3000) {
+      console.log("[byob] Connection cooldown (cross-SW)");
+      return;
+    }
+    await chrome.storage.local.set({ _byob_last_connect: now });
+  } catch (_) {}
+
   if (now - lastConnectAt < 3000) {
     console.log("[byob] Connection cooldown");
     return;
