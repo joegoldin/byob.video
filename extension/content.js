@@ -380,8 +380,15 @@
   function shouldSuppress(currentState) {
     if (suppressUntilGen === 0) return false;
     if (currentState === expectedState || expectedState === null) {
-      // Expected event — swallow it. DON'T clear suppression — keep
-      // absorbing matching events until the safety timeout clears it.
+      // Seeked events (null): single-shot — consume one and clear so
+      // the next user seek goes through immediately.
+      // Play/pause events: time-window — absorb all matching events for
+      // the safety timeout duration (DRM fires multiple transitions).
+      if (expectedState === null) {
+        suppressUntilGen = 0;
+        expectedState = null;
+        if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
+      }
       return true;
     }
     // Non-matching event (e.g. user quickly paused while we expected "playing")
