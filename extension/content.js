@@ -478,13 +478,13 @@
 
   // Play/pause handlers DON'T check commandGuard — that's only for seek
   // echo prevention. Settling guard handles post-sync suppression.
+  // Only send play/pause if it CHANGES the expected state.
+  // Redundant events (site confirming what we already expect) are suppressed.
+  // This permanently filters site DRM/buffering transitions.
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced || isBuffering) return;
-    if (Date.now() < settlingUntil && expectedPlayState === State.PAUSED) {
-      _log("play SUPPRESSED (settling, server expects paused)");
-      return;
-    }
+    if (expectedPlayState === State.PLAYING) return; // redundant
     expectedPlayState = State.PLAYING;
     updateServerRef(hookedVideo.currentTime, State.PLAYING);
     if (port && hookedVideo) {
@@ -495,10 +495,7 @@
 
   function onVideoPause() {
     if (!synced || isBuffering) return;
-    if (Date.now() < settlingUntil && expectedPlayState === State.PLAYING) {
-      _log("pause SUPPRESSED (settling, server expects playing)");
-      return;
-    }
+    if (expectedPlayState === State.PAUSED) return; // redundant
     expectedPlayState = State.PAUSED;
     updateServerRef(hookedVideo.currentTime, State.PAUSED);
     if (port && hookedVideo) {
