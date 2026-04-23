@@ -20,7 +20,8 @@
   let followerMode = false;
   let followerStableTicks = 0;
   let _barPausedCount = 0;
-  let _lastCorrectionSeek = 0; // cooldown for correction hard seeks
+  let _lastCorrectionSeek = 0;
+  let _lastUserSeek = 0; // suppress correction seeks after user seeks
 
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
@@ -339,6 +340,7 @@
   function onVideoSeeked() {
     if (!synced || followerMode) return;
     if (shouldSuppress(null)) return;
+    _lastUserSeek = Date.now();
     if (port && hookedVideo) {
       port.postMessage({
         type: "video:seek",
@@ -475,8 +477,8 @@
         } else if (absDrift < 3.0) {
           const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
           hookedVideo.playbackRate = rate;
-        } else if (Date.now() - _lastCorrectionSeek > 5000) {
-          // Large drift — hard seek (max once per 5s to avoid spam)
+        } else if (Date.now() - _lastCorrectionSeek > 5000 && Date.now() - _lastUserSeek > 3000) {
+          // Large drift — hard seek (skip if user just seeked or cooldown active)
           _lastCorrectionSeek = Date.now();
           suppress("seeked");
           hookedVideo.currentTime = msg.expected_time;
