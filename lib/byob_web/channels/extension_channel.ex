@@ -263,6 +263,11 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:queue_ended, _data}, socket) do
+    push(socket, "queue:ended", %{})
+    {:noreply, socket}
+  end
+
   def handle_info({:video_changed, %{media_item: item} = data}, socket) do
     push(socket, "video:change", %{data | media_item: serialize_item(item)})
     {:noreply, socket}

@@ -274,14 +274,17 @@ function connectToRoom(roomId, serverUrl, token, username) {
     broadcastToContentScripts({ type: "byob:sync-tolerance", tolerance_ms: data.tolerance_ms, client_rtts: data.client_rtts });
   });
 
-  channel.on("autoplay:countdown", (data) => broadcastToContentScripts({
-    type: "autoplay:countdown",
-    duration_ms: data.duration_ms,
-  }));
+  let autoplayCountdownActive = false;
 
-  channel.on("autoplay:cancelled", () => broadcastToContentScripts({
-    type: "autoplay:cancelled",
-  }));
+  channel.on("autoplay:countdown", (data) => {
+    autoplayCountdownActive = true;
+    broadcastToContentScripts({ type: "autoplay:countdown", duration_ms: data.duration_ms });
+  });
+
+  channel.on("autoplay:cancelled", () => {
+    autoplayCountdownActive = false;
+    broadcastToContentScripts({ type: "autoplay:cancelled" });
+  });
 
   channel.on("ready:count", (data) => {
     lastReadyCount = { type: "byob:ready-count", ready: data.ready, has_tab: data.has_tab, total: data.total };
@@ -289,8 +292,17 @@ function connectToRoom(roomId, serverUrl, token, username) {
   });
 
   channel.on("video:change", (data) => {
-    // New video selected — content script doesn't need to do anything
-    // since the user navigates to the video themselves
+    if (autoplayCountdownActive) {
+      // Queue advanced after countdown — close extension tabs so user
+      // returns to byob.video to open the next video.
+      autoplayCountdownActive = false;
+      closeExtensionTabs();
+    }
+  });
+
+  channel.on("queue:ended", () => {
+    // No more videos — close extension tabs
+    closeExtensionTabs();
   });
 
   socket.onOpen(() => console.log("[byob] WebSocket connected to", wsUrl));
@@ -337,6 +349,14 @@ function connectToRoom(roomId, serverUrl, token, username) {
     .receive("error", (resp) => {
       console.error("[byob] Failed to join room", roomId, resp);
     });
+}
+
+function closeExtensionTabs() {
+  for (const entry of [...ports]) {
+    if (entry.tabId != null) {
+      try { chrome.tabs.remove(entry.tabId); } catch (_) {}
+    }
+  }
 }
 
 // NTP-style clock sync — burst of 5 pings, take median offset
