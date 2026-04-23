@@ -428,14 +428,27 @@
   let _postSeekSuppressUntil = 0; // absorb DRM play/pause noise during seek
   let _drmPauseTimer = null; // debounced pause for DRM sites
   let _programmaticSeek = false; // true while we're doing a seek from a command
+  // Time-based window during which any seeking/seeked event is treated as
+  // programmatic (not user-initiated) and suppressed. More robust than the
+  // single-gen suppress() for cases like CMD:play's double seek (target + kick)
+  // where the single suppression gets consumed by the play event first.
+  let _programmaticSeekUntil = 0;
   const _isDrmSite = /crunchyroll\.com|funimation\.com|hulu\.com|netflix\.com|disneyplus\.com|peacocktv\.com|paramountplus\.com|hbomax\.com|max\.com/i.test(window.location.hostname);
+
+  function markProgrammaticSeek(windowMs = 1500) {
+    const until = Date.now() + windowMs;
+    if (until > _programmaticSeekUntil) _programmaticSeekUntil = until;
+  }
+  function isProgrammaticSeekActive() {
+    return Date.now() < _programmaticSeekUntil;
+  }
 
   function onVideoSeeking() {
     if (!synced || followerMode) {
       _log("onVideoSeeking SKIP synced=", synced, "follower=", followerMode);
       return;
     }
-    if (_programmaticSeek) {
+    if (_programmaticSeek || isProgrammaticSeekActive()) {
       _log("onVideoSeeking SKIP (programmatic) pos=", hookedVideo?.currentTime);
       return;
     }
@@ -455,6 +468,10 @@
 
     if (!synced || followerMode) {
       _log("onVideoSeeked SKIP synced=", synced, "follower=", followerMode);
+      return;
+    }
+    if (isProgrammaticSeekActive()) {
+      _log("onVideoSeeked SUPPRESSED (programmatic) pos=", hookedVideo?.currentTime);
       return;
     }
     if (shouldSuppress(null)) {
@@ -558,6 +575,7 @@
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
 
     suppress("paused");
+    markProgrammaticSeek();
     _programmaticSeek = true;
     try { hookedVideo.pause(); } catch (_) {}
     try { hookedVideo.currentTime = target; } catch (_) {}
@@ -566,7 +584,7 @@
     setTimeout(() => {
       if (!hookedVideo || !synced) { _recoveryInProgress = false; return; }
       suppress("playing");
-      suppress(null);
+      markProgrammaticSeek();
       _programmaticSeek = true;
       const p = hookedVideo.play();
       _programmaticSeek = false;
@@ -600,10 +618,20 @@
     if (!hookedVideo) return;
     const wasPlaying = !hookedVideo.paused;
 
+    // Same-position seek is a no-op; don't pause the pipeline for it.
+    // Prevents spurious kick-seek echoes from causing pause-seek-play flip-flops.
+    if (Math.abs(hookedVideo.currentTime - targetPos) < 0.1) {
+      if (shouldPlay && !wasPlaying) {
+        suppress("playing");
+        hookedVideo.play().catch(() => {});
+      }
+      return;
+    }
+
     if (!wasPlaying) {
       // Paused → seek is safe. Optionally play.
       if (shouldPlay) suppress("playing");
-      suppress(null);
+      markProgrammaticSeek();
       _programmaticSeek = true;
       hookedVideo.currentTime = targetPos;
       if (shouldPlay) hookedVideo.play().catch(() => {});
@@ -617,7 +645,7 @@
     try { hookedVideo.pause(); } catch (_) {}
     _programmaticSeek = false;
 
-    suppress(null);
+    markProgrammaticSeek();
     let resumed = false;
     let resumeTimer = null;
     const resume = () => {
@@ -792,7 +820,7 @@
         } else if (Date.now() - _lastCorrectionSeek > 5000) {
           _log("correction: HARD SEEK drift=", drift.toFixed(1), "from=", hookedVideo.currentTime.toFixed(1), "to=", msg.expected_time.toFixed(1));
           _lastCorrectionSeek = Date.now();
-          suppress(null);
+          markProgrammaticSeek();
           _programmaticSeek = true;
           hookedVideo.currentTime = msg.expected_time;
           _programmaticSeek = false;
@@ -862,6 +890,15 @@
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         // Clear pending seek — server command overrides any local seek
         _pendingSeekPos = null;
+        // No-op early return: already playing at the right position. Common
+        // when this tab originated the play — server echoes CMD:play back.
+        // Without this we'd do a kick-seek that echoes as video:seek and
+        // cascades into drmSafeSeek pause-seek-plays across all tabs.
+        if (!hookedVideo.paused && msg.position != null
+            && Math.abs(hookedVideo.currentTime - msg.position) < 0.1) {
+          _log("CMD:play no-op (already playing at pos)");
+          break;
+        }
         // DRM + playing + needs to reposition → pause-seek-play or MSE wedges.
         if (_isDrmSite && !hookedVideo.paused && msg.position != null
             && Math.abs(hookedVideo.currentTime - msg.position) > 0.1) {
@@ -870,7 +907,7 @@
           break;
         }
         suppress("playing");
-        suppress(null); // suppress seeked echo from position set
+        markProgrammaticSeek();
         _programmaticSeek = true;
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.play().then(() => {
@@ -891,7 +928,16 @@
       case "command:pause":
         _log("CMD:pause pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
         _pendingSeekPos = null;
+        // No-op early return: already paused at the right position. Without
+        // this, the currentTime= assignment on DRM fires a spurious seeked
+        // event that echoes as video:seek back to the server.
+        if (hookedVideo.paused && msg.position != null
+            && Math.abs(hookedVideo.currentTime - msg.position) < 0.1) {
+          _log("CMD:pause no-op (already paused at pos)");
+          break;
+        }
         suppress("paused");
+        markProgrammaticSeek();
         _programmaticSeek = true;
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         _programmaticSeek = false;
@@ -911,13 +957,20 @@
         _log("CMD:seek pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
         // Clear pending seek — server command overrides any local seek we were waiting on
         _pendingSeekPos = null;
+        // No-op early return: already at the right position. Prevents the
+        // echo cascade where a spurious seek emits from e.g. a kick seek and
+        // returns as CMD:seek to all clients.
+        if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) < 0.1) {
+          _log("CMD:seek no-op (already at pos)");
+          break;
+        }
         // DRM + playing → pause-seek-play to avoid wedging MSE pipeline.
         if (_isDrmSite && !hookedVideo.paused) {
           _log("CMD:seek DRM pause-seek-play to", msg.position);
           drmSafeSeek(msg.position, true);
           break;
         }
-        suppress(null);
+        markProgrammaticSeek();
         _programmaticSeek = true;
         hookedVideo.currentTime = msg.position;
         _programmaticSeek = false;

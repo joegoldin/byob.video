@@ -2,6 +2,20 @@
 
 ---
 
+# v5.0.9
+
+### Fix echo cascade: play/pause/seek no longer bounces between clients
+
+The root cause of "play/pause only affects one tab" and the visible pause→seek→play flip-flops: every programmatic `currentTime = X` assignment on Crunchyroll fires a `seeked` event, and the single-gen `suppress(null)` was getting consumed by the (separately-suppressed) `play` event before the seeked arrived. The `video:seek` echoed back to the server and cascaded into `drmSafeSeek` pause-seek-play on every other client.
+
+- **New `markProgrammaticSeek()` / `isProgrammaticSeekActive()`:** time-based window that absorbs `seeking`/`seeked` events independently of the single-gen play/pause suppression. Robust against event ordering (play may fire before seeked).
+- **Replaced `suppress(null)` with `markProgrammaticSeek()`** in `CMD:play`, `CMD:pause`, `CMD:seek`, `drmSafeSeek`, `tryStallRecovery`, and the drift correction hard seek.
+- **No-op early returns** in `CMD:play`, `CMD:pause`, `CMD:seek` when state+position already match (|Δpos| < 0.1s). Prevents the self-echo from the server's broadcast-to-all behaviour from re-running the seek+play pipeline on the originating tab.
+- **`drmSafeSeek` early return for same-position seeks.** The CMD:play kick seek was previously cascading here and pausing both tabs for a no-op seek, producing the user-visible "my video paused briefly when I clicked play" flip-flop.
+- **`CMD:pause` now also sets `markProgrammaticSeek`.** Previously it was missing seek suppression entirely, so the `currentTime = pos` assignment during a pause command on DRM echoed as `video:seek` → cascaded.
+
+---
+
 # v5.0.8
 
 ### DRM: pause-seek-play pattern for remote commands (fixes Crunchyroll wedges)
