@@ -498,19 +498,12 @@
   }
 
   function onVideoEnded() {
-    if (!synced) return;
-    const dur = hookedVideo?.duration;
-    const pos = hookedVideo?.currentTime || 0;
-    // Guard: duration must be a valid finite number > 60s, and playback
-    // must be past 90%. This prevents false endings from:
-    // - NaN duration (metadata not loaded — NaN < 60 is false in JS!)
-    // - Infinity duration (live streams)
-    // - Short clips / ads (< 60s)
-    // - Video element swaps (pos near 0)
-    if (!dur || !isFinite(dur) || dur < 60 || pos < dur * 0.9) return;
-    if (port) {
-      port.postMessage({ type: Msg.VIDEO_ENDED });
-    }
+    // Disabled: third-party sites fire spurious "ended" events (video
+    // element swaps, ads, previews, DRM transitions) that corrupt room
+    // state. Queue advancement for extension-watched videos should be
+    // triggered from the main byob.video site instead.
+    // TODO: re-enable with reliable ended detection (e.g. server-side
+    // position tracking confirming playback reached known duration).
   }
 
   // --- Reconcile loop ---
