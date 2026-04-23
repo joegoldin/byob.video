@@ -569,6 +569,9 @@
   let _stallTicks = 0;
 
   // Returns "buffering" if in buffering state, null otherwise.
+  // Buffering is LOCAL ONLY — doesn't pause the server. The buffering
+  // client shows an overlay and skips drift correction. When it catches
+  // up, drift correction resumes naturally.
   function checkStall(localPosition) {
     const posAdvance = _lastReconcilePos !== null ? (localPosition - _lastReconcilePos) : 1;
     if (posAdvance < 0.05) {
@@ -577,16 +580,12 @@
         isBuffering = true;
         showBufferingOverlay();
         updateSyncBarStatus(SyncStatus.BUFFERING);
-        _log("reconcile: buffering — pausing server");
+        _log("reconcile: buffering (local only)");
         if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
-        if (synced && port && expectedPlayState === State.PLAYING) {
-          port.postMessage({ type: Msg.VIDEO_PAUSE, position: localPosition });
-          expectedPlayState = State.PAUSED;
-          updateServerRef(localPosition, State.PAUSED);
-        }
       }
       if (isBuffering) {
         if (_stallTicks >= 20) {
+          // After 10s, accept the site's position (it may have seeked elsewhere)
           _log("reconcile: buffering timeout, accepting pos=", localPosition);
           updateServerRef(localPosition, expectedPlayState);
           if (synced && port) port.postMessage({ type: Msg.VIDEO_SEEK, position: localPosition });
@@ -604,16 +603,11 @@
         if (_stallTicks <= 0) {
           isBuffering = false;
           hideBufferingOverlay();
-          _log("reconcile: buffering cleared — resuming server");
+          _log("reconcile: buffering cleared");
           if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: localPosition, duration: hookedVideo.duration || 0, playing: true });
-          if (synced && port && expectedPlayState === State.PAUSED) {
-            expectedPlayState = State.PLAYING;
-            updateServerRef(localPosition, State.PLAYING);
-            port.postMessage({ type: Msg.VIDEO_PLAY, position: localPosition });
-          }
           updateSyncBarStatus(SyncStatus.PLAYING);
         } else {
-          return "buffering"; // still in cooldown
+          return "buffering";
         }
       } else {
         _stallTicks = 0;
