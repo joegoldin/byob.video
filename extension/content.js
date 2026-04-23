@@ -555,7 +555,61 @@
   // for keeping the client in sync — commandGuard only prevents echoes.
   let _playMismatchSince = null;
   let _lastReconcilePos = null;
-  let _stallTicks = 0; // consecutive ticks with no position change
+  let _stallTicks = 0;
+
+  // Returns "buffering" if in buffering state, null otherwise.
+  function checkStall(localPosition) {
+    const posAdvance = _lastReconcilePos !== null ? (localPosition - _lastReconcilePos) : 1;
+    if (posAdvance < 0.05) {
+      _stallTicks++;
+      if (_stallTicks >= 3 && !isBuffering) {
+        isBuffering = true;
+        showBufferingOverlay();
+        updateSyncBarStatus(SyncStatus.BUFFERING);
+        _log("reconcile: buffering — pausing server");
+        if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
+        if (synced && port && expectedPlayState === State.PLAYING) {
+          port.postMessage({ type: Msg.VIDEO_PAUSE, position: localPosition });
+          expectedPlayState = State.PAUSED;
+          updateServerRef(localPosition, State.PAUSED);
+        }
+      }
+      if (isBuffering) {
+        if (_stallTicks >= 20) {
+          _log("reconcile: buffering timeout, accepting pos=", localPosition);
+          updateServerRef(localPosition, expectedPlayState);
+          if (synced && port) port.postMessage({ type: Msg.VIDEO_SEEK, position: localPosition });
+          isBuffering = false;
+          hideBufferingOverlay();
+          updateSyncBarStatus(expectedPlayState === State.PLAYING ? SyncStatus.PLAYING : SyncStatus.PAUSED);
+          _stallTicks = 0;
+          return null;
+        }
+        return "buffering";
+      }
+    } else {
+      if (isBuffering) {
+        _stallTicks = Math.max(0, _stallTicks - 1);
+        if (_stallTicks <= 0) {
+          isBuffering = false;
+          hideBufferingOverlay();
+          _log("reconcile: buffering cleared — resuming server");
+          if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: localPosition, duration: hookedVideo.duration || 0, playing: true });
+          if (synced && port && expectedPlayState === State.PAUSED) {
+            expectedPlayState = State.PLAYING;
+            updateServerRef(localPosition, State.PLAYING);
+            port.postMessage({ type: Msg.VIDEO_PLAY, position: localPosition });
+          }
+          updateSyncBarStatus(SyncStatus.PLAYING);
+        } else {
+          return "buffering"; // still in cooldown
+        }
+      } else {
+        _stallTicks = 0;
+      }
+    }
+    return null;
+  }
 
   function startReconcile() {
     if (reconcileInterval) return;
@@ -611,15 +665,19 @@
         if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: actual === State.PLAYING });
       }
 
-      // Don't do any position correction until clock sync is established.
-      // Without it, Date.now() (epoch ~1.7T) vs server monotonic (~millions)
-      // produces billions of seconds of fake elapsed time → seeks past end.
-      if (!clockSynced) return;
-
       const recentSeek = (now - lastSeekAt) < 5000;
 
+      // --- Stall/buffering detection (runs even before clock sync) ---
+      if (serverRef.playState === State.PLAYING && actual === State.PLAYING) {
+        const lp = hookedVideo.currentTime;
+        const stallResult = checkStall(lp);
+        _lastReconcilePos = lp;
+        if (stallResult === "buffering") return; // in buffering, skip drift
+      }
+
+      if (!clockSynced) return;
+
       // --- Paused position correction ---
-      // If both server and client are paused, ensure position matches
       if (serverRef.playState === State.PAUSED && actual === State.PAUSED) {
         const posDrift = Math.abs(hookedVideo.currentTime - serverRef.position);
         if (posDrift > 1.0 && !recentSeek) {
@@ -636,71 +694,6 @@
       if (serverRef.playState !== State.PLAYING || actual !== State.PLAYING) return;
 
       const localPosition = hookedVideo.currentTime;
-
-      // Stall detection: if position hasn't advanced for 3+ consecutive
-      // ticks (1.5s), video is buffering. Single-tick stalls are normal
-      // during playback and should not trigger buffering.
-      // Stall = position essentially frozen (<0.05s advance in 500ms tick).
-      // Require 3 frozen ticks (1.5s) to enter buffering, and stay in
-      // buffering for at least 6 ticks (3s) of real advancement to exit.
-      const posAdvance = _lastReconcilePos !== null ? (localPosition - _lastReconcilePos) : 1;
-      if (posAdvance < 0.05) {
-        _stallTicks++;
-        if (_stallTicks >= 3 && !isBuffering) {
-          isBuffering = true;
-          showBufferingOverlay();
-          updateSyncBarStatus(SyncStatus.BUFFERING);
-          _log("reconcile: buffering — pausing server");
-          if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
-          // Pause the server so nobody advances past buffered content
-          if (synced && port && expectedPlayState === State.PLAYING) {
-            port.postMessage({ type: Msg.VIDEO_PAUSE, position: localPosition });
-            expectedPlayState = State.PAUSED;
-            updateServerRef(localPosition, State.PAUSED);
-          }
-        }
-        if (isBuffering) {
-          // After 10s of buffering (20 ticks), accept the site's position
-          // and update the server. The site may have seeked somewhere else.
-          if (_stallTicks >= 20) {
-            _log("reconcile: buffering timeout, accepting pos=", localPosition);
-            updateServerRef(localPosition, expectedPlayState);
-            if (synced && port) {
-              port.postMessage({ type: Msg.VIDEO_SEEK, position: localPosition });
-            }
-            isBuffering = false;
-            hideBufferingOverlay();
-            updateSyncBarStatus(expectedPlayState === State.PLAYING ? SyncStatus.PLAYING : SyncStatus.PAUSED);
-            _stallTicks = 0;
-          }
-          _lastReconcilePos = localPosition;
-          return;
-        }
-      } else {
-        if (isBuffering) {
-          // Require 6 good ticks (3s) of advancement before clearing buffering
-          _stallTicks = Math.max(0, _stallTicks - 1);
-          if (_stallTicks <= 0) {
-            isBuffering = false;
-            hideBufferingOverlay();
-            _log("reconcile: buffering cleared — resuming server");
-            if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: localPosition, duration: hookedVideo.duration || 0, playing: true });
-            // Resume server playback from current position
-            if (synced && port && expectedPlayState === State.PAUSED) {
-              expectedPlayState = State.PLAYING;
-              updateServerRef(localPosition, State.PLAYING);
-              port.postMessage({ type: Msg.VIDEO_PLAY, position: localPosition });
-            }
-            updateSyncBarStatus(SyncStatus.PLAYING);
-          } else {
-            _lastReconcilePos = localPosition;
-            return; // Still in buffering cooldown
-          }
-        } else {
-          _stallTicks = 0;
-        }
-      }
-      _lastReconcilePos = localPosition;
 
       // Use synced clock: serverMonotonic ≈ Date.now() + clockOffset
       const serverNow = now + clockOffset;
