@@ -476,14 +476,13 @@
   // After settling, all events go through normally.
   let settlingUntil = 0;
 
+  // Play/pause handlers DON'T check commandGuard — that's only for seek
+  // echo prevention. Settling guard handles post-sync suppression.
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced || isBuffering) return;
-    // Play/pause override any active commandGuard — they're new user intent
-    if (commandGuard) { clearTimeout(commandGuard); commandGuard = null; }
-    // During settling, suppress plays that contradict server state
     if (Date.now() < settlingUntil && expectedPlayState === State.PAUSED) {
-      _log("play SUPPRESSED (settling after sync, server expects paused)");
+      _log("play SUPPRESSED (settling, server expects paused)");
       return;
     }
     expectedPlayState = State.PLAYING;
@@ -491,16 +490,13 @@
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
     }
-    if (commandGuard) clearTimeout(commandGuard);
-    commandGuard = setTimeout(() => { commandGuard = null; }, 300);
     _log("play →server", hookedVideo.currentTime);
   }
 
   function onVideoPause() {
     if (!synced || isBuffering) return;
-    if (commandGuard) { clearTimeout(commandGuard); commandGuard = null; }
     if (Date.now() < settlingUntil && expectedPlayState === State.PLAYING) {
-      _log("pause SUPPRESSED (settling after sync, server expects playing)");
+      _log("pause SUPPRESSED (settling, server expects playing)");
       return;
     }
     expectedPlayState = State.PAUSED;
@@ -508,8 +504,6 @@
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_PAUSE, position: hookedVideo.currentTime });
     }
-    if (commandGuard) clearTimeout(commandGuard);
-    commandGuard = setTimeout(() => { commandGuard = null; }, 300);
     _log("pause →server", hookedVideo.currentTime);
   }
 
@@ -685,16 +679,16 @@
         if (hookedVideo.playbackRate !== 1.0) {
           hookedVideo.playbackRate = 1.0;
         }
-      } else if (absDrift > 5.0) {
+      } else if (absDrift > 5.0 && !recentSeek) {
+        // Hard seek — but NOT if user recently seeked. Their seek updated
+        // serverRef and the next correction will arrive with the right pos.
         _log(`reconcile: HARD SEEK drift=${drift.toFixed(1)}s expected=${expectedPosition.toFixed(1)} local=${localPosition.toFixed(1)}`);
         lastSeekAt = now;
-        // Fixed 2s guard for hard seeks — prevents site snap-back from
-        // sending a seeked event that overwrites the server position.
         if (commandGuard) clearTimeout(commandGuard);
         commandGuard = setTimeout(() => { commandGuard = null; }, 2000);
         hookedVideo.currentTime = expectedPosition;
         hookedVideo.playbackRate = 1.0;
-      } else {
+      } else if (absDrift > deadZone) {
         // Medium drift — proportional rate adjustment
         // Negative drift (behind) → speed up; positive (ahead) → slow down
         const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
