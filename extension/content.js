@@ -523,7 +523,8 @@
     lastSeekAt = Date.now();
     _stallTicks = 0;
     _lastReconcilePos = null;
-    _hardSeekFailures = 0; // user seek works — reset failure counter
+    _hardSeekFailures = 0;
+    _seekTarget = { position: hookedVideo.currentTime, at: Date.now() };
     updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
@@ -568,7 +569,12 @@
   // for keeping the client in sync — commandGuard only prevents echoes.
   let _playMismatchSince = null;
   let _lastReconcilePos = null;
-  let _hardSeekFailures = 0; // consecutive hard seeks where site didn't honor the position
+  let _hardSeekFailures = 0;
+
+  // Seek buffering: after a seek command, wait for video to arrive at target.
+  // If it hasn't arrived after 1.5s → pause server. When it arrives → resume.
+  let _seekTarget = null; // { position, at: Date.now() }
+  let _seekBufferingPaused = false; // true if we've paused the server waiting for seek
   let _stallTicks = 0;
 
   // Returns "buffering" if in buffering state, null otherwise.
@@ -594,14 +600,8 @@
         _log("reconcile: buffering (local overlay)");
         if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
       }
-      if (_stallTicks >= 10 && isBuffering && !_bufferingPause) {
-        // Genuinely stuck for 5s — pause server
-        _bufferingPause = true;
-        _log("reconcile: buffering 5s — pausing server");
-        if (synced && port && !isSettling()) {
-          port.postMessage({ type: Msg.VIDEO_PAUSE, position: localPosition });
-        }
-      }
+      // Stall-based buffering is local overlay only.
+      // Server pausing is handled by seek buffering (_seekTarget) above.
       if (isBuffering) {
         if (_stallTicks >= 20) {
           _log("reconcile: buffering timeout, accepting pos=", localPosition);
@@ -718,13 +718,57 @@
 
       const recentSeek = (now - lastSeekAt) < 5000;
 
-      // --- Stall/buffering detection (runs even before clock sync) ---
-      // Suppress after seeks — video needs time to buffer at new position.
-      if (serverRef.playState === State.PLAYING && actual === State.PLAYING && !recentSeek) {
-        const lp = hookedVideo.currentTime;
-        const stallResult = checkStall(lp);
-        _lastReconcilePos = lp;
-        if (stallResult === "buffering") return; // in buffering, skip drift
+      // --- Seek buffering: we told the client to seek, waiting for it to arrive ---
+      if (_seekTarget && !isSettling()) {
+        const seekAge = now - _seekTarget.at;
+        const seekDist = Math.abs(hookedVideo.currentTime - _seekTarget.position);
+
+        if (seekDist < 3) {
+          // Arrived at target — clear seek buffering
+          if (_seekBufferingPaused) {
+            _log("seek buffering cleared — resuming server from pos=", hookedVideo.currentTime.toFixed(1));
+            _seekBufferingPaused = false;
+            isBuffering = false;
+            hideBufferingOverlay();
+            expectedPlayState = State.PLAYING;
+            updateServerRef(hookedVideo.currentTime, State.PLAYING);
+            if (synced && port) {
+              port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
+            }
+            updateSyncBarStatus(SyncStatus.PLAYING);
+            if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: true });
+          }
+          _seekTarget = null;
+        } else if (seekAge > 1500 && !_seekBufferingPaused) {
+          // 1.5s and still not at target — pause server, show overlay
+          _log("seek buffering — pausing server (target=", _seekTarget.position.toFixed(1), "local=", hookedVideo.currentTime.toFixed(1), ")");
+          _seekBufferingPaused = true;
+          isBuffering = true;
+          showBufferingOverlay();
+          updateSyncBarStatus(SyncStatus.BUFFERING);
+          if (synced && port) {
+            port.postMessage({ type: Msg.VIDEO_PAUSE, position: _seekTarget.position });
+            port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: false });
+          }
+          expectedPlayState = State.PAUSED;
+          updateServerRef(_seekTarget.position, State.PAUSED);
+        } else if (seekAge > 15000) {
+          // 15s timeout — give up, accept site's position
+          _log("seek buffering timeout — accepting pos=", hookedVideo.currentTime.toFixed(1));
+          _seekTarget = null;
+          _seekBufferingPaused = false;
+          isBuffering = false;
+          hideBufferingOverlay();
+          updateServerRef(hookedVideo.currentTime, State.PLAYING);
+          if (synced && port) {
+            port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
+            port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
+          }
+          expectedPlayState = State.PLAYING;
+          updateSyncBarStatus(SyncStatus.PLAYING);
+        }
+
+        if (_seekBufferingPaused) return; // skip drift correction while seek-buffering
       }
 
       if (!clockSynced) return;
@@ -1076,8 +1120,8 @@
       case Msg.COMMAND_SEEK:
         _log("cmd:seek", "pos=", msg.position, "server_time=", msg.server_time);
         lastSeekAt = Date.now();
+        _seekTarget = { position: msg.position, at: Date.now() };
         updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time);
-        // Fixed 1s guard for seeks (adaptive guard checks play state, not position)
         if (commandGuard) clearTimeout(commandGuard);
         commandGuard = setTimeout(() => { commandGuard = null; }, 1000);
         hookedVideo.currentTime = msg.position;
