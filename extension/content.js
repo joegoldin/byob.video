@@ -478,30 +478,42 @@
 
   // Play/pause handlers DON'T check commandGuard — that's only for seek
   // echo prevention. Settling guard handles post-sync suppression.
-  // Only send play/pause if it CHANGES the expected state.
-  // Redundant events (site confirming what we already expect) are suppressed.
-  // This permanently filters site DRM/buffering transitions.
+  // Debounced play/pause — only sends if state is stable for 500ms.
+  // Sites that fight our commands (rapid play/pause toggles from DRM,
+  // buffering, ad transitions) cancel each other out.
+  let _pendingPlayPause = null;
+
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced || isBuffering) return;
-    if (expectedPlayState === State.PLAYING) return; // redundant
-    expectedPlayState = State.PLAYING;
-    updateServerRef(hookedVideo.currentTime, State.PLAYING);
-    if (port && hookedVideo) {
-      port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
-    }
-    _log("play →server", hookedVideo.currentTime);
+    if (expectedPlayState === State.PLAYING) return;
+    if (_pendingPlayPause) clearTimeout(_pendingPlayPause);
+    _pendingPlayPause = setTimeout(() => {
+      _pendingPlayPause = null;
+      if (!hookedVideo || hookedVideo.paused) return; // state changed during debounce
+      expectedPlayState = State.PLAYING;
+      updateServerRef(hookedVideo.currentTime, State.PLAYING);
+      if (port && hookedVideo) {
+        port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
+      }
+      _log("play →server", hookedVideo.currentTime);
+    }, 500);
   }
 
   function onVideoPause() {
     if (!synced || isBuffering) return;
-    if (expectedPlayState === State.PAUSED) return; // redundant
-    expectedPlayState = State.PAUSED;
-    updateServerRef(hookedVideo.currentTime, State.PAUSED);
-    if (port && hookedVideo) {
-      port.postMessage({ type: Msg.VIDEO_PAUSE, position: hookedVideo.currentTime });
-    }
-    _log("pause →server", hookedVideo.currentTime);
+    if (expectedPlayState === State.PAUSED) return;
+    if (_pendingPlayPause) clearTimeout(_pendingPlayPause);
+    _pendingPlayPause = setTimeout(() => {
+      _pendingPlayPause = null;
+      if (!hookedVideo || !hookedVideo.paused) return;
+      expectedPlayState = State.PAUSED;
+      updateServerRef(hookedVideo.currentTime, State.PAUSED);
+      if (port && hookedVideo) {
+        port.postMessage({ type: Msg.VIDEO_PAUSE, position: hookedVideo.currentTime });
+      }
+      _log("pause →server", hookedVideo.currentTime);
+    }, 500);
   }
 
   function onVideoSeeked() {
