@@ -499,13 +499,15 @@
 
   function onVideoEnded() {
     if (!synced) return;
-    // Only report ended for real content — ignore ads and short clips.
-    // Ads are typically <60s; real videos are minutes+. Also require the
-    // video to have actually played past 90% to rule out false endings
-    // from video element swaps or mid-stream interruptions.
-    const dur = hookedVideo?.duration || 0;
+    const dur = hookedVideo?.duration;
     const pos = hookedVideo?.currentTime || 0;
-    if (dur < 60 || pos < dur * 0.9) return;
+    // Guard: duration must be a valid finite number > 60s, and playback
+    // must be past 90%. This prevents false endings from:
+    // - NaN duration (metadata not loaded — NaN < 60 is false in JS!)
+    // - Infinity duration (live streams)
+    // - Short clips / ads (< 60s)
+    // - Video element swaps (pos near 0)
+    if (!dur || !isFinite(dur) || dur < 60 || pos < dur * 0.9) return;
     if (port) {
       port.postMessage({ type: Msg.VIDEO_ENDED });
     }
