@@ -36,6 +36,8 @@ defmodule Byob.RoomServer do
     event_counts: %{},
     rate_limit_ref: nil,
     activity_log: [],
+    client_rtts: %{},
+    sync_tolerance_ms: 250,
     pending_advance_ref: nil,
     round: nil,
     round_expire_ref: nil,
@@ -87,6 +89,10 @@ defmodule Byob.RoomServer do
 
   def get_state(pid) do
     GenServer.call(pid, :get_state)
+  end
+
+  def report_rtt(pid, user_id, rtt_ms) do
+    GenServer.cast(pid, {:report_rtt, user_id, rtt_ms})
   end
 
   def play(pid, user_id, position) do
@@ -382,6 +388,9 @@ defmodule Byob.RoomServer do
       else
         state
       end
+
+    # Clean up RTT data for departing user
+    state = %{state | client_rtts: Map.delete(state.client_rtts, user_id)}
 
     # Mark as disconnected instead of removing
     state =
@@ -874,6 +883,31 @@ defmodule Byob.RoomServer do
   end
 
   @impl true
+  def handle_cast({:report_rtt, user_id, rtt_ms}, state) when is_number(rtt_ms) do
+    client_rtts = Map.put(state.client_rtts, user_id, rtt_ms)
+    max_rtt = client_rtts |> Map.values() |> Enum.max(fn -> 0 end)
+    new_tolerance = if max_rtt > 250, do: 500, else: 250
+    tolerance_changed = new_tolerance != state.sync_tolerance_ms
+
+    state = %{state | client_rtts: client_rtts, sync_tolerance_ms: new_tolerance}
+
+    if tolerance_changed do
+      broadcast(state, {:sync_tolerance, %{tolerance_ms: new_tolerance, client_rtts: client_rtts}})
+    end
+
+    # Always broadcast sync stats for the "details for nerds" panel
+    broadcast(state, {:sync_stats, %{
+      tolerance_ms: new_tolerance,
+      client_rtts: client_rtts,
+      correction_interval_ms: 3000
+    }})
+
+    {:noreply, state}
+  end
+
+  def handle_cast({:report_rtt, _user_id, _rtt_ms}, state), do: {:noreply, state}
+
+  @impl true
   def handle_info(:check_empty, state) do
     connected_count = Enum.count(state.users, fn {_, u} -> u.connected end)
 
@@ -1009,7 +1043,7 @@ defmodule Byob.RoomServer do
     now = System.monotonic_time(:millisecond)
     position = current_position(state)
     broadcast(state, {:sync_correction, %{expected_time: position, server_time: now}})
-    state = %{state | sync_correction_ref: Process.send_after(self(), :sync_correction, 5000)}
+    state = %{state | sync_correction_ref: Process.send_after(self(), :sync_correction, 3000)}
     {:noreply, state}
   end
 
@@ -1387,7 +1421,7 @@ defmodule Byob.RoomServer do
 
   defp schedule_sync_correction(state) do
     state = cancel_sync_correction(state)
-    ref = Process.send_after(self(), :sync_correction, 5000)
+    ref = Process.send_after(self(), :sync_correction, 3000)
     %{state | sync_correction_ref: ref}
   end
 

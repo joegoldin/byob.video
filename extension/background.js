@@ -8,6 +8,9 @@ let currentRoomId = null;
 let lastReadyCount = null;
 let currentServerUrl = null;
 let initialRoomState = null;
+let clockOffset = 0; // ms offset: serverMonotonic ≈ Date.now() + clockOffset
+let clockRtt = 0; // last measured RTT in ms
+let clockSyncTimer = null;
 
 // Echo prevention: track which port originated the last play/pause/seek
 // so we can skip relaying the server's echo back to that port.
@@ -219,21 +222,27 @@ function connectToRoom(roomId, serverUrl, token, username) {
   channel.on("sync:play", (data) => broadcastExceptOrigin({
     type: "command:play",
     position: data.time,
+    server_time: data.server_time,
   }, "play"));
 
   channel.on("sync:pause", (data) => broadcastExceptOrigin({
     type: "command:pause",
     position: data.time,
+    server_time: data.server_time,
   }, "pause"));
 
   channel.on("sync:seek", (data) => broadcastExceptOrigin({
     type: "command:seek",
     position: data.time,
+    server_time: data.server_time,
   }, "seek"));
 
   channel.on("sync:correction", (data) => {
-    // Could implement drift correction in extension too
-    // For v0, just relay seek if drift is large
+    broadcastToContentScripts({
+      type: "sync:correction",
+      expected_time: data.expected_time,
+      server_time: data.server_time,
+    });
   });
 
   channel.on("sync:buffering", (data) => broadcastToContentScripts({
@@ -241,6 +250,10 @@ function connectToRoom(roomId, serverUrl, token, username) {
     user_id: data.user_id,
     buffering: data.buffering,
   }));
+
+  channel.on("sync:tolerance", (data) => {
+    broadcastToContentScripts({ type: "byob:sync-tolerance", tolerance_ms: data.tolerance_ms, client_rtts: data.client_rtts });
+  });
 
   channel.on("autoplay:countdown", (data) => broadcastToContentScripts({
     type: "autoplay:countdown",
@@ -269,6 +282,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
     socket = null;
     currentRoomId = null;
     lastReadyCount = null;
+    stopClockSyncMaintenance();
     // Disconnect all ports — content scripts will reconnect with backoff
     for (const entry of [...ports]) {
       try { entry.port.disconnect(); } catch (_) {}
@@ -294,10 +308,60 @@ function connectToRoom(roomId, serverUrl, token, username) {
           channel.push("video:tab_opened", { tab_id: String(entry.tabId) });
         }
       }
+      // Start NTP clock sync burst + maintenance
+      doClockSync();
+      startClockSyncMaintenance();
     })
     .receive("error", (resp) => {
       console.error("[byob] Failed to join room", roomId, resp);
     });
+}
+
+// NTP-style clock sync — burst of 5 pings, take median offset
+function doClockSync() {
+  if (!channel) return;
+  const samples = [];
+  let remaining = 5;
+
+  function sendPing() {
+    const t1 = Date.now();
+    channel.push("sync:ping", { t1 }).receive("ok", (resp) => {
+      const t4 = Date.now();
+      const { t2, t3 } = resp;
+      const rtt = (t4 - t1) - (t3 - t2);
+      const offset = ((t2 - t1) + (t3 - t4)) / 2;
+      samples.push({ rtt, offset });
+
+      remaining--;
+      if (remaining > 0) {
+        setTimeout(sendPing, 100);
+      } else {
+        // Sort by RTT, take median for stability
+        samples.sort((a, b) => a.rtt - b.rtt);
+        const median = samples[Math.floor(samples.length / 2)];
+        clockOffset = median.offset;
+        clockRtt = median.rtt;
+        console.log(`[byob] Clock sync: offset=${clockOffset}ms, rtt=${clockRtt}ms`);
+
+        // Send to all content scripts
+        broadcastToContentScripts({ type: "byob:clock-sync", offset: clockOffset, rtt: clockRtt });
+        // Report RTT to server for room-wide tolerance computation
+        if (channel) channel.push("sync:rtt_report", { rtt: clockRtt });
+      }
+    });
+  }
+
+  sendPing();
+}
+
+function startClockSyncMaintenance() {
+  if (clockSyncTimer) clearInterval(clockSyncTimer);
+  // Re-sync every 30s for drift maintenance
+  clockSyncTimer = setInterval(() => doClockSync(), 30000);
+}
+
+function stopClockSyncMaintenance() {
+  if (clockSyncTimer) { clearInterval(clockSyncTimer); clockSyncTimer = null; }
 }
 
 // Listen for messages from content scripts (cross-origin safe)

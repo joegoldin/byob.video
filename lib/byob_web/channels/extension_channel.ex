@@ -171,6 +171,11 @@ defmodule ByobWeb.ExtensionChannel do
     {:reply, {:ok, %{t1: t1, t2: t2, t3: t3}}, socket}
   end
 
+  def handle_in("sync:rtt_report", %{"rtt" => rtt}, socket) when is_number(rtt) do
+    RoomServer.report_rtt(socket.assigns.room_pid, socket.assigns.user_id, rtt)
+    {:noreply, socket}
+  end
+
   def handle_in(_event, _payload, socket) do
     {:noreply, socket}
   end
@@ -238,6 +243,16 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   def handle_info({:users_updated, _users}, socket) do
+    {:noreply, socket}
+  end
+
+  def handle_info({:sync_tolerance, data}, socket) do
+    push(socket, "sync:tolerance", data)
+    {:noreply, socket}
+  end
+
+  def handle_info({:sync_stats, _data}, socket) do
+    # Stats are for the LiveView panel, not for extension clients
     {:noreply, socket}
   end
 

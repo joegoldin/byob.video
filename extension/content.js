@@ -47,6 +47,7 @@
     COMMAND_INITIAL_STATE: "command:initial-state",
     AUTOPLAY_COUNTDOWN: "autoplay:countdown",
     AUTOPLAY_CANCELLED: "autoplay:cancelled",
+    SYNC_CORRECTION: "sync:correction",
     // Window messages
     CLEAR_EXTERNAL: "byob:clear-external",
     OPEN_EXTERNAL: "byob:open-external",
@@ -151,8 +152,17 @@
   let timeReportInterval = null;
   let commandGuard = null; // brief echo prevention when executing a server command
   let expectedPlayState = null; // "playing" or "paused" — what the server wants
-  let stateCheckInterval = null;
-  let mismatchSince = null;
+  let reconcileInterval = null;
+
+  // Server reference state — updated from every command + periodic corrections.
+  // Used by reconcile loop to compute drift and correct position.
+  let serverRef = null; // { position, playState, serverTime }
+  let lastSeekAt = 0; // timestamp of last seek — widens dead zone briefly
+
+  // NTP clock sync — offset to convert Date.now() to server monotonic time
+  let clockOffset = 0; // serverMonotonic ≈ Date.now() + clockOffset
+  let clockRtt = 0;
+  let syncToleranceMs = 250; // room-wide dead zone — 250ms default, 500ms if high latency
 
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === Hosts.BYOB || window.location.hostname === Hosts.LOCALHOST) {
@@ -389,14 +399,6 @@
     timeReportInterval = setInterval(() => {
       if (!hookedVideo) return;
 
-      // Buffering is detected by resolveCommandGuard (state mismatch after command).
-      // Here we just clear buffering if the video caught up without the guard noticing.
-      if (isBuffering && !commandGuard) {
-        isBuffering = false;
-        hideBufferingOverlay();
-        if (synced) updateSyncBarStatus(hookedVideo.paused ? SyncStatus.PAUSED : SyncStatus.PLAYING);
-      }
-
       const msg = {
         type: Msg.VIDEO_STATE,
         position: hookedVideo.currentTime,
@@ -413,7 +415,7 @@
 
   function unhookVideo() {
     if (!hookedVideo) return;
-    stopStateCheck();
+    stopReconcile();
     hookedVideo.removeEventListener(Evt.PLAY, onVideoPlay);
     hookedVideo.removeEventListener(Evt.PAUSE, onVideoPause);
     hookedVideo.removeEventListener(Evt.SEEKED, onVideoSeeked);
@@ -433,12 +435,12 @@
     }
   }
 
-  // Event handlers — with suppression
+  // Event handlers — user-initiated actions sent to server
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced || commandGuard || isBuffering) return;
     expectedPlayState = State.PLAYING;
-    mismatchSince = null;
+    updateServerRef(hookedVideo.currentTime, State.PLAYING);
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
     }
@@ -447,7 +449,7 @@
   function onVideoPause() {
     if (!synced || commandGuard || isBuffering) return;
     expectedPlayState = State.PAUSED;
-    mismatchSince = null;
+    updateServerRef(hookedVideo.currentTime, State.PAUSED);
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_PAUSE, position: hookedVideo.currentTime });
     }
@@ -455,6 +457,7 @@
 
   function onVideoSeeked() {
     if (!synced || commandGuard) return;
+    lastSeekAt = Date.now();
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
     }
@@ -489,99 +492,146 @@
     }
   }
 
-  // State reconciliation — checks if actual video state matches expected
-  // server state. If mismatched for >1s, tries to correct. If play fails
-  // repeatedly, drops to needsGesture state.
-  function startStateCheck() {
-    if (stateCheckInterval) return; // already running
-    mismatchSince = null;
+  // --- Reconcile loop ---
+  // Every 500ms, compares local player state against server reference.
+  // Handles: play/pause mismatch, buffering detection, position drift,
+  // and paused position correction. This is the single source of truth
+  // for keeping the client in sync — commandGuard only prevents echoes.
+  let _playMismatchSince = null;
 
-    stateCheckInterval = setInterval(() => {
-      if (!hookedVideo || !synced || !expectedPlayState) return;
+  function startReconcile() {
+    if (reconcileInterval) return;
+    _playMismatchSince = null;
 
+    reconcileInterval = setInterval(() => {
+      if (!hookedVideo || !synced || !serverRef || commandGuard || needsGesture) return;
+
+      const now = Date.now();
       const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
 
-      if (actual !== expectedPlayState) {
-        if (!mismatchSince) {
-          mismatchSince = performance.now();
-        } else if (performance.now() - mismatchSince > 1000) {
-          // Mismatch persisted for 1s — try to correct
-          mismatchSince = null;
-
+      // --- Play/pause state reconciliation ---
+      if (actual !== expectedPlayState && expectedPlayState) {
+        if (!_playMismatchSince) {
+          _playMismatchSince = now;
+        } else if (now - _playMismatchSince > 1500) {
+          // Mismatch persisted — try to correct
           if (expectedPlayState === State.PLAYING) {
-            hookedVideo.play().then(() => {
-              // Worked — state will match on next tick
-            }).catch(() => {
-              // Play failed — need user gesture. Drop to gesture state
-              // so the user sees the toast and can click play
+            // Enter buffering if not already
+            if (!isBuffering) {
+              isBuffering = true;
+              showBufferingOverlay();
+              updateSyncBarStatus(SyncStatus.BUFFERING);
+              if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: false });
+            }
+            hookedVideo.play().catch(() => {
+              // Play failed — need user gesture
+              isBuffering = false;
+              hideBufferingOverlay();
               synced = false;
               needsGesture = true;
               expectedPlayState = null;
-              stopStateCheck();
+              serverRef = null;
+              stopReconcile();
               updateSyncBarStatus(SyncStatus.CLICKJOIN);
               showJoinToast(Copy.CLICK_PLAY_TOAST);
               waitForNativePlay();
             });
+            _playMismatchSince = now; // reset — give play() time to take effect
           } else {
             hookedVideo.pause();
+            _playMismatchSince = null;
           }
         }
-      } else {
-        mismatchSince = null;
+        return; // Don't drift-correct while play state is wrong
       }
-    }, 200);
-  }
+      _playMismatchSince = null;
 
-  function stopStateCheck() {
-    if (stateCheckInterval) {
-      clearInterval(stateCheckInterval);
-      stateCheckInterval = null;
-    }
-    mismatchSince = null;
-  }
-
-  // Adaptive command guard — prevents echoes from executing server commands.
-  // Starts with a 500ms minimum, then keeps checking if the video state
-  // matches expectedPlayState. If it doesn't match after 500ms, enters
-  // buffering state (shows overlay, reports to peers). Clears when state matches.
-  function startCommandGuard() {
-    if (commandGuard) clearTimeout(commandGuard);
-    commandGuard = setTimeout(() => resolveCommandGuard(), 500);
-  }
-
-  function resolveCommandGuard() {
-    if (!hookedVideo || !expectedPlayState) {
-      commandGuard = null;
-      return;
-    }
-
-    const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
-
-    if (actual === expectedPlayState) {
-      // State matches — release guard, clear any buffering
-      commandGuard = null;
+      // Clear buffering if we were buffering but state now matches
       if (isBuffering) {
         isBuffering = false;
         hideBufferingOverlay();
         updateSyncBarStatus(actual === State.PLAYING ? SyncStatus.PLAYING : SyncStatus.PAUSED);
-        // Notify server + top frame that buffering ended
-        if (synced && port) {
-          port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: actual === State.PLAYING });
-        }
+        if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: actual === State.PLAYING });
       }
-    } else {
-      // Still mismatched — video is buffering. Show overlay and keep checking.
-      if (!isBuffering) {
-        isBuffering = true;
-        showBufferingOverlay();
-        updateSyncBarStatus(SyncStatus.BUFFERING);
-        // Report buffering to server so other clients see it
-        if (synced && port) {
-          port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: hookedVideo.currentTime, duration: hookedVideo.duration || 0, playing: false });
+
+      const recentSeek = (now - lastSeekAt) < 5000;
+
+      // --- Paused position correction ---
+      // If both server and client are paused, ensure position matches
+      if (serverRef.playState === State.PAUSED && actual === State.PAUSED) {
+        const posDrift = Math.abs(hookedVideo.currentTime - serverRef.position);
+        if (posDrift > 1.0 && !recentSeek) {
+          lastSeekAt = now;
+          startCommandGuard();
+          hookedVideo.currentTime = serverRef.position;
+          console.log(`[byob] Paused position correction: drift=${posDrift.toFixed(1)}s`);
         }
+        return;
       }
-      commandGuard = setTimeout(() => resolveCommandGuard(), 200);
+
+      // --- Position drift correction (while playing) ---
+      if (serverRef.playState !== State.PLAYING || actual !== State.PLAYING) return;
+
+      // Use synced clock: serverMonotonic ≈ Date.now() + clockOffset
+      const serverNow = now + clockOffset;
+      const elapsed = (serverNow - serverRef.serverTime) / 1000;
+      const expectedPosition = serverRef.position + elapsed;
+      const localPosition = hookedVideo.currentTime;
+      const drift = localPosition - expectedPosition; // positive = ahead, negative = behind
+
+      // Dead zone from room tolerance. Wider after a recent seek to prevent bounce.
+      const deadZone = recentSeek ? 2.0 : (syncToleranceMs / 1000);
+      const absDrift = Math.abs(drift);
+
+      if (absDrift < deadZone) {
+        // Within dead zone — reset rate to normal
+        if (hookedVideo.playbackRate !== 1.0) {
+          hookedVideo.playbackRate = 1.0;
+        }
+      } else if (absDrift > 5.0) {
+        // Large drift — hard seek
+        lastSeekAt = now;
+        startCommandGuard();
+        hookedVideo.currentTime = expectedPosition;
+        hookedVideo.playbackRate = 1.0;
+        console.log(`[byob] Hard seek: drift=${drift.toFixed(1)}s, seeking to ${expectedPosition.toFixed(1)}`);
+      } else {
+        // Medium drift — proportional rate adjustment
+        // Negative drift (behind) → speed up; positive (ahead) → slow down
+        const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
+        hookedVideo.playbackRate = rate;
+      }
+    }, 500);
+  }
+
+  function stopReconcile() {
+    if (reconcileInterval) {
+      clearInterval(reconcileInterval);
+      reconcileInterval = null;
     }
+    _playMismatchSince = null;
+    if (hookedVideo && hookedVideo.playbackRate !== 1.0) {
+      hookedVideo.playbackRate = 1.0;
+    }
+  }
+
+  function updateServerRef(position, playState, serverTime) {
+    // serverTime is server monotonic ms. If not provided (user-initiated events),
+    // estimate it from current clock: serverMonotonic ≈ Date.now() + clockOffset
+    serverRef = {
+      position,
+      playState,
+      serverTime: serverTime ?? (Date.now() + clockOffset),
+    };
+  }
+
+  // Command guard — simple 500ms echo prevention after executing a server command.
+  // While active, outgoing play/pause/seek events are suppressed so the browser's
+  // response to our programmatic action doesn't echo back to the server.
+  // All state correction (play/pause, drift, buffering) is handled by the reconcile loop.
+  function startCommandGuard() {
+    if (commandGuard) clearTimeout(commandGuard);
+    commandGuard = setTimeout(() => { commandGuard = null; }, 500);
   }
 
   // Handle commands from service worker
@@ -643,6 +693,17 @@
       return;
     }
 
+    if (msg.type === "byob:clock-sync") {
+      clockOffset = msg.offset;
+      clockRtt = msg.rtt;
+      return;
+    }
+
+    if (msg.type === "byob:sync-tolerance") {
+      syncToleranceMs = msg.tolerance_ms;
+      return;
+    }
+
     if (msg.type === "byob:local-buffering" && window === window.top) {
       // Local client (in iframe) is buffering — show/hide overlay in top frame
       if (msg.buffering) {
@@ -698,6 +759,7 @@
         updateSyncBarStatus(hookedVideo.paused ? State.PAUSED : State.PLAYING);
         // Only send video:ready once, from the frame that has the video
         if (!wasAlreadySynced && port) port.postMessage({ type: Msg.VIDEO_READY });
+        startReconcile();
       }
       return;
     }
@@ -712,20 +774,30 @@
     // If we're waiting for a user gesture, ignore commands — they'll just fail.
     if (needsGesture) return;
 
+    // Ignore stale commands — server_time must be newer than what we have
+    if (msg.server_time != null && serverRef && msg.server_time <= serverRef.serverTime) {
+      if (msg.type !== Msg.SYNC_CORRECTION) {
+        console.log(`[byob] Ignoring stale ${msg.type}: server_time=${msg.server_time} <= ${serverRef.serverTime}`);
+        return;
+      }
+    }
+
     switch (msg.type) {
       case Msg.COMMAND_PLAY:
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         expectedPlayState = State.PLAYING;
+        updateServerRef(msg.position ?? hookedVideo.currentTime, State.PLAYING, msg.server_time);
         startCommandGuard();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         if (hookedVideo.paused) {
           hookedVideo.play().catch(() => {});
         }
-        startStateCheck();
+        startReconcile();
         break;
 
       case Msg.COMMAND_PAUSE:
         expectedPlayState = State.PAUSED;
+        updateServerRef(msg.position ?? hookedVideo.currentTime, State.PAUSED, msg.server_time);
         startCommandGuard();
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         hookedVideo.pause();
@@ -737,11 +809,22 @@
           }
         }, 200);
         setTimeout(() => { clearInterval(pauseEnforcer); pauseEnforcer = null; }, 2000);
+        startReconcile();
         break;
 
       case Msg.COMMAND_SEEK:
+        lastSeekAt = Date.now();
+        updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time);
         startCommandGuard();
         hookedVideo.currentTime = msg.position;
+        break;
+
+      case Msg.SYNC_CORRECTION:
+        // Server sends expected position every 3s — update reference for drift correction.
+        // Corrections always accepted (no staleness check — they're periodic refreshes).
+        if (msg.expected_time != null) {
+          updateServerRef(msg.expected_time, serverRef?.playState ?? expectedPlayState, msg.server_time);
+        }
         break;
 
     }
@@ -1111,6 +1194,8 @@
   function cleanup() {
     activateArgs = null; // prevent reconnection
     synced = false;
+    serverRef = null;
+    expectedPlayState = null;
     unhookVideo();
     const bar = document.getElementById(El.SYNC_BAR);
     if (bar) bar.remove();

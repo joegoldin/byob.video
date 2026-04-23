@@ -2,6 +2,40 @@
 
 ---
 
+# v4.1.0
+
+**Extension sync engine: NTP clock sync, reconcile loop, drift correction.**
+
+### Reconcile loop
+- **Single reconcile loop** replaces all prior correction logic (adaptive command guard, state check interval). Runs every 500ms and handles play/pause mismatch, buffering detection, position drift, and paused position correction in one place.
+- **Play/pause correction:** If video state disagrees with server for 1.5s, retries `play()` with buffering overlay. If play keeps failing (autoplay policy), drops to gesture state with toast.
+- **Paused position correction:** If both server and client are paused but position differs by >1s, hard seeks to server position. Fixes: seeking on one client didn't propagate until the other pressed play.
+- **Playing drift correction:** Proportional playback rate adjustment (0.9–1.1x) for small drift, hard seek for >5s drift. Uses room-wide sync tolerance as dead zone.
+
+### NTP clock sync
+- **5-probe burst on connect**, median offset selection. Maintenance re-sync every 30s.
+- **Synced clock for drift computation:** `serverMonotonic ≈ Date.now() + clockOffset` — both clients agree on expected position regardless of individual network latency.
+- **RTT reporting:** Each extension client reports its RTT to the server after clock sync.
+
+### Dynamic room tolerance
+- **250ms default dead zone.** If any client in the room has RTT > 250ms, room tolerance widens to 500ms for all clients.
+- **Server broadcasts tolerance changes** to all extension clients via `sync:tolerance` channel event.
+
+### Stale message rejection
+- **Server timestamps on all sync commands:** play/pause/seek/correction messages include `server_time` (monotonic ms).
+- **Client ignores stale commands:** Messages with `server_time` older than the current reference are dropped, preventing out-of-order state corruption (e.g., a correction arriving after a newer play command).
+
+### Sync correction interval
+- Server sends `sync:correction` every **3s** (was 5s) for tighter drift tracking.
+
+### Details for nerds
+- **New panel in room settings** (above Attribution): shows sync tolerance, correction interval, and per-client RTT with color-coded latency indicators.
+
+### Command guard simplified
+- `commandGuard` is now a simple 500ms echo prevention timer. All state correction logic moved to the reconcile loop — no more stuck buffering states.
+
+---
+
 # v4.0.1
 
 - **Buffering overlay fix:** Overlay never appeared on third-party sites because the video runs in an iframe but the overlay only renders in the top frame. Added `byob:local-buffering` relay from iframe → service worker → top frame for instant overlay display.
