@@ -579,22 +579,24 @@
     const posAdvance = _lastReconcilePos !== null ? (localPosition - _lastReconcilePos) : 1;
     if (posAdvance < 0.05) {
       _stallTicks++;
+      // 3 ticks (1.5s) = show local buffering overlay
+      // 10 ticks (5s) = pause server (genuinely stuck, not just a hiccup)
       if (_stallTicks >= 3 && !isBuffering) {
-        // Don't trigger buffering during settling period (just joined,
-        // video needs time to start) or if video is near position 0
-        // (hasn't loaded yet — would send wrong position to server).
-        if (Date.now() < settlingUntil || localPosition < 1) {
+        if (isSettling() || localPosition < 1) {
           _stallTicks = 0;
           return null;
         }
         isBuffering = true;
-        _bufferingPause = true;
         showBufferingOverlay();
         updateSyncBarStatus(SyncStatus.BUFFERING);
-        _log("reconcile: buffering — pausing server");
+        _log("reconcile: buffering (local overlay)");
         if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
-        // Pause server so other clients wait
-        if (synced && port) {
+      }
+      if (_stallTicks >= 10 && isBuffering && !_bufferingPause) {
+        // Genuinely stuck for 5s — pause server
+        _bufferingPause = true;
+        _log("reconcile: buffering 5s — pausing server");
+        if (synced && port && !isSettling()) {
           port.postMessage({ type: Msg.VIDEO_PAUSE, position: localPosition });
         }
       }
