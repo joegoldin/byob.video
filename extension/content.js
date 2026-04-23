@@ -405,13 +405,17 @@
     }
 
     // Send periodic state updates (position, duration, playing) for relay to room + sync bar
+    let endedReported = false;
     timeReportInterval = setInterval(() => {
       if (!hookedVideo) return;
 
+      const pos = hookedVideo.currentTime;
+      const dur = hookedVideo.duration;
+
       const msg = {
         type: Msg.VIDEO_STATE,
-        position: hookedVideo.currentTime,
-        duration: hookedVideo.duration || 0,
+        position: pos,
+        duration: dur || 0,
         playing: !hookedVideo.paused && !isBuffering,
         buffering: isBuffering,
       };
@@ -419,6 +423,15 @@
       if (synced && port) port.postMessage(msg);
       // Always send bar update via port so background can relay to top frame
       if (port) port.postMessage({ type: Msg.BAR_UPDATE, position: msg.position, duration: msg.duration, playing: msg.playing });
+
+      // Position-based ended detection — more reliable than browser "ended"
+      // event which fires spuriously on third-party sites.
+      // Requires: valid finite duration > 60s, position within 3s of end,
+      // video actually playing, synced, and not already reported.
+      if (synced && !endedReported && !hookedVideo.paused && isFinite(dur) && dur > 60 && pos >= dur - 3) {
+        endedReported = true;
+        if (port) port.postMessage({ type: Msg.VIDEO_ENDED });
+      }
     }, 500);
   }
 
@@ -498,12 +511,10 @@
   }
 
   function onVideoEnded() {
-    // Disabled: third-party sites fire spurious "ended" events (video
-    // element swaps, ads, previews, DRM transitions) that corrupt room
-    // state. Queue advancement for extension-watched videos should be
-    // triggered from the main byob.video site instead.
-    // TODO: re-enable with reliable ended detection (e.g. server-side
-    // position tracking confirming playback reached known duration).
+    // Don't trust browser "ended" event — third-party sites fire it
+    // spuriously (video element swaps, ads, DRM transitions).
+    // Ended detection is done in the time report interval below using
+    // position/duration checks instead.
   }
 
   // --- Reconcile loop ---
