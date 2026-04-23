@@ -463,9 +463,10 @@
   }
 
   // Event handlers — user-initiated actions sent to server.
-  // Each starts a commandGuard after sending, so the site's settling
-  // (DRM init, buffering, player state transitions) doesn't leak as
-  // additional events to the server.
+  // Short fixed guard (300ms) absorbs the immediate browser echo without
+  // blocking subsequent user actions. The adaptive guard (startCommandGuard)
+  // is only used for incoming server commands where the site needs time
+  // to settle after programmatic play/pause/seek.
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced || commandGuard || isBuffering) return;
@@ -474,7 +475,9 @@
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
     }
-    startCommandGuard(); // hold until site settles to playing
+    // Short fixed guard — just absorb immediate echo, don't block user
+    if (commandGuard) clearTimeout(commandGuard);
+    commandGuard = setTimeout(() => { commandGuard = null; }, 300);
     _log("play", hookedVideo.currentTime);
   }
 
@@ -485,7 +488,8 @@
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_PAUSE, position: hookedVideo.currentTime });
     }
-    startCommandGuard(); // hold until site settles to paused
+    if (commandGuard) clearTimeout(commandGuard);
+    commandGuard = setTimeout(() => { commandGuard = null; }, 300);
     _log("pause", hookedVideo.currentTime);
   }
 
@@ -496,9 +500,8 @@
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
     }
-    // Fixed 1s guard for user-initiated seeks
     if (commandGuard) clearTimeout(commandGuard);
-    commandGuard = setTimeout(() => { commandGuard = null; }, 1000);
+    commandGuard = setTimeout(() => { commandGuard = null; }, 500);
     _log("seek", hookedVideo.currentTime);
   }
 
