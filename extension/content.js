@@ -19,7 +19,8 @@
   // participant that can send events.
   let followerMode = false;
   let followerStableTicks = 0;
-  let _barPausedCount = 0; // debounce bar status — need 2 consecutive paused updates to show "Paused"
+  let _barPausedCount = 0;
+  let _lastCorrectionSeek = 0; // cooldown for correction hard seeks
 
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
@@ -463,23 +464,20 @@
     }
 
     // Server correction — proportional rate correction for tight sync.
-    // Target: 250ms drift tolerance. Rate adjustment for small drift,
-    // hard seek for large drift.
     if (msg.type === "sync:correction" && hookedVideo && synced) {
       if (msg.expected_time != null && !hookedVideo.paused) {
-        const drift = hookedVideo.currentTime - msg.expected_time; // positive = ahead
+        const drift = hookedVideo.currentTime - msg.expected_time;
         const absDrift = Math.abs(drift);
-        const threshold = followerMode ? 0.5 : 0.25; // 250ms normal, 500ms follower
+        const threshold = followerMode ? 0.5 : 0.25;
 
         if (absDrift < threshold) {
-          // Within tolerance — in sync
           if (hookedVideo.playbackRate !== 1.0) hookedVideo.playbackRate = 1.0;
         } else if (absDrift < 3.0) {
-          // Small drift — proportional rate correction
           const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
           hookedVideo.playbackRate = rate;
-        } else {
-          // Large drift — hard seek
+        } else if (Date.now() - _lastCorrectionSeek > 5000) {
+          // Large drift — hard seek (max once per 5s to avoid spam)
+          _lastCorrectionSeek = Date.now();
           suppress("seeked");
           hookedVideo.currentTime = msg.expected_time;
           hookedVideo.playbackRate = 1.0;
