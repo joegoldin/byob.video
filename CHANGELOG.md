@@ -2,6 +2,14 @@
 
 ---
 
+# v5.0.2
+
+- **Position-based ended detection:** Removed unreliable browser `ended` event listener. Video end detected via position check in time report (pos >= duration - 3s, duration > 60s, playing). More reliable on third-party sites.
+- **Ready count fix:** Send `video:tab_closed` + `video:unready` for all ports before clearing channel on socket close. Fixes count staying at 2/2 after a user leaves.
+- **Stale user cleanup:** Disconnected users with same username cleaned on rejoin (both extension and non-extension). Prevents gray circles in user list.
+
+---
+
 # v5.0.1
 
 ### Ready count
