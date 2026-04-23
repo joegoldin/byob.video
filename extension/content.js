@@ -579,6 +579,13 @@
     if (posAdvance < 0.05) {
       _stallTicks++;
       if (_stallTicks >= 3 && !isBuffering) {
+        // Don't trigger buffering during settling period (just joined,
+        // video needs time to start) or if video is near position 0
+        // (hasn't loaded yet — would send wrong position to server).
+        if (Date.now() < settlingUntil || localPosition < 1) {
+          _stallTicks = 0;
+          return null;
+        }
         isBuffering = true;
         _bufferingPause = true;
         showBufferingOverlay();
