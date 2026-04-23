@@ -294,6 +294,10 @@ const liveSocket = new LiveSocket("/live", Socket, {
     PreserveModal: {
       beforeUpdate() { this._wasOpen = this.el.open; },
       updated() { if (this._wasOpen && !this.el.open) this.el.showModal(); }
+    },
+    PreserveDetails: {
+      beforeUpdate() { this._wasOpen = this.el.open; },
+      updated() { this.el.open = this._wasOpen; }
     }
   },
 })
