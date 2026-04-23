@@ -261,11 +261,24 @@ function connectToRoom(roomId, serverUrl, token, username) {
   socket.onError(() => {}); // suppress — onClose handles cleanup
   socket.onClose(() => {
     console.log("[byob] WebSocket closed, cleaning up");
+    // Send tab_closed/unready for all ports BEFORE clearing channel —
+    // otherwise port.onDisconnect finds channel=null and can't send.
+    if (channel) {
+      const seenTabs = new Set();
+      for (const entry of ports) {
+        if (entry.tabId != null && !seenTabs.has(entry.tabId)) {
+          seenTabs.add(entry.tabId);
+          try {
+            channel.push("video:tab_closed", { tab_id: String(entry.tabId) });
+            channel.push("video:unready", { tab_id: String(entry.tabId) });
+          } catch (_) {}
+        }
+      }
+    }
     channel = null;
     socket = null;
     currentRoomId = null;
     lastReadyCount = null;
-    // Disconnect all ports — content scripts will reconnect with backoff
     for (const entry of [...ports]) {
       try { entry.port.disconnect(); } catch (_) {}
     }

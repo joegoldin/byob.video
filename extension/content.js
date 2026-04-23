@@ -20,6 +20,7 @@
   let followerMode = false;
   let followerStableTicks = 0;
   let _barPausedCount = 0;
+  let _endedReported = false;
   let _lastCorrectionSeek = 0;
   let _pendingSeekPos = null; // after user seek, ignore corrections until server reflects new position
 
@@ -234,11 +235,12 @@
     }
 
     hookedVideo = video;
+    _endedReported = false;
 
     video.addEventListener("play", onVideoPlay);
     video.addEventListener("pause", onVideoPause);
     video.addEventListener("seeked", onVideoSeeked);
-    video.addEventListener("ended", onVideoEnded);
+    // No "ended" listener — position-based detection in time report is more reliable
 
     // Report that we found a video — include page metadata for byob display
     const meta = scrapePageMetadata();
@@ -293,6 +295,14 @@
       if (synced && port) {
         port.postMessage(msg);
         port.postMessage({ type: "byob:bar-update", position: msg.position, duration: msg.duration, playing: msg.playing });
+
+        // Position-based ended detection — more reliable than browser "ended"
+        // event which many third-party sites don't fire.
+        const dur = hookedVideo.duration;
+        if (!_endedReported && !hookedVideo.paused && isFinite(dur) && dur > 60 && msg.position >= dur - 3) {
+          _endedReported = true;
+          port.postMessage({ type: "video:ended" });
+        }
       }
     }, 500);
   }
@@ -302,7 +312,6 @@
     hookedVideo.removeEventListener("play", onVideoPlay);
     hookedVideo.removeEventListener("pause", onVideoPause);
     hookedVideo.removeEventListener("seeked", onVideoSeeked);
-    hookedVideo.removeEventListener("ended", onVideoEnded);
     if (_nativePlayListener) {
       hookedVideo.removeEventListener("play", _nativePlayListener);
       _nativePlayListener = null;
