@@ -207,11 +207,19 @@ defmodule Byob.Persistence do
 
           try do
             state = :erlang.binary_to_term(blob, [:safe])
-            {:ok, Migrations.run(state, loaded_version, Migrations.current_version())}
+
+            # Validate that required struct fields exist — stale data from
+            # incompatible code versions may decode successfully but be missing
+            # fields like last_sync_at (replaced by server_time in a bad persist).
+            if is_map(state) and Map.has_key?(state, :last_sync_at) do
+              {:ok, Migrations.run(state, loaded_version, Migrations.current_version())}
+            else
+              require Logger
+              Logger.warning("[persistence] Discarding stale room #{room_id}: missing required fields")
+              :not_found
+            end
           rescue
             ArgumentError ->
-              # Saved state contains atoms not in current VM (e.g. removed struct fields).
-              # Discard stale data and start fresh.
               require Logger
               Logger.warning("[persistence] Discarding stale room #{room_id}: incompatible binary format")
               :not_found

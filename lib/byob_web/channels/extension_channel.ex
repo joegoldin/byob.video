@@ -163,9 +163,11 @@ defmodule ByobWeb.ExtensionChannel do
     # Compute current position accounting for elapsed playback time.
     # state.current_time is snapped at last state change — if playing,
     # add elapsed time so joining clients get the actual position.
+    last_sync_at = Map.get(state, :last_sync_at, now)
+
     current_time =
       if state.play_state == :playing do
-        elapsed = (now - state.last_sync_at) / 1000
+        elapsed = (now - last_sync_at) / 1000
         state.current_time + elapsed
       else
         state.current_time
@@ -306,9 +308,11 @@ defmodule ByobWeb.ExtensionChannel do
 
     now = System.monotonic_time(:millisecond)
 
+    last_sync_at = Map.get(state, :last_sync_at, now)
+
     current_time =
       if state.play_state == :playing do
-        elapsed = (now - state.last_sync_at) / 1000
+        elapsed = (now - last_sync_at) / 1000
         state.current_time + elapsed
       else
         state.current_time
