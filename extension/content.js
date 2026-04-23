@@ -650,13 +650,36 @@
     };
   }
 
-  // Command guard — simple 500ms echo prevention after executing a server command.
-  // While active, outgoing play/pause/seek events are suppressed so the browser's
-  // response to our programmatic action doesn't echo back to the server.
-  // All state correction (play/pause, drift, buffering) is handled by the reconcile loop.
+  // Adaptive command guard — suppresses outgoing events after executing a
+  // server command. Holds until the video state matches what we commanded
+  // (the site has settled), with a minimum of 300ms and maximum of 5s.
+  // This prevents third-party sites' internal state transitions (DRM,
+  // buffering, player initialization) from being relayed to the server.
+  let _guardStartedAt = 0;
+
   function startCommandGuard() {
     if (commandGuard) clearTimeout(commandGuard);
-    commandGuard = setTimeout(() => { commandGuard = null; }, 500);
+    _guardStartedAt = Date.now();
+    commandGuard = setTimeout(checkGuard, 300); // 300ms minimum
+  }
+
+  function checkGuard() {
+    const elapsed = Date.now() - _guardStartedAt;
+
+    // Max 5s — if the site hasn't settled by then, give up
+    if (elapsed > 5000 || !hookedVideo || !expectedPlayState) {
+      commandGuard = null;
+      return;
+    }
+
+    const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
+    if (actual === expectedPlayState) {
+      // Video state matches command — site has settled, release guard
+      commandGuard = null;
+    } else {
+      // Not settled yet — keep checking every 200ms
+      commandGuard = setTimeout(checkGuard, 200);
+    }
   }
 
   // Handle commands from service worker
@@ -840,7 +863,9 @@
       case Msg.COMMAND_SEEK:
         lastSeekAt = Date.now();
         updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time);
-        startCommandGuard();
+        // Fixed 1s guard for seeks (adaptive guard checks play state, not position)
+        if (commandGuard) clearTimeout(commandGuard);
+        commandGuard = setTimeout(() => { commandGuard = null; }, 1000);
         hookedVideo.currentTime = msg.position;
         break;
 
