@@ -460,11 +460,12 @@
     // If waiting for gesture and a play command arrives, try playing —
     // the browser may allow it if the user interacted with the page.
     if (needsGesture && msg.type === "command:play") {
+      suppress("playing"); // prevent play event from sending stale position to server
       if (msg.position != null) hookedVideo.currentTime = msg.position;
       hookedVideo.play().then(() => {
         needsGesture = false;
         hideJoinToast();
-        requestSync();
+        requestSync(); // gets computed position from server and seeks there
       }).catch(() => {});
       return;
     }
