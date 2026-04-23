@@ -488,7 +488,7 @@
           hookedVideo.playbackRate = rate;
         } else if (Date.now() - _lastCorrectionSeek > 5000) {
           _lastCorrectionSeek = Date.now();
-          suppress("seeked");
+          suppress(null); // match what shouldSuppress(null) expects from onVideoSeeked
           hookedVideo.currentTime = msg.expected_time;
           hookedVideo.playbackRate = 1.0;
         }
