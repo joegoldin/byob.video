@@ -33,6 +33,15 @@
   let _lastCorrectionSeek = 0;
   let _pendingSeekPos = null; // after user seek, ignore corrections until server reflects new position
 
+  // Stall detection + recovery for DRM pipeline freezes (video.paused===false but frames not rendering)
+  let _lastTickPosition = null;
+  let _stallTickCount = 0;
+  let _stallRecoveryAttempts = 0;
+  let _lastStallRecoveryAt = 0;
+  let _lastExpectedPos = null;
+  let _lastExpectedAt = 0;
+  let _recoveryInProgress = false;
+
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
     document.documentElement.setAttribute("data-byob-extension", "true");
@@ -294,6 +303,28 @@
         }
       }
 
+      // Stall detection: video reports !paused but frames aren't advancing.
+      // Common on DRM sites when MSE pipeline wedges after programmatic seek.
+      if (synced && !followerMode && !_recoveryInProgress) {
+        if (!hookedVideo.paused) {
+          const pos = hookedVideo.currentTime;
+          if (_lastTickPosition != null && Math.abs(pos - _lastTickPosition) < 0.05) {
+            _stallTickCount++;
+          } else {
+            _stallTickCount = 0;
+            _stallRecoveryAttempts = 0;
+          }
+          _lastTickPosition = pos;
+
+          if (_stallTickCount >= 3 && Date.now() - _lastStallRecoveryAt > 3000) {
+            tryStallRecovery();
+          }
+        } else {
+          _lastTickPosition = null;
+          _stallTickCount = 0;
+        }
+      }
+
       const msg = {
         type: "video:state",
         position: hookedVideo.currentTime,
@@ -449,6 +480,87 @@
     }
   }
 
+  // Stall recovery. On DRM sites, programmatic pause→seek→play doesn't un-wedge
+  // a frozen MSE pipeline; only a user gesture does. So we skip straight to
+  // needsGesture. On non-DRM sites, try the pause→seek→play sequence first.
+  function tryStallRecovery() {
+    if (!hookedVideo || _recoveryInProgress) return;
+
+    const now = Date.now();
+    _lastStallRecoveryAt = now;
+    _stallTickCount = 0;
+
+    if (_isDrmSite) {
+      _log("STALL: DRM site, going straight to needsGesture");
+      _stallRecoveryAttempts = 0;
+      synced = false;
+      needsGesture = true;
+      followerMode = false;
+      updateSyncBarStatus("clickjoin");
+      showJoinToast("Playback stuck — click play to resync");
+      waitForNativePlay();
+      return;
+    }
+
+    _stallRecoveryAttempts++;
+    if (_stallRecoveryAttempts > 3) {
+      _log("STALL: escalating to needsGesture after", _stallRecoveryAttempts - 1, "failed attempts");
+      _stallRecoveryAttempts = 0;
+      synced = false;
+      needsGesture = true;
+      followerMode = false;
+      updateSyncBarStatus("clickjoin");
+      showJoinToast("Playback stuck — click play to resume sync");
+      waitForNativePlay();
+      return;
+    }
+
+    const pos = hookedVideo.currentTime;
+    let target = pos;
+    if (_lastExpectedPos != null && _lastExpectedAt > 0) {
+      target = _lastExpectedPos + (now - _lastExpectedAt) / 1000;
+    }
+
+    _log("STALL: recovery attempt", _stallRecoveryAttempts, "pos=", pos.toFixed(2), "target=", target.toFixed(2));
+
+    _recoveryInProgress = true;
+    if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
+
+    suppress("paused");
+    _programmaticSeek = true;
+    try { hookedVideo.pause(); } catch (_) {}
+    try { hookedVideo.currentTime = target; } catch (_) {}
+    _programmaticSeek = false;
+
+    setTimeout(() => {
+      if (!hookedVideo || !synced) { _recoveryInProgress = false; return; }
+      suppress("playing");
+      suppress(null);
+      _programmaticSeek = true;
+      const p = hookedVideo.play();
+      _programmaticSeek = false;
+      if (p && p.catch) {
+        p.then(() => {
+          _log("STALL: recovery play() resolved, paused=", hookedVideo?.paused);
+          _recoveryInProgress = false;
+        }).catch((e) => {
+          _log("STALL: recovery play() REJECTED:", e?.message, "— escalating");
+          _recoveryInProgress = false;
+          _stallRecoveryAttempts = 0;
+          synced = false;
+          needsGesture = true;
+          followerMode = false;
+          updateSyncBarStatus("clickjoin");
+          showJoinToast("Click play to resume sync");
+          waitForNativePlay();
+        });
+      } else {
+        _recoveryInProgress = false;
+      }
+      _lastTickPosition = null;
+    }, 200);
+  }
+
   // Suppression — time-window for HTML5 <video> elements.
   // Suppresses ALL matching events for the duration (1.5s) instead of just
   // the first one. Sites with DRM/buffering fire multiple play/pause events
@@ -561,6 +673,12 @@
 
     // Server correction — proportional rate correction for tight sync.
     if (msg.type === "sync:correction" && hookedVideo && synced) {
+      // Always track expected server position — stall detector uses this
+      // to compute a recovery target even when we're not actively drift-correcting.
+      if (msg.expected_time != null) {
+        _lastExpectedPos = msg.expected_time;
+        _lastExpectedAt = Date.now();
+      }
       if (msg.expected_time != null && !hookedVideo.paused) {
         // If we have a pending user seek, check if server caught up
         if (_pendingSeekPos != null) {
@@ -586,6 +704,10 @@
           const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
           _log("correction: rate adjust to", rate.toFixed(3), "drift=", drift.toFixed(3));
           hookedVideo.playbackRate = rate;
+        } else if (_isDrmSite) {
+          // DRM sites: HARD SEEK doesn't un-stall a wedged pipeline, it just moves
+          // the stall target. Accept large drift; stall detector handles real stalls.
+          _log("correction: DRM large drift, skipping HARD SEEK, drift=", drift.toFixed(1));
         } else if (Date.now() - _lastCorrectionSeek > 5000) {
           _log("correction: HARD SEEK drift=", drift.toFixed(1), "from=", hookedVideo.currentTime.toFixed(1), "to=", msg.expected_time.toFixed(1));
           _lastCorrectionSeek = Date.now();
@@ -651,6 +773,8 @@
       case "command:play":
         _log("CMD:play pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
+        // Clear pending seek — server command overrides any local seek
+        _pendingSeekPos = null;
         suppress("playing");
         suppress(null); // suppress seeked echo from position set
         _programmaticSeek = true;
@@ -672,6 +796,7 @@
 
       case "command:pause":
         _log("CMD:pause pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
+        _pendingSeekPos = null;
         suppress("paused");
         _programmaticSeek = true;
         if (msg.position != null) hookedVideo.currentTime = msg.position;
@@ -690,6 +815,8 @@
 
       case "command:seek":
         _log("CMD:seek pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
+        // Clear pending seek — server command overrides any local seek we were waiting on
+        _pendingSeekPos = null;
         suppress(null);
         _programmaticSeek = true;
         hookedVideo.currentTime = msg.position;

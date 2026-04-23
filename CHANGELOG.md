@@ -2,6 +2,21 @@
 
 ---
 
+# v5.0.4
+
+### DRM sync improvements (Crunchyroll, etc.)
+
+- **Stall detector:** New reconcile loop watches `currentTime` across 500ms ticks. When video reports `playing=true` but frames aren't advancing for 1.5s+, declares a stall and triggers recovery.
+- **DRM stall → gesture prompt:** On DRM sites, skip programmatic pause→seek→play recovery (which doesn't un-wedge a stalled MSE pipeline). Show "Playback stuck — click play to resync" toast and `waitForNativePlay()`.
+- **Non-DRM stall recovery:** Pause → seek to expected position → play sequence. Up to 3 attempts before escalating to gesture prompt.
+- **No HARD SEEK on DRM:** Drift correction's hard-seek branch is skipped for DRM sites — it was just moving the stall target without un-wedging the pipeline. Rate adjustment (0.9–1.1x) still runs for normal drift.
+- **Track expected position from corrections:** `_lastExpectedPos`/`_lastExpectedAt` fed by `sync:correction` messages, used as the seek target during stall recovery.
+
+### Recovery escalation
+- If `play()` rejects during recovery (common when MSE has aborted the fetch), escalate immediately to `needsGesture` — one user click re-requests state and resumes sync.
+
+---
+
 # v5.0.3
 
 - **Drift summary:** Details for nerds shows avg/min/max drift across all extension clients.
