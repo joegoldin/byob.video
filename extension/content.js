@@ -640,24 +640,26 @@
       // Stall detection: if position hasn't advanced for 3+ consecutive
       // ticks (1.5s), video is buffering. Single-tick stalls are normal
       // during playback and should not trigger buffering.
-      // Stall = position advanced less than 0.3s in a 500ms tick (playing at <60% speed = stalled)
+      // Stall = position essentially frozen (<0.05s advance in 500ms tick).
+      // Require 3 frozen ticks (1.5s) to enter buffering, and stay in
+      // buffering for at least 6 ticks (3s) of real advancement to exit.
       const posAdvance = _lastReconcilePos !== null ? (localPosition - _lastReconcilePos) : 1;
-      if (posAdvance < 0.3) {
+      if (posAdvance < 0.05) {
         _stallTicks++;
         if (_stallTicks >= 3 && !isBuffering) {
           isBuffering = true;
           showBufferingOverlay();
           updateSyncBarStatus(SyncStatus.BUFFERING);
-          _log("reconcile: buffering (stalled", _stallTicks, "ticks)");
+          _log("reconcile: buffering (frozen for", (_stallTicks * 0.5).toFixed(1), "s)");
           if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
         }
         if (isBuffering) {
           _lastReconcilePos = localPosition;
-          return; // Don't drift-correct while buffering
+          return;
         }
       } else {
-        // Only exit buffering after 2 consecutive ticks of real advancement
         if (isBuffering) {
+          // Require 6 good ticks (3s) of advancement before clearing buffering
           _stallTicks = Math.max(0, _stallTicks - 1);
           if (_stallTicks <= 0) {
             isBuffering = false;
@@ -665,6 +667,9 @@
             updateSyncBarStatus(SyncStatus.PLAYING);
             _log("reconcile: buffering cleared");
             if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: localPosition, duration: hookedVideo.duration || 0, playing: true });
+          } else {
+            _lastReconcilePos = localPosition;
+            return; // Still in buffering cooldown
           }
         } else {
           _stallTicks = 0;
