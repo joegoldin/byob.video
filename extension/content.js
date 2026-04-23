@@ -856,21 +856,24 @@
       _log("synced!", "settling 3s, expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
 
       if (hookedVideo) {
-        updateSyncBarStatus(hookedVideo.paused ? State.PAUSED : State.PLAYING);
-        if (!wasAlreadySynced && port) port.postMessage({ type: Msg.VIDEO_READY });
-
-        // Apply server state if video disagrees — handles join into paused room
-        // where video auto-played, or join into playing room where video is paused.
-        if (expectedPlayState === State.PAUSED && !hookedVideo.paused) {
-          hookedVideo.pause();
-          if (msg.position != null) hookedVideo.currentTime = msg.position;
-          _log("synced: forcing pause to match server");
-        } else if (expectedPlayState === State.PLAYING && hookedVideo.paused) {
-          if (msg.position != null) hookedVideo.currentTime = msg.position;
-          hookedVideo.play().catch(() => {});
-          _log("synced: forcing play to match server");
+        // Always seek to server position on sync — don't wait for clock sync
+        if (msg.position != null) {
+          hookedVideo.currentTime = msg.position;
+          lastSeekAt = Date.now();
+          _log("synced: seeking to server pos=", msg.position);
         }
 
+        // Apply server play/pause state
+        if (expectedPlayState === State.PAUSED && !hookedVideo.paused) {
+          hookedVideo.pause();
+          _log("synced: forcing pause");
+        } else if (expectedPlayState === State.PLAYING && hookedVideo.paused) {
+          hookedVideo.play().catch(() => {});
+          _log("synced: forcing play");
+        }
+
+        updateSyncBarStatus(hookedVideo.paused ? State.PAUSED : State.PLAYING);
+        if (!wasAlreadySynced && port) port.postMessage({ type: Msg.VIDEO_READY });
         startReconcile();
       }
       return;
