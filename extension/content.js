@@ -19,6 +19,7 @@
   // participant that can send events.
   let followerMode = false;
   let followerStableTicks = 0;
+  let _barPausedCount = 0; // debounce bar status — need 2 consecutive paused updates to show "Paused"
 
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
@@ -415,18 +416,23 @@
       if (timeEl && msg.duration > 0) timeEl.textContent = fmt(msg.position) + " / " + fmt(msg.duration);
       else if (timeEl) timeEl.textContent = fmt(msg.position);
 
-      // Don't overwrite "Finished — next in Xs" countdown with "Paused"
+      // Debounced status — don't flicker between Playing/Paused on brief
+      // DRM transitions. Only show "Paused" after 2 consecutive paused updates.
       if (statusEl && dotEl && !_countdownInterval) {
         if (msg.playing) {
+          _barPausedCount = 0;
           statusEl.textContent = "Playing"; statusEl.style.color = "#00d400"; dotEl.style.background = "#00d400";
           statusEl.title = "Video is playing in sync with the room";
         } else {
-          statusEl.textContent = "Paused"; statusEl.style.color = "#ff9900"; dotEl.style.background = "#ff9900";
-          statusEl.title = "Video is paused — synced with room";
+          _barPausedCount = (_barPausedCount || 0) + 1;
+          if (_barPausedCount >= 2) {
+            statusEl.textContent = "Paused"; statusEl.style.color = "#ff9900"; dotEl.style.background = "#ff9900";
+            statusEl.title = "Video is paused — synced with room";
+          }
         }
       }
 
-      // Show and update play/pause button + progress bar
+      // Show and update play/pause button + progress bar (no debounce — button state should be responsive)
       if (playPauseBtn) {
         playPauseBtn.style.display = "";
         playPauseBtn.textContent = msg.playing ? "⏸" : "▶";
