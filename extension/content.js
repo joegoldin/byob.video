@@ -144,9 +144,17 @@
   const PORT_NAME = "watchparty";
   const EXT_ATTR = "data-byob-extension";
 
-  // Debug logging — visible in devtools console. Filter by [byob].
+  // Debug logging — visible in devtools console AND relayed to server.
+  // Filter by [byob] in devtools or [ext:debug] in server logs.
   const _DEBUG = true;
-  function _log(...args) { if (_DEBUG) console.log("[byob]", ...args); }
+  function _log(...args) {
+    if (!_DEBUG) return;
+    console.log("[byob]", ...args);
+    // Relay to server for unified logging (throttled, no PII)
+    if (port && synced) {
+      try { port.postMessage({ type: "debug:log", msg: args.map(String).join(" ") }); } catch (_) {}
+    }
+  }
 
   let port = null;
   let hookedVideo = null;
@@ -154,6 +162,7 @@
   let needsGesture = true; // True until video actually plays — blocks commands
   let pauseEnforcer = null;
   let timeReportInterval = null;
+  let lastServerCommandAt = 0; // suppress site-initiated play/pause for 3s after server commands
   let commandGuard = null; // brief echo prevention when executing a server command
   let expectedPlayState = null; // "playing" or "paused" — what the server wants
   let reconcileInterval = null;
@@ -470,12 +479,18 @@
   function onVideoPlay() {
     if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
     if (!synced || commandGuard || isBuffering) return;
+    // Suppress site-initiated plays within 3s of a server command.
+    // Without this, the site resuming after our programmatic pause()
+    // would override the server state and desync all clients.
+    if (Date.now() - lastServerCommandAt < 3000) {
+      _log("play SUPPRESSED (within 3s of server command)", hookedVideo.currentTime);
+      return;
+    }
     expectedPlayState = State.PLAYING;
     updateServerRef(hookedVideo.currentTime, State.PLAYING);
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_PLAY, position: hookedVideo.currentTime });
     }
-    // Short fixed guard — just absorb immediate echo, don't block user
     if (commandGuard) clearTimeout(commandGuard);
     commandGuard = setTimeout(() => { commandGuard = null; }, 300);
     _log("play", hookedVideo.currentTime);
@@ -483,6 +498,10 @@
 
   function onVideoPause() {
     if (!synced || commandGuard || isBuffering) return;
+    if (Date.now() - lastServerCommandAt < 3000) {
+      _log("pause SUPPRESSED (within 3s of server command)", hookedVideo.currentTime);
+      return;
+    }
     expectedPlayState = State.PAUSED;
     updateServerRef(hookedVideo.currentTime, State.PAUSED);
     if (port && hookedVideo) {
@@ -870,6 +889,11 @@
         _log(`Ignoring stale ${msg.type}: server_time=${msg.server_time} <= ${serverRef.serverTime}`);
         return;
       }
+    }
+
+    // Mark server command timestamp — suppresses site-initiated events for 3s
+    if (msg.type === Msg.COMMAND_PLAY || msg.type === Msg.COMMAND_PAUSE || msg.type === Msg.COMMAND_SEEK) {
+      lastServerCommandAt = Date.now();
     }
 
     switch (msg.type) {

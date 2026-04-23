@@ -182,6 +182,15 @@ defmodule ByobWeb.ExtensionChannel do
       }}, socket}
   end
 
+  def handle_in("debug:log", %{"msg" => msg} = payload, socket) do
+    tab = payload["tab_id"] || "?"
+    # Anonymize: use first 8 chars of user_id hash
+    uid = socket.assigns.user_id |> then(&:crypto.hash(:sha256, &1)) |> Base.encode16(case: :lower) |> binary_part(0, 8)
+    require Logger
+    Logger.info("[ext:debug] uid=#{uid} tab=#{tab} #{msg}")
+    {:noreply, socket}
+  end
+
   def handle_in("sync:ping", %{"t1" => t1}, socket) do
     t2 = System.monotonic_time(:millisecond)
     t3 = System.monotonic_time(:millisecond)
