@@ -460,16 +460,32 @@
       return;
     }
 
-    // Server correction — seek to expected position if drift > 3s.
-    // In follower mode: always apply. In normal mode: only for large drift
-    // (handles post-seek buffering where one client falls behind).
+    // Server correction — proportional rate correction for tight sync.
+    // Target: 250ms drift tolerance. Rate adjustment for small drift,
+    // hard seek for large drift.
     if (msg.type === "sync:correction" && hookedVideo && synced) {
       if (msg.expected_time != null && !hookedVideo.paused) {
-        const drift = Math.abs(hookedVideo.currentTime - msg.expected_time);
-        const threshold = followerMode ? 2 : 5; // tighter in follower mode
-        if (drift > threshold) {
+        const drift = hookedVideo.currentTime - msg.expected_time; // positive = ahead
+        const absDrift = Math.abs(drift);
+        const threshold = followerMode ? 0.5 : 0.25; // 250ms normal, 500ms follower
+
+        if (absDrift < threshold) {
+          // Within tolerance — in sync
+          if (hookedVideo.playbackRate !== 1.0) hookedVideo.playbackRate = 1.0;
+        } else if (absDrift < 3.0) {
+          // Small drift — proportional rate correction
+          const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
+          hookedVideo.playbackRate = rate;
+        } else {
+          // Large drift — hard seek
           suppress("seeked");
           hookedVideo.currentTime = msg.expected_time;
+          hookedVideo.playbackRate = 1.0;
+        }
+
+        // Report drift to server for the details panel
+        if (port) {
+          port.postMessage({ type: "video:drift", drift: Math.round(drift * 1000) });
         }
       }
       return;

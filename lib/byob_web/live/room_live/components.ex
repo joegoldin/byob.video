@@ -346,30 +346,47 @@ defmodule ByobWeb.RoomLive.Components do
             Details for nerds
           </summary>
           <div class="mt-2 text-xs text-base-content/50 space-y-1 font-mono">
-            <%= if @sync_stats do %>
-              <div class="flex justify-between">
-                <span>Correction interval</span>
-                <span>{@sync_stats.correction_interval_ms}ms</span>
-              </div>
-              <%= if map_size(@sync_stats.client_rtts) > 0 do %>
-                <div class="mt-1 pt-1 border-t border-base-300/50">
-                  <div class="text-base-content/40 mb-1">Extension clients</div>
-                  <%= for {_user_id, rtt} <- @sync_stats.client_rtts do %>
+            <div class="flex justify-between">
+              <span>Correction interval</span>
+              <span>{@sync_stats.correction_interval_ms}ms</span>
+            </div>
+            <div class="flex justify-between">
+              <span>Drift tolerance</span>
+              <span>250ms</span>
+            </div>
+            <%= if Map.has_key?(@sync_stats, :clients) and map_size(@sync_stats.clients) > 0 do %>
+              <div class="mt-2 pt-2 border-t border-base-300/50">
+                <div class="text-base-content/40 mb-1">Extension clients</div>
+                <%= for {client_id, info} <- @sync_stats.clients do %>
+                  <div class="mb-2 p-1.5 rounded bg-base-200/50">
+                    <div class="text-base-content/30 text-[10px] truncate mb-0.5">{client_id}</div>
                     <div class="flex justify-between">
-                      <span>RTT</span>
+                      <span>Drift</span>
                       <span class={
                         cond do
-                          rtt > 250 -> "text-error"
-                          rtt > 100 -> "text-warning"
+                          abs(info.drift_ms) > 1000 -> "text-error"
+                          abs(info.drift_ms) > 250 -> "text-warning"
                           true -> "text-success"
                         end
-                      }>{rtt}ms</span>
+                      }>
+                        {if info.drift_ms > 0, do: "+", else: ""}{info.drift_ms}ms
+                      </span>
                     </div>
-                  <% end %>
-                </div>
-              <% end %>
+                    <div class="flex justify-between">
+                      <span>Server pos</span>
+                      <span>{info.server_position}s</span>
+                    </div>
+                    <div class="flex justify-between">
+                      <span>State</span>
+                      <span class={if info.play_state == "playing", do: "text-success", else: "text-warning"}>
+                        {info.play_state}
+                      </span>
+                    </div>
+                  </div>
+                <% end %>
+              </div>
             <% else %>
-              <div class="text-base-content/30">No extension clients connected</div>
+              <div class="text-base-content/30 mt-1">No extension clients reporting</div>
             <% end %>
           </div>
         </details>

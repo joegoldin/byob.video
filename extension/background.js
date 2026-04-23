@@ -139,6 +139,10 @@ function handleContentMessage(msg, port, tabId) {
       }
       break;
 
+    case "video:drift":
+      if (channel) channel.push("video:drift", { drift_ms: msg.drift, tab_id: String(tabId) });
+      break;
+
     case "byob:bar-update":
       // Relay bar updates to all ports (so top frame can update its sync bar)
       broadcastToContentScripts(msg);

@@ -296,6 +296,19 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:extension_media_info, info}, socket),
     do: PubSub.handle_extension_media_info(info, socket)
 
+  def handle_info({:sync_client_stats, data}, socket) do
+    clients = Map.get(socket.assigns.sync_stats, :clients, %{})
+    key = "#{data.user_id}:#{data.tab_id}"
+    clients = Map.put(clients, key, %{
+      drift_ms: data.drift_ms,
+      server_position: data.server_position,
+      play_state: data.play_state,
+      updated_at: System.system_time(:second)
+    })
+    sync_stats = Map.put(socket.assigns.sync_stats, :clients, clients)
+    {:noreply, assign(socket, :sync_stats, sync_stats)}
+  end
+
   def handle_info({:users_updated, users}, socket), do: PubSub.handle_users_updated(users, socket)
 
   def handle_info({:activity_log_updated, log}, socket),

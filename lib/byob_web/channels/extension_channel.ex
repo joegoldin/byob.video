@@ -171,6 +171,31 @@ defmodule ByobWeb.ExtensionChannel do
       }}, socket}
   end
 
+  def handle_in("video:drift", %{"drift_ms" => drift_ms} = payload, socket) do
+    tab_id = payload["tab_id"] || "?"
+    state = RoomServer.get_state(socket.assigns.room_pid)
+    now = System.monotonic_time(:millisecond)
+    pos = if state.play_state == :playing do
+      elapsed = (now - Map.get(state, :last_sync_at, now)) / 1000
+      state.current_time + elapsed
+    else
+      state.current_time
+    end
+
+    Phoenix.PubSub.broadcast(
+      Byob.PubSub,
+      "room:#{socket.assigns.room_id}",
+      {:sync_client_stats, %{
+        user_id: socket.assigns.user_id,
+        tab_id: tab_id,
+        drift_ms: drift_ms,
+        server_position: Float.round(pos, 1),
+        play_state: Atom.to_string(state.play_state)
+      }}
+    )
+    {:noreply, socket}
+  end
+
   def handle_in("sync:ping", %{"t1" => t1}, socket) do
     t2 = System.monotonic_time(:millisecond)
     t3 = System.monotonic_time(:millisecond)
