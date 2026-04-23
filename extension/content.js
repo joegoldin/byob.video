@@ -842,13 +842,29 @@
 
     if (!hookedVideo) return;
 
-    // If we're waiting for a user gesture, ignore commands — they'll just fail.
+    // If waiting for gesture and a play command arrives, try playing —
+    // the browser may allow it if the user interacted with the page.
+    if (needsGesture && msg.type === Msg.COMMAND_PLAY) {
+      _log("cmd:play while needsGesture — attempting play()");
+      if (msg.position != null) hookedVideo.currentTime = msg.position;
+      hookedVideo.play().then(() => {
+        _log("play() succeeded — clearing needsGesture, requesting sync");
+        needsGesture = false;
+        hideJoinToast();
+        requestSync();
+      }).catch(() => {
+        _log("play() failed — still need gesture");
+      });
+      return;
+    }
+
+    // If we're waiting for a user gesture, ignore other commands.
     if (needsGesture) return;
 
     // Ignore stale commands — server_time must be newer than what we have
     if (msg.server_time != null && serverRef && msg.server_time <= serverRef.serverTime) {
       if (msg.type !== Msg.SYNC_CORRECTION) {
-        console.log(`[byob] Ignoring stale ${msg.type}: server_time=${msg.server_time} <= ${serverRef.serverTime}`);
+        _log(`Ignoring stale ${msg.type}: server_time=${msg.server_time} <= ${serverRef.serverTime}`);
         return;
       }
     }
