@@ -1122,12 +1122,14 @@ defmodule Byob.RoomServer do
     if has_extension_users or map_size(open_tabs) > 0 do
       non_ext = connected |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
       non_ext_usernames = non_ext |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq()
-      total = length(non_ext_usernames)
+      total_users = length(non_ext_usernames)
 
-      has_tab = min(map_size(open_tabs), total)
-      ready = min(map_size(ready_tabs), total)
+      # total = users with open tabs (not all connected users — some may
+      # have closed their video tab but still have byob.video open)
+      has_tab = min(map_size(open_tabs), total_users)
+      ready = min(map_size(ready_tabs), has_tab)
 
-      broadcast(state, {:ready_count, %{ready: ready, has_tab: has_tab, total: total}})
+      broadcast(state, {:ready_count, %{ready: ready, has_tab: has_tab, total: has_tab}})
     end
   end
 

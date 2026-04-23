@@ -272,6 +272,8 @@
           if (followerStableTicks >= 3) {
             followerMode = false;
             followerStableTicks = 0;
+            // NOW send video:ready — the client proved it can keep up
+            if (port) port.postMessage({ type: "video:ready" });
           }
         } else {
           followerStableTicks = 0;
@@ -504,12 +506,13 @@
       synced = true;
       needsGesture = false;
       // Enter follower mode — read-only until video proves stability.
+      // video:ready is sent when follower mode exits (not here — the
+      // client hasn't proven it can keep up yet).
       followerMode = true;
       followerStableTicks = 0;
       hideJoinToast();
       if (hookedVideo) {
         updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
-        if (!wasAlreadySynced && port) port.postMessage({ type: "video:ready" });
       }
       return;
     }

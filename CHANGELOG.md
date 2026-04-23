@@ -2,6 +2,14 @@
 
 ---
 
+# v5.0.1
+
+- **Ready count fix:** `video:ready` now sent only after follower mode exits (client proved stability), not on first sync. Prevents premature 2/2 before user clicks play.
+- **Ready count total:** Uses open tab count instead of all connected users — closing a video tab correctly reduces the count even if the byob.video tab stays open.
+- **Ready capped to has_tab:** Ready count can't exceed users with open tabs.
+
+---
+
 # v5.0.0
 
 **Revert to v3.6.3 sync engine + targeted improvements.**
@@ -34,8 +42,6 @@ The v4.x reconcile loop caused cascading issues on sites with DRM/buffering tran
 - **Connection cooldown (3s):** Prevents reconnection storms.
 - **Tab closing:** Extension tabs close on queue advance/end.
 
-### Known issues
-- **Ready count:** May show incorrect counts during join (autoplay triggers premature `video:ready`). Cleanup on disconnect may not always propagate.
 
 ---
 
