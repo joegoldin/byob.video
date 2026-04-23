@@ -569,9 +569,9 @@
         // we just need to adjust position. play() on an already-playing video
         // resolves immediately without needing a gesture.
         if (msg.position != null) hookedVideo.currentTime = msg.position;
-        if (hookedVideo.paused) {
-          hookedVideo.play().catch(() => {});
-        }
+        // Always call play() — on DRM sites the pipeline may stall after
+        // a seek even though paused===false. play() restarts it.
+        hookedVideo.play().catch(() => {});
         break;
 
       case "command:pause":
@@ -592,6 +592,11 @@
       case "command:seek":
         suppress(null);
         hookedVideo.currentTime = msg.position;
+        // On DRM/MSE sites (Crunchyroll), a programmatic seek can stall
+        // the video pipeline. Re-calling play() restarts it.
+        if (!hookedVideo.paused) {
+          hookedVideo.play().catch(() => {});
+        }
         break;
 
     }
