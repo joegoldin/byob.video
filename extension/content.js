@@ -641,12 +641,14 @@
   }
 
   function updateServerRef(position, playState, serverTime) {
-    // serverTime is server monotonic ms. If not provided (user-initiated events),
-    // estimate it from current clock: serverMonotonic ≈ Date.now() + clockOffset
+    // serverTime is server monotonic ms. For user-initiated events (no
+    // server_time), preserve the existing serverTime so the reconcile
+    // loop's elapsed computation stays correct until the next server
+    // correction arrives.
     serverRef = {
       position,
       playState,
-      serverTime: serverTime ?? (Date.now() + clockOffset),
+      serverTime: serverTime ?? serverRef?.serverTime ?? 0,
     };
   }
 

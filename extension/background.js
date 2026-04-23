@@ -126,10 +126,10 @@ function handleContentMessage(msg, port, tabId) {
         channel.push("sync:request_state", {}).receive("ok", (resp) => {
           console.log("[byob] Fresh state for sync:", resp);
           if (resp.play_state === "playing") {
-            port.postMessage({ type: "command:play", position: resp.current_time });
+            port.postMessage({ type: "command:play", position: resp.current_time, server_time: resp.server_time });
           } else {
-            port.postMessage({ type: "command:seek", position: resp.current_time });
-            port.postMessage({ type: "command:pause", position: resp.current_time });
+            port.postMessage({ type: "command:seek", position: resp.current_time, server_time: resp.server_time });
+            port.postMessage({ type: "command:pause", position: resp.current_time, server_time: resp.server_time });
           }
           // Wait for seek to settle before enabling bidirectional sync.
           // Broadcast to same-tab ports only (top frame + iframe) so the

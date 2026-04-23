@@ -161,7 +161,7 @@ defmodule ByobWeb.ExtensionChannel do
       %{
         play_state: Atom.to_string(state.play_state),
         current_time: state.current_time,
-        server_time: state.server_time
+        server_time: System.monotonic_time(:millisecond)
       }}, socket}
   end
 
@@ -294,7 +294,7 @@ defmodule ByobWeb.ExtensionChannel do
       current_index: state.current_index,
       play_state: Atom.to_string(state.play_state),
       current_time: state.current_time,
-      server_time: state.server_time,
+      server_time: System.monotonic_time(:millisecond),
       playback_rate: state.playback_rate,
       ready_count: ready_count
     }
