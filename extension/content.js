@@ -150,8 +150,8 @@
   function _log(...args) {
     if (!_DEBUG) return;
     console.log("[byob]", ...args);
-    // Relay to server for unified logging (throttled, no PII)
-    if (port && synced) {
+    // Relay ALL logs to server (not just when synced)
+    if (port) {
       try { port.postMessage({ type: "debug:log", msg: args.map(String).join(" ") }); } catch (_) {}
     }
   }
@@ -654,6 +654,14 @@
 
       const now = Date.now();
       const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
+      const pos = hookedVideo.currentTime;
+
+      // Periodic state dump every 5s for debugging
+      if (now % 5000 < 500) {
+        _log("STATE", "actual=", actual, "expected=", expectedPlayState, "pos=", pos?.toFixed(1),
+          "settling=", isSettling(), "buffering=", isBuffering, "bufPause=", _bufferingPause,
+          "stallTicks=", _stallTicks, "clockSynced=", clockSynced);
+      }
 
       // --- During settling: read-only mode. Don't send anything to server.
       // Only apply incoming commands and do local stall detection. ---
