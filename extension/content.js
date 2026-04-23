@@ -592,6 +592,56 @@
     }, 200);
   }
 
+  // DRM-safe seek: setting currentTime on a playing MSE stream (Crunchyroll
+  // et al.) commonly wedges the pipeline — video reports playing but frames
+  // don't advance. Pausing first flushes the decoder so the seek lands
+  // cleanly; we resume on the seeked event.
+  function drmSafeSeek(targetPos, shouldPlay) {
+    if (!hookedVideo) return;
+    const wasPlaying = !hookedVideo.paused;
+
+    if (!wasPlaying) {
+      // Paused → seek is safe. Optionally play.
+      if (shouldPlay) suppress("playing");
+      suppress(null);
+      _programmaticSeek = true;
+      hookedVideo.currentTime = targetPos;
+      if (shouldPlay) hookedVideo.play().catch(() => {});
+      _programmaticSeek = false;
+      return;
+    }
+
+    // Playing → pause, seek, resume on seeked.
+    suppress("paused");
+    _programmaticSeek = true;
+    try { hookedVideo.pause(); } catch (_) {}
+    _programmaticSeek = false;
+
+    suppress(null);
+    let resumed = false;
+    let resumeTimer = null;
+    const resume = () => {
+      if (resumed) return;
+      resumed = true;
+      if (hookedVideo) hookedVideo.removeEventListener("seeked", resume);
+      if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
+      if (shouldPlay && hookedVideo) {
+        suppress("playing");
+        _programmaticSeek = true;
+        hookedVideo.play().catch((e) => {
+          _log("drmSafeSeek: resume play() rejected:", e?.message);
+        });
+        _programmaticSeek = false;
+      }
+    };
+    resumeTimer = setTimeout(resume, 1000);
+    hookedVideo.addEventListener("seeked", resume);
+
+    _programmaticSeek = true;
+    hookedVideo.currentTime = targetPos;
+    _programmaticSeek = false;
+  }
+
   // Suppression — time-window for HTML5 <video> elements.
   // Suppresses ALL matching events for the duration (1.5s) instead of just
   // the first one. Sites with DRM/buffering fire multiple play/pause events
@@ -812,6 +862,13 @@
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         // Clear pending seek — server command overrides any local seek
         _pendingSeekPos = null;
+        // DRM + playing + needs to reposition → pause-seek-play or MSE wedges.
+        if (_isDrmSite && !hookedVideo.paused && msg.position != null
+            && Math.abs(hookedVideo.currentTime - msg.position) > 0.1) {
+          _log("CMD:play DRM pause-seek-play to", msg.position);
+          drmSafeSeek(msg.position, true);
+          break;
+        }
         suppress("playing");
         suppress(null); // suppress seeked echo from position set
         _programmaticSeek = true;
@@ -854,6 +911,12 @@
         _log("CMD:seek pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
         // Clear pending seek — server command overrides any local seek we were waiting on
         _pendingSeekPos = null;
+        // DRM + playing → pause-seek-play to avoid wedging MSE pipeline.
+        if (_isDrmSite && !hookedVideo.paused) {
+          _log("CMD:seek DRM pause-seek-play to", msg.position);
+          drmSafeSeek(msg.position, true);
+          break;
+        }
         suppress(null);
         _programmaticSeek = true;
         hookedVideo.currentTime = msg.position;

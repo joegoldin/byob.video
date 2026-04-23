@@ -2,6 +2,18 @@
 
 ---
 
+# v5.0.8
+
+### DRM: pause-seek-play pattern for remote commands (fixes Crunchyroll wedges)
+
+- **`drmSafeSeek` helper** added. Setting `currentTime` on a *playing* Crunchyroll stream wedges MSE — the video reports `paused=false` but frames stop. Pausing first flushes the decoder so the seek lands cleanly; we listen for `seeked` and resume.
+- **`CMD:seek` on DRM while playing** now routes through `drmSafeSeek(pos, shouldPlay=true)`. Previously a bare `currentTime = pos` would strand the client at the new position, playing=true but stuck. Repro: one client seeks while another is actively playing → the receiver wedges indefinitely under v5.0.7 (stall detection was disabled on DRM).
+- **`CMD:play` on DRM while playing with position delta > 0.1s** also uses `drmSafeSeek`. Fixes the scenario where one client seeks and emits `video:play` (because their video resumed after the seek), server rebroadcasts `CMD:play pos=X`, and other already-playing clients wedge when trying to jump to X.
+- **Paused + seek path unchanged** — `currentTime =` on a paused DRM stream is safe and doesn't need the pause-seek-play dance.
+- Resume has a 1s safety timer in case `seeked` never fires (seek cancellation, element unhook).
+
+---
+
 # v5.0.7
 
 ### DRM sites: minimal-intervention sync (minimal-intervention sync)
