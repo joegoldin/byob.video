@@ -30,24 +30,21 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   @impl true
-  def handle_in("video:play", %{"position" => position} = payload, socket) do
-    uid = ext_tab_user_id(socket, payload)
-    RoomServer.play(socket.assigns.room_pid, uid, position)
-    SyncLog.ext_event(socket.assigns.room_id, "play", uid)
+  def handle_in("video:play", %{"position" => position}, socket) do
+    RoomServer.play(socket.assigns.room_pid, socket.assigns.user_id, position)
+    SyncLog.ext_event(socket.assigns.room_id, "play", socket.assigns.user_id)
     {:noreply, socket}
   end
 
-  def handle_in("video:pause", %{"position" => position} = payload, socket) do
-    uid = ext_tab_user_id(socket, payload)
-    RoomServer.pause(socket.assigns.room_pid, uid, position)
-    SyncLog.ext_event(socket.assigns.room_id, "pause", uid)
+  def handle_in("video:pause", %{"position" => position}, socket) do
+    RoomServer.pause(socket.assigns.room_pid, socket.assigns.user_id, position)
+    SyncLog.ext_event(socket.assigns.room_id, "pause", socket.assigns.user_id)
     {:noreply, socket}
   end
 
-  def handle_in("video:seek", %{"position" => position} = payload, socket) do
-    uid = ext_tab_user_id(socket, payload)
-    RoomServer.seek(socket.assigns.room_pid, uid, position)
-    SyncLog.ext_event(socket.assigns.room_id, "seek", uid)
+  def handle_in("video:seek", %{"position" => position}, socket) do
+    RoomServer.seek(socket.assigns.room_pid, socket.assigns.user_id, position)
+    SyncLog.ext_event(socket.assigns.room_id, "seek", socket.assigns.user_id)
     {:noreply, socket}
   end
 
@@ -85,9 +82,7 @@ defmodule ByobWeb.ExtensionChannel do
     is_playing = payload["playing"] || false
     is_hooked = payload["hooked"] || false
 
-    is_buffering = payload["buffering"] || false
-
-    if is_playing or is_hooked or is_buffering do
+    if is_playing or is_hooked do
       Phoenix.PubSub.broadcast(
         Byob.PubSub,
         "room:#{socket.assigns.room_id}",
@@ -97,7 +92,6 @@ defmodule ByobWeb.ExtensionChannel do
            position: payload["position"] || 0,
            duration: payload["duration"] || 0,
            playing: is_playing,
-           buffering: payload["buffering"] || false,
            user_id: socket.assigns.user_id
          }}
       )
@@ -160,14 +154,9 @@ defmodule ByobWeb.ExtensionChannel do
     state = RoomServer.get_state(socket.assigns.room_pid)
     now = System.monotonic_time(:millisecond)
 
-    # Compute current position accounting for elapsed playback time.
-    # state.current_time is snapped at last state change — if playing,
-    # add elapsed time so joining clients get the actual position.
-    last_sync_at = Map.get(state, :last_sync_at, now)
-
     current_time =
       if state.play_state == :playing do
-        elapsed = (now - last_sync_at) / 1000
+        elapsed = (now - Map.get(state, :last_sync_at, now)) / 1000
         state.current_time + elapsed
       else
         state.current_time
@@ -182,24 +171,10 @@ defmodule ByobWeb.ExtensionChannel do
       }}, socket}
   end
 
-  def handle_in("debug:log", %{"msg" => msg} = payload, socket) do
-    tab = payload["tab_id"] || "?"
-    # Anonymize: use first 8 chars of user_id hash
-    uid = socket.assigns.user_id |> then(&:crypto.hash(:sha256, &1)) |> Base.encode16(case: :lower) |> binary_part(0, 8)
-    require Logger
-    Logger.info("[ext:debug] uid=#{uid} tab=#{tab} #{msg}")
-    {:noreply, socket}
-  end
-
   def handle_in("sync:ping", %{"t1" => t1}, socket) do
     t2 = System.monotonic_time(:millisecond)
     t3 = System.monotonic_time(:millisecond)
     {:reply, {:ok, %{t1: t1, t2: t2, t3: t3}}, socket}
-  end
-
-  def handle_in("sync:rtt_report", %{"rtt" => rtt}, socket) when is_number(rtt) do
-    RoomServer.report_rtt(socket.assigns.room_pid, socket.assigns.user_id, rtt)
-    {:noreply, socket}
   end
 
   def handle_in(_event, _payload, socket) do
@@ -237,21 +212,6 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:extension_player_state, %{buffering: true} = data}, socket) do
-    # Relay buffering state to other extension clients so they can show overlay
-    push(socket, "sync:buffering", %{user_id: data.user_id, buffering: true})
-    {:noreply, socket}
-  end
-
-  def handle_info({:extension_player_state, %{buffering: false, user_id: uid}}, socket) do
-    push(socket, "sync:buffering", %{user_id: uid, buffering: false})
-    {:noreply, socket}
-  end
-
-  def handle_info({:extension_player_state, _data}, socket) do
-    {:noreply, socket}
-  end
-
   def handle_info({:ready_count, data}, socket) do
     push(socket, "ready:count", data)
     {:noreply, socket}
@@ -263,27 +223,17 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
-  def handle_info({:queue_ended, _data}, socket) do
-    push(socket, "queue:ended", %{})
-    {:noreply, socket}
-  end
-
   def handle_info({:video_changed, %{media_item: item} = data}, socket) do
     push(socket, "video:change", %{data | media_item: serialize_item(item)})
     {:noreply, socket}
   end
 
+  def handle_info({:queue_ended, _data}, socket) do
+    push(socket, "queue:ended", %{})
+    {:noreply, socket}
+  end
+
   def handle_info({:users_updated, _users}, socket) do
-    {:noreply, socket}
-  end
-
-  def handle_info({:sync_tolerance, data}, socket) do
-    push(socket, "sync:tolerance", data)
-    {:noreply, socket}
-  end
-
-  def handle_info({:sync_stats, _data}, socket) do
-    # Stats are for the LiveView panel, not for extension clients
     {:noreply, socket}
   end
 
@@ -322,11 +272,9 @@ defmodule ByobWeb.ExtensionChannel do
 
     now = System.monotonic_time(:millisecond)
 
-    last_sync_at = Map.get(state, :last_sync_at, now)
-
     current_time =
       if state.play_state == :playing do
-        elapsed = (now - last_sync_at) / 1000
+        elapsed = (now - Map.get(state, :last_sync_at, now)) / 1000
         state.current_time + elapsed
       else
         state.current_time
@@ -352,13 +300,4 @@ defmodule ByobWeb.ExtensionChannel do
       title: item.title
     }
   end
-
-  # Build a per-tab user_id for extension clients so two tabs in the same
-  # browser (normal + incognito, sharing one SW/WebSocket) are treated as
-  # separate users by the room server.
-  defp ext_tab_user_id(socket, %{"tab_id" => tab_id}) when is_binary(tab_id) do
-    "#{socket.assigns.user_id}:#{tab_id}"
-  end
-
-  defp ext_tab_user_id(socket, _payload), do: socket.assigns.user_id
 end

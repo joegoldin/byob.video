@@ -36,8 +36,6 @@ defmodule Byob.RoomServer do
     event_counts: %{},
     rate_limit_ref: nil,
     activity_log: [],
-    client_rtts: %{},
-    sync_tolerance_ms: 250,
     pending_advance_ref: nil,
     round: nil,
     round_expire_ref: nil,
@@ -89,10 +87,6 @@ defmodule Byob.RoomServer do
 
   def get_state(pid) do
     GenServer.call(pid, :get_state)
-  end
-
-  def report_rtt(pid, user_id, rtt_ms) do
-    GenServer.cast(pid, {:report_rtt, user_id, rtt_ms})
   end
 
   def play(pid, user_id, position) do
@@ -242,32 +236,18 @@ defmodule Byob.RoomServer do
   def handle_call({:join, user_id, username, opts}, _from, state) do
     is_extension = Keyword.get(opts, :is_extension, false)
 
-    # Clean up disconnected extension users. SW reconnections create new
-    # user IDs leaving orphans. Only remove disconnected ones — active
-    # connections from other browsers are valid.
+    # Clean up stale extension users with the same username (SW reconnections
+    # create new user IDs, leaving orphaned entries)
     state =
       if is_extension do
         stale_ids =
           state.users
           |> Enum.filter(fn {uid, u} ->
-            uid != user_id && Map.get(u, :is_extension, false) && !u.connected
+            uid != user_id && u.username == username && Map.get(u, :is_extension, false)
           end)
           |> Enum.map(fn {uid, _} -> uid end)
 
-        state = %{state | users: Map.drop(state.users, stale_ids)}
-
-        # Clean open/ready tabs whose owner is not a connected extension user.
-        # This catches both freshly-stale users AND orphaned entries from
-        # extension users that were removed in previous cleanup passes.
-        connected_ext_ids =
-          state.users
-          |> Enum.filter(fn {_, u} -> Map.get(u, :is_extension, false) && u.connected end)
-          |> Enum.map(fn {uid, _} -> uid end)
-          |> MapSet.new()
-
-        open = Map.get(state, :open_tabs, %{}) |> Enum.filter(fn {_, o} -> o in connected_ext_ids end) |> Map.new()
-        ready = Map.get(state, :ready_tabs, %{}) |> Enum.filter(fn {_, o} -> o in connected_ext_ids end) |> Map.new()
-        state |> Map.put(:open_tabs, open) |> Map.put(:ready_tabs, ready)
+        %{state | users: Map.drop(state.users, stale_ids)}
       else
         state
       end
@@ -388,9 +368,6 @@ defmodule Byob.RoomServer do
       else
         state
       end
-
-    # Clean up RTT data for departing user
-    state = %{state | client_rtts: Map.delete(state.client_rtts, user_id)}
 
     # Mark as disconnected instead of removing
     state =
@@ -881,31 +858,6 @@ defmodule Byob.RoomServer do
         {:reply, {:error, :not_authorized}, state}
     end
   end
-
-  @impl true
-  def handle_cast({:report_rtt, user_id, rtt_ms}, state) when is_number(rtt_ms) do
-    client_rtts = Map.put(state.client_rtts, user_id, rtt_ms)
-    max_rtt = client_rtts |> Map.values() |> Enum.max(fn -> 0 end)
-    new_tolerance = if max_rtt > 250, do: 500, else: 250
-    tolerance_changed = new_tolerance != state.sync_tolerance_ms
-
-    state = %{state | client_rtts: client_rtts, sync_tolerance_ms: new_tolerance}
-
-    if tolerance_changed do
-      broadcast(state, {:sync_tolerance, %{tolerance_ms: new_tolerance, client_rtts: client_rtts}})
-    end
-
-    # Always broadcast sync stats for the "details for nerds" panel
-    broadcast(state, {:sync_stats, %{
-      tolerance_ms: new_tolerance,
-      client_rtts: client_rtts,
-      correction_interval_ms: 3000
-    }})
-
-    {:noreply, state}
-  end
-
-  def handle_cast({:report_rtt, _user_id, _rtt_ms}, state), do: {:noreply, state}
 
   @impl true
   def handle_info(:check_empty, state) do

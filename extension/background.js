@@ -8,40 +8,8 @@ let currentRoomId = null;
 let lastReadyCount = null;
 let currentServerUrl = null;
 let initialRoomState = null;
-let clockOffset = 0; // ms offset: serverMonotonic ≈ Date.now() + clockOffset
-let clockRtt = 0; // last measured RTT in ms
-let clockSyncTimer = null;
-let lastConnectAt = 0; // cooldown to prevent reconnection storms
-
-// Echo prevention: track which port originated the last play/pause/seek
-// so we can skip relaying the server's echo back to that port.
-let lastEventPort = null;
-let lastEventType = null;
-let lastEventTimer = null;
-
-function markOrigin(port, type) {
-  lastEventPort = port;
-  lastEventType = type;
-  if (lastEventTimer) clearTimeout(lastEventTimer);
-  // Clear after 2s — if the echo hasn't arrived by then, it never will
-  lastEventTimer = setTimeout(() => { lastEventPort = null; lastEventType = null; }, 2000);
-}
-
-function clearOrigin() {
-  lastEventPort = null;
-  lastEventType = null;
-  if (lastEventTimer) { clearTimeout(lastEventTimer); lastEventTimer = null; }
-}
-
-// Broadcast to all ports EXCEPT the origin of the current echo
-function broadcastExceptOrigin(msg, echoType) {
-  const skipPort = (lastEventType === echoType) ? lastEventPort : null;
-  if (skipPort) clearOrigin(); // consumed
-  for (const entry of ports) {
-    if (entry.port === skipPort) continue;
-    try { entry.port.postMessage(msg); } catch (_) {}
-  }
-}
+let lastConnectAt = 0;
+let autoplayCountdownActive = false;
 
 // Listen for port connections from content scripts
 chrome.runtime.onConnect.addListener((port) => {
@@ -126,25 +94,19 @@ function handleContentMessage(msg, port, tabId) {
         channel.push("sync:request_state", {}).receive("ok", (resp) => {
           console.log("[byob] Fresh state for sync:", resp);
           if (resp.play_state === "playing") {
-            port.postMessage({ type: "command:play", position: resp.current_time, server_time: resp.server_time });
+            port.postMessage({ type: "command:play", position: resp.current_time });
           } else {
-            port.postMessage({ type: "command:seek", position: resp.current_time, server_time: resp.server_time });
-            port.postMessage({ type: "command:pause", position: resp.current_time, server_time: resp.server_time });
+            port.postMessage({ type: "command:seek", position: resp.current_time });
+            port.postMessage({ type: "command:pause", position: resp.current_time });
           }
           // Wait for seek to settle before enabling bidirectional sync.
-          // Include server state so every port can initialize expectedPlayState
-          // even if it missed the preceding play/pause command.
+          // Broadcast to same-tab ports only (top frame + iframe) so the
+          // top frame can hide the toast without affecting other tabs.
           setTimeout(() => {
-            const syncedMsg = {
-              type: "command:synced",
-              play_state: resp.play_state,
-              position: resp.current_time,
-              server_time: resp.server_time,
-            };
             if (tabId != null) {
-              broadcastToTab(tabId, syncedMsg);
+              broadcastToTab(tabId, { type: "command:synced" });
             } else {
-              broadcastToContentScripts(syncedMsg);
+              broadcastToContentScripts({ type: "command:synced" });
             }
           }, 500);
         });
@@ -152,31 +114,23 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:play":
-      markOrigin(port, "play");
-      if (channel) channel.push("video:play", { position: msg.position, tab_id: String(tabId) });
+      if (channel) channel.push("video:play", { position: msg.position });
       break;
 
     case "video:pause":
-      markOrigin(port, "pause");
-      if (channel) channel.push("video:pause", { position: msg.position, tab_id: String(tabId) });
+      if (channel) channel.push("video:pause", { position: msg.position });
       break;
 
     case "video:seek":
-      markOrigin(port, "seek");
-      if (channel) channel.push("video:seek", { position: msg.position, tab_id: String(tabId) });
+      if (channel) channel.push("video:seek", { position: msg.position });
       break;
 
     case "video:ended":
-      if (channel) channel.push("video:ended", { tab_id: String(tabId) });
+      if (channel) channel.push("video:ended", {});
       break;
 
     case "video:state":
-      if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing, buffering: msg.buffering || false, tab_id: String(tabId) });
-      // Relay local buffering state to top frame so it can show/hide overlay
-      // without waiting for server round-trip
-      if (msg.buffering != null) {
-        broadcastToContentScripts({ type: "byob:local-buffering", buffering: !!msg.buffering });
-      }
+      if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing });
       break;
 
     case "video:ready":
@@ -189,10 +143,14 @@ function handleContentMessage(msg, port, tabId) {
       // Relay bar updates to all ports (so top frame can update its sync bar)
       broadcastToContentScripts(msg);
       break;
+  }
+}
 
-    case "debug:log":
-      if (channel) channel.push("debug:log", { msg: msg.msg, tab_id: String(tabId) });
-      break;
+function closeExtensionTabs() {
+  for (const entry of [...ports]) {
+    if (entry.tabId != null) {
+      try { chrome.tabs.remove(entry.tabId); } catch (_) {}
+    }
   }
 }
 
@@ -200,10 +158,9 @@ function connectToRoom(roomId, serverUrl, token, username) {
   // Don't reconnect if already connected to this room
   if (currentRoomId === roomId && channel) return;
 
-  // Cooldown — prevent reconnection storms from cascading failures
   const now = Date.now();
   if (now - lastConnectAt < 3000) {
-    console.log("[byob] Connection cooldown, skipping reconnect");
+    console.log("[byob] Connection cooldown");
     return;
   }
   lastConnectAt = now;
@@ -238,52 +195,39 @@ function connectToRoom(roomId, serverUrl, token, username) {
     is_extension: true,
   });
 
-  channel.on("sync:play", (data) => broadcastExceptOrigin({
+  channel.on("sync:play", (data) => broadcastToContentScripts({
     type: "command:play",
     position: data.time,
-    server_time: data.server_time,
-  }, "play"));
-
-  channel.on("sync:pause", (data) => broadcastExceptOrigin({
-    type: "command:pause",
-    position: data.time,
-    server_time: data.server_time,
-  }, "pause"));
-
-  channel.on("sync:seek", (data) => broadcastExceptOrigin({
-    type: "command:seek",
-    position: data.time,
-    server_time: data.server_time,
-  }, "seek"));
-
-  channel.on("sync:correction", (data) => {
-    broadcastToContentScripts({
-      type: "sync:correction",
-      expected_time: data.expected_time,
-      server_time: data.server_time,
-    });
-  });
-
-  channel.on("sync:buffering", (data) => broadcastToContentScripts({
-    type: "byob:peer-buffering",
-    user_id: data.user_id,
-    buffering: data.buffering,
   }));
 
-  channel.on("sync:tolerance", (data) => {
-    broadcastToContentScripts({ type: "byob:sync-tolerance", tolerance_ms: data.tolerance_ms, client_rtts: data.client_rtts });
-  });
+  channel.on("sync:pause", (data) => broadcastToContentScripts({
+    type: "command:pause",
+    position: data.time,
+  }));
 
-  let autoplayCountdownActive = false;
+  channel.on("sync:seek", (data) => broadcastToContentScripts({
+    type: "command:seek",
+    position: data.time,
+  }));
+
+  channel.on("sync:correction", (data) => {
+    // Could implement drift correction in extension too
+    // For v0, just relay seek if drift is large
+  });
 
   channel.on("autoplay:countdown", (data) => {
     autoplayCountdownActive = true;
-    broadcastToContentScripts({ type: "autoplay:countdown", duration_ms: data.duration_ms });
+    broadcastToContentScripts({
+      type: "autoplay:countdown",
+      duration_ms: data.duration_ms,
+    });
   });
 
   channel.on("autoplay:cancelled", () => {
     autoplayCountdownActive = false;
-    broadcastToContentScripts({ type: "autoplay:cancelled" });
+    broadcastToContentScripts({
+      type: "autoplay:cancelled",
+    });
   });
 
   channel.on("ready:count", (data) => {
@@ -292,16 +236,15 @@ function connectToRoom(roomId, serverUrl, token, username) {
   });
 
   channel.on("video:change", (data) => {
+    // If an autoplay countdown was active, the queue just advanced —
+    // close all extension tabs so users navigate to the new video.
     if (autoplayCountdownActive) {
-      // Queue advanced after countdown — close extension tabs so user
-      // returns to byob.video to open the next video.
-      autoplayCountdownActive = false;
       closeExtensionTabs();
+      autoplayCountdownActive = false;
     }
   });
 
   channel.on("queue:ended", () => {
-    // No more videos — close extension tabs
     closeExtensionTabs();
   });
 
@@ -313,9 +256,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
     socket = null;
     currentRoomId = null;
     lastReadyCount = null;
-    stopClockSyncMaintenance();
-    // Disconnect all ports — content scripts will reconnect with backoff.
-    // The 3s connection cooldown prevents reconnection storms.
+    // Disconnect all ports — content scripts will reconnect with backoff
     for (const entry of [...ports]) {
       try { entry.port.disconnect(); } catch (_) {}
     }
@@ -340,71 +281,10 @@ function connectToRoom(roomId, serverUrl, token, username) {
           channel.push("video:tab_opened", { tab_id: String(entry.tabId) });
         }
       }
-      // Start NTP clock sync after connection stabilizes
-      setTimeout(() => {
-        doClockSync();
-        startClockSyncMaintenance();
-      }, 2000);
     })
     .receive("error", (resp) => {
       console.error("[byob] Failed to join room", roomId, resp);
     });
-}
-
-function closeExtensionTabs() {
-  for (const entry of [...ports]) {
-    if (entry.tabId != null) {
-      try { chrome.tabs.remove(entry.tabId); } catch (_) {}
-    }
-  }
-}
-
-// NTP-style clock sync — burst of 5 pings, take median offset
-function doClockSync() {
-  if (!channel) return;
-  const samples = [];
-  let remaining = 5;
-
-  function sendPing() {
-    if (!channel) return; // channel may have closed during burst
-    const t1 = Date.now();
-    channel.push("sync:ping", { t1 }).receive("ok", (resp) => {
-      const t4 = Date.now();
-      const { t2, t3 } = resp;
-      const rtt = (t4 - t1) - (t3 - t2);
-      const offset = ((t2 - t1) + (t3 - t4)) / 2;
-      samples.push({ rtt, offset });
-
-      remaining--;
-      if (remaining > 0) {
-        setTimeout(sendPing, 100);
-      } else {
-        // Sort by RTT, take median for stability
-        samples.sort((a, b) => a.rtt - b.rtt);
-        const median = samples[Math.floor(samples.length / 2)];
-        clockOffset = median.offset;
-        clockRtt = median.rtt;
-        console.log(`[byob] Clock sync: offset=${clockOffset}ms, rtt=${clockRtt}ms`);
-
-        // Send to all content scripts
-        broadcastToContentScripts({ type: "byob:clock-sync", offset: clockOffset, rtt: clockRtt });
-        // Report RTT to server for room-wide tolerance computation
-        if (channel) channel.push("sync:rtt_report", { rtt: clockRtt });
-      }
-    });
-  }
-
-  sendPing();
-}
-
-function startClockSyncMaintenance() {
-  if (clockSyncTimer) clearInterval(clockSyncTimer);
-  // Re-sync every 30s for drift maintenance
-  clockSyncTimer = setInterval(() => doClockSync(), 30000);
-}
-
-function stopClockSyncMaintenance() {
-  if (clockSyncTimer) { clearInterval(clockSyncTimer); clockSyncTimer = null; }
 }
 
 // Listen for messages from content scripts (cross-origin safe)

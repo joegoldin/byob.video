@@ -53,8 +53,7 @@ defmodule ByobWeb.RoomLive do
         comments_collapsed: false,
         comments_expanded: false,
         round: nil,
-        round_collapsed: false,
-        sync_stats: nil
+        round_collapsed: false
       )
 
     if connected?(socket) do
@@ -304,15 +303,6 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:activity_log_entry, entry}, socket),
     do: PubSub.handle_activity_log_entry(entry, socket)
 
-  def handle_info({:sync_stats, data}, socket) do
-    {:noreply, assign(socket, :sync_stats, data)}
-  end
-
-  def handle_info({:sync_tolerance, _data}, socket) do
-    # Handled by extension channel; LiveView uses sync_stats instead
-    {:noreply, socket}
-  end
-
   def handle_info({:round_started, round}, socket) do
     socket = assign(socket, round: round, round_collapsed: false)
 
@@ -426,7 +416,6 @@ defmodule ByobWeb.RoomLive do
       sb_settings={@sb_settings}
       api_key={@api_key}
       show_comments={@show_comments}
-      sync_stats={@sync_stats}
     />
     <Components.autoplay_help_modal />
 

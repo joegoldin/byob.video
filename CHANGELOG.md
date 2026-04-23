@@ -2,6 +2,28 @@
 
 ---
 
+# v5.0.0
+
+**Revert to v3.6.3 sync engine + targeted backports.**
+
+The v4.x reconcile loop architecture caused cascading issues on third-party sites with DRM/buffering transitions. This release reverts to the proven v3.6.3 suppression-based sync engine and backports specific improvements.
+
+### Backported from v4.x
+- **innerHTML removed:** All `innerHTML` replaced with DOM creation methods (AMO compliance).
+- **Persistence crash recovery:** `binary_to_term` wrapped in try/rescue; validates required fields on load.
+- **Computed position on sync:** `sync:request_state` and join payload return `current_time + elapsed` for playing rooms (fixes late-joiner position mismatch).
+- **Position-based ended detection:** Replaces unreliable browser `ended` event. Requires valid duration >60s and position >90%.
+- **Video element replacement guard:** `hookVideo` resets `synced=false` when site replaces video element (prevents pos=0 corruption).
+- **Connection cooldown (3s):** Prevents reconnection storms from cascading socket failures.
+- **Tab closing:** Extension tabs close when queue advances after autoplay countdown or queue ends.
+- **Queue ended relay:** Extension channel forwards `queue:ended` events.
+- **Sync correction interval 3s** (was 5s) for tighter drift tracking.
+
+### Reverted (from v4.x — caused issues)
+- NTP clock sync, reconcile loop, drift correction, debounced play/pause, settling period, adaptive command guard, buffering/stall detection, hard seek logic.
+
+---
+
 # v4.1.0
 
 **Extension sync engine: NTP clock sync, reconcile loop, drift correction, buffering detection.**
