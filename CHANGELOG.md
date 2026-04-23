@@ -2,6 +2,13 @@
 
 ---
 
+# v5.0.5
+
+- **Fix DRM stall recovery loop:** `waitForNativePlay` was bypassing the gesture wait because a stalled video still reports `paused=false`. Now force-pause on DRM stall escalation so the gesture prompt actually waits for a real click. Stops the loop where stalled tabs would immediately flip back to `synced` and process incoming CMD:plays that couldn't un-wedge the pipeline.
+- **Fix ready-count "0/0":** Hide the users badge when `total === 0` (no non-extension users to count).
+
+---
+
 # v5.0.4
 
 ### DRM sync improvements (Crunchyroll, etc.)

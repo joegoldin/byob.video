@@ -496,6 +496,14 @@
       synced = false;
       needsGesture = true;
       followerMode = false;
+      // Stalled video reports paused=false, which would make waitForNativePlay
+      // bypass the gesture wait. Force an actual pause so we genuinely wait
+      // for the user to click play. Event handlers skip while synced=false.
+      if (_drmPauseTimer) { clearTimeout(_drmPauseTimer); _drmPauseTimer = null; }
+      if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
+      _programmaticSeek = true;
+      try { hookedVideo.pause(); } catch (_) {}
+      _programmaticSeek = false;
       updateSyncBarStatus("clickjoin");
       showJoinToast("Playback stuck — click play to resync");
       waitForNativePlay();
@@ -1059,6 +1067,12 @@
     const icon = document.getElementById("byob-users-icon");
     const count = document.getElementById("byob-users-count");
     if (!el || !icon || !count) return;
+
+    // No non-extension users — nothing meaningful to display.
+    if (!total || total <= 0) {
+      el.style.display = "none";
+      return;
+    }
 
     el.style.display = "flex";
 
