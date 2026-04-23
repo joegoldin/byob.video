@@ -204,8 +204,18 @@ defmodule Byob.Persistence do
       case Exqlite.Sqlite3.step(db, stmt) do
         {:row, [blob, schema_version]} when is_binary(blob) ->
           loaded_version = schema_version || 1
-          state = :erlang.binary_to_term(blob, [:safe])
-          {:ok, Migrations.run(state, loaded_version, Migrations.current_version())}
+
+          try do
+            state = :erlang.binary_to_term(blob, [:safe])
+            {:ok, Migrations.run(state, loaded_version, Migrations.current_version())}
+          rescue
+            ArgumentError ->
+              # Saved state contains atoms not in current VM (e.g. removed struct fields).
+              # Discard stale data and start fresh.
+              require Logger
+              Logger.warning("[persistence] Discarding stale room #{room_id}: incompatible binary format")
+              :not_found
+          end
 
         _ ->
           :not_found

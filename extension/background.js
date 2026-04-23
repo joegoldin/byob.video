@@ -11,6 +11,7 @@ let initialRoomState = null;
 let clockOffset = 0; // ms offset: serverMonotonic ≈ Date.now() + clockOffset
 let clockRtt = 0; // last measured RTT in ms
 let clockSyncTimer = null;
+let lastConnectAt = 0; // cooldown to prevent reconnection storms
 
 // Echo prevention: track which port originated the last play/pause/seek
 // so we can skip relaying the server's echo back to that port.
@@ -189,6 +190,14 @@ function connectToRoom(roomId, serverUrl, token, username) {
   // Don't reconnect if already connected to this room
   if (currentRoomId === roomId && channel) return;
 
+  // Cooldown — prevent reconnection storms from cascading failures
+  const now = Date.now();
+  if (now - lastConnectAt < 3000) {
+    console.log("[byob] Connection cooldown, skipping reconnect");
+    return;
+  }
+  lastConnectAt = now;
+
   // Disconnect existing
   if (channel) {
     channel.leave();
@@ -270,8 +279,13 @@ function connectToRoom(roomId, serverUrl, token, username) {
   });
 
   channel.on("video:change", (data) => {
-    // New video selected — content script doesn't need to do anything
-    // since the user navigates to the video themselves
+    // Video changed (queue advance or new selection) — close all extension tabs
+    // so the user returns to byob.video where the new video will load.
+    for (const entry of [...ports]) {
+      if (entry.tabId != null) {
+        try { chrome.tabs.remove(entry.tabId); } catch (_) {}
+      }
+    }
   });
 
   socket.onOpen(() => console.log("[byob] WebSocket connected to", wsUrl));
@@ -283,11 +297,10 @@ function connectToRoom(roomId, serverUrl, token, username) {
     currentRoomId = null;
     lastReadyCount = null;
     stopClockSyncMaintenance();
-    // Disconnect all ports — content scripts will reconnect with backoff
-    for (const entry of [...ports]) {
-      try { entry.port.disconnect(); } catch (_) {}
-    }
-    ports.length = 0;
+    // Don't disconnect ports — keep them alive so content scripts don't
+    // trigger a reconnection storm. The next "connect" message from any
+    // port will re-establish the socket/channel. Messages sent while
+    // disconnected will simply fail silently (channel null guard).
   });
 
   channel
@@ -308,9 +321,11 @@ function connectToRoom(roomId, serverUrl, token, username) {
           channel.push("video:tab_opened", { tab_id: String(entry.tabId) });
         }
       }
-      // Start NTP clock sync burst + maintenance
-      doClockSync();
-      startClockSyncMaintenance();
+      // Start NTP clock sync after connection stabilizes
+      setTimeout(() => {
+        doClockSync();
+        startClockSyncMaintenance();
+      }, 2000);
     })
     .receive("error", (resp) => {
       console.error("[byob] Failed to join room", roomId, resp);
@@ -324,6 +339,7 @@ function doClockSync() {
   let remaining = 5;
 
   function sendPing() {
+    if (!channel) return; // channel may have closed during burst
     const t1 = Date.now();
     channel.push("sync:ping", { t1 }).receive("ok", (resp) => {
       const t4 = Date.now();

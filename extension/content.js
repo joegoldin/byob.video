@@ -363,9 +363,18 @@
 
   function hookVideo(video) {
     if (hookedVideo === video) return;
+    const wasAlreadyHooked = !!hookedVideo;
     if (hookedVideo) {
       // Unhook previous
       unhookVideo();
+    }
+
+    // If the site replaced the video element while we were synced,
+    // pause syncing until we re-sync with the server. Otherwise the
+    // new element (position=0) would corrupt server state.
+    if (wasAlreadyHooked && synced) {
+      synced = false;
+      stopReconcile();
     }
 
     hookedVideo = video;
@@ -458,6 +467,9 @@
   function onVideoSeeked() {
     if (!synced || commandGuard) return;
     lastSeekAt = Date.now();
+    // Update serverRef immediately so reconcile loop doesn't see the new
+    // position as "drift" and snap back to the old position.
+    updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
     }
@@ -487,6 +499,13 @@
 
   function onVideoEnded() {
     if (!synced) return;
+    // Only report ended for real content — ignore ads and short clips.
+    // Ads are typically <60s; real videos are minutes+. Also require the
+    // video to have actually played past 90% to rule out false endings
+    // from video element swaps or mid-stream interruptions.
+    const dur = hookedVideo?.duration || 0;
+    const pos = hookedVideo?.currentTime || 0;
+    if (dur < 60 || pos < dur * 0.9) return;
     if (port) {
       port.postMessage({ type: Msg.VIDEO_ENDED });
     }
