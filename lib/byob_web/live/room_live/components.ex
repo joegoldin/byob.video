@@ -258,7 +258,7 @@ defmodule ByobWeb.RoomLive.Components do
 
   def settings_modal(assigns) do
     ~H"""
-    <dialog id="sb-settings-modal" class="modal">
+    <dialog id="sb-settings-modal" class="modal" phx-hook="PreserveModal">
       <div class="modal-box max-w-md relative">
         <form method="dialog">
           <button class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3">✕</button>

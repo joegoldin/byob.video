@@ -290,7 +290,12 @@ const liveSocket = new LiveSocket("/live", Socket, {
     has_extension: document.documentElement.hasAttribute("data-byob-extension"),
     show_comments: localStorage.getItem("byob_show_comments") !== "false",
   }),
-  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu, ExpandWhenCramped, ScrollBottom, RouletteWheel, RoundTimer},
+  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu, ExpandWhenCramped, ScrollBottom, RouletteWheel, RoundTimer,
+    PreserveModal: {
+      beforeUpdate() { this._wasOpen = this.el.open; },
+      updated() { if (this._wasOpen && !this.el.open) this.el.showModal(); }
+    }
+  },
 })
 
 // Listen for username changes to persist to localStorage
