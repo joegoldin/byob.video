@@ -4,23 +4,38 @@
 
 # v5.0.0
 
-**Revert to v3.6.3 sync engine + targeted backports.**
+**Revert to v3.6.3 sync engine + targeted improvements.**
 
-The v4.x reconcile loop architecture caused cascading issues on third-party sites with DRM/buffering transitions. This release reverts to the proven v3.6.3 suppression-based sync engine and backports specific improvements.
+The v4.x reconcile loop caused cascading issues on sites with DRM/buffering transitions. This release reverts to the proven v3.6.3 suppression-based sync engine and adds focused improvements.
+
+### Drift correction
+- **250ms drift tolerance** with proportional rate correction (0.9–1.1x). Hard seek for >3s drift.
+- **1s correction interval** (was 5s) — server sends expected position every second for tight sync.
+- **Follower mode:** Joining clients are read-only until stable (position+state match server for 3 consecutive ticks). Prevents join process from disrupting existing clients.
+
+### Sync bar improvements
+- **Debounced status display:** Brief DRM pauses don't flicker "Paused" — requires 2 consecutive paused updates.
+- **Bar updates only when synced:** Unsynced clients don't send bar updates (prevents seek bar flickering).
+- **Auto-play on join:** `command:play` tries `play()` even during `needsGesture` — if browser allows it, syncs immediately without manual click.
+
+### Time-window suppression
+- **Absorbs ALL matching events** for 1.5s instead of just the first. Sites with DRM/buffering fire multiple play/pause during transitions — all suppressed.
+
+### Details for nerds
+- **Per-client sync stats panel** in room settings: drift (ms, color-coded), server position, play state.
+- Updates every 1s correction cycle.
 
 ### Backported from v4.x
 - **innerHTML removed:** All `innerHTML` replaced with DOM creation methods (AMO compliance).
-- **Persistence crash recovery:** `binary_to_term` wrapped in try/rescue; validates required fields on load.
-- **Computed position on sync:** `sync:request_state` and join payload return `current_time + elapsed` for playing rooms (fixes late-joiner position mismatch).
-- **Position-based ended detection:** Replaces unreliable browser `ended` event. Requires valid duration >60s and position >90%.
-- **Video element replacement guard:** `hookVideo` resets `synced=false` when site replaces video element (prevents pos=0 corruption).
-- **Connection cooldown (3s):** Prevents reconnection storms from cascading socket failures.
-- **Tab closing:** Extension tabs close when queue advances after autoplay countdown or queue ends.
-- **Queue ended relay:** Extension channel forwards `queue:ended` events.
-- **Sync correction interval 3s** (was 5s) for tighter drift tracking.
+- **Persistence crash recovery:** `binary_to_term` wrapped in try/rescue; validates required fields.
+- **Computed position on sync:** Returns `current_time + elapsed` for playing rooms.
+- **Position-based ended detection:** Requires duration >60s and position >90%.
+- **Video element replacement guard:** Resets `synced=false` on element swap.
+- **Connection cooldown (3s):** Prevents reconnection storms.
+- **Tab closing:** Extension tabs close on queue advance/end.
 
-### Reverted (from v4.x — caused issues)
-- NTP clock sync, reconcile loop, drift correction, debounced play/pause, settling period, adaptive command guard, buffering/stall detection, hard seek logic.
+### Known issues
+- **Ready count:** May show incorrect counts during join (autoplay triggers premature `video:ready`). Cleanup on disconnect may not always propagate.
 
 ---
 

@@ -54,7 +54,7 @@ defmodule ByobWeb.RoomLive do
         comments_expanded: false,
         round: nil,
         round_collapsed: false,
-        sync_stats: %{correction_interval_ms: 3000, client_rtts: %{}}
+        sync_stats: %{correction_interval_ms: 1000, clients: %{}}
       )
 
     if connected?(socket) do

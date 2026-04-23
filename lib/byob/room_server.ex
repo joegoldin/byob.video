@@ -995,7 +995,7 @@ defmodule Byob.RoomServer do
     now = System.monotonic_time(:millisecond)
     position = current_position(state)
     broadcast(state, {:sync_correction, %{expected_time: position, server_time: now}})
-    state = %{state | sync_correction_ref: Process.send_after(self(), :sync_correction, 3000)}
+    state = %{state | sync_correction_ref: Process.send_after(self(), :sync_correction, 1000)}
     {:noreply, state}
   end
 
@@ -1373,7 +1373,7 @@ defmodule Byob.RoomServer do
 
   defp schedule_sync_correction(state) do
     state = cancel_sync_correction(state)
-    ref = Process.send_after(self(), :sync_correction, 3000)
+    ref = Process.send_after(self(), :sync_correction, 1000)
     %{state | sync_correction_ref: ref}
   end
 
