@@ -21,7 +21,7 @@
   let followerStableTicks = 0;
   let _barPausedCount = 0;
   let _lastCorrectionSeek = 0;
-  let _lastUserSeek = 0; // suppress correction seeks after user seeks
+  let _pendingSeekPos = null; // after user seek, ignore corrections until server reflects new position
 
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
@@ -340,7 +340,7 @@
   function onVideoSeeked() {
     if (!synced || followerMode) return;
     if (shouldSuppress(null)) return;
-    _lastUserSeek = Date.now();
+    _pendingSeekPos = hookedVideo.currentTime;
     if (port && hookedVideo) {
       port.postMessage({
         type: "video:seek",
@@ -468,6 +468,15 @@
     // Server correction — proportional rate correction for tight sync.
     if (msg.type === "sync:correction" && hookedVideo && synced) {
       if (msg.expected_time != null && !hookedVideo.paused) {
+        // If we have a pending user seek, check if server caught up
+        if (_pendingSeekPos != null) {
+          if (Math.abs(msg.expected_time - _pendingSeekPos) < 3) {
+            _pendingSeekPos = null; // server reflects our seek — resume corrections
+          } else {
+            return; // stale correction from before our seek — ignore
+          }
+        }
+
         const drift = hookedVideo.currentTime - msg.expected_time;
         const absDrift = Math.abs(drift);
         const threshold = followerMode ? 0.5 : 0.25;
@@ -477,8 +486,7 @@
         } else if (absDrift < 3.0) {
           const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
           hookedVideo.playbackRate = rate;
-        } else if (Date.now() - _lastCorrectionSeek > 5000 && Date.now() - _lastUserSeek > 3000) {
-          // Large drift — hard seek (skip if user just seeked or cooldown active)
+        } else if (Date.now() - _lastCorrectionSeek > 5000) {
           _lastCorrectionSeek = Date.now();
           suppress("seeked");
           hookedVideo.currentTime = msg.expected_time;
