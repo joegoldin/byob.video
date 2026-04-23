@@ -2,6 +2,13 @@
 
 ---
 
+# v5.0.6
+
+- **Fix DRM stall recovery click loop:** On stall recovery, the user's click no longer re-seeks to the server's position (which just re-wedged the pipeline and caused another stall). Instead, the video resumes from its current position and we announce that position to the server. This breaks the click→stall→click→stall loop on Crunchyroll.
+- **New `exitStallRecovery` path:** Both native player clicks and sync-bar play clicks route through the same exit — sets `synced=true`, clears stall flags, sends `video:play` with current position.
+
+---
+
 # v5.0.5
 
 - **Fix DRM stall recovery loop:** `waitForNativePlay` was bypassing the gesture wait because a stalled video still reports `paused=false`. Now force-pause on DRM stall escalation so the gesture prompt actually waits for a real click. Stops the loop where stalled tabs would immediately flip back to `synced` and process incoming CMD:plays that couldn't un-wedge the pipeline.

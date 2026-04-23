@@ -41,6 +41,7 @@
   let _lastExpectedPos = null;
   let _lastExpectedAt = 0;
   let _recoveryInProgress = false;
+  let _stallRecovery = false; // true while waiting for user click to un-wedge DRM
 
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
@@ -480,6 +481,24 @@
     }
   }
 
+  // After a DRM stall recovery click: resume from current position without
+  // re-seeking to server's position (which would just stall again). Send our
+  // current pos to server and let drift correction handle divergence.
+  function exitStallRecovery() {
+    _stallRecovery = false;
+    synced = true;
+    needsGesture = false;
+    followerMode = false;
+    hideJoinToast();
+    updateSyncBarStatus(hookedVideo && !hookedVideo.paused ? "playing" : "paused");
+    _lastTickPosition = null;
+    _stallTickCount = 0;
+    _stallRecoveryAttempts = 0;
+    if (port && hookedVideo && !hookedVideo.paused) {
+      port.postMessage({ type: "video:play", position: hookedVideo.currentTime });
+    }
+  }
+
   // Stall recovery. On DRM sites, programmatic pause→seek→play doesn't un-wedge
   // a frozen MSE pipeline; only a user gesture does. So we skip straight to
   // needsGesture. On non-DRM sites, try the pause→seek→play sequence first.
@@ -495,6 +514,7 @@
       _stallRecoveryAttempts = 0;
       synced = false;
       needsGesture = true;
+      _stallRecovery = true;
       followerMode = false;
       // Stalled video reports paused=false, which would make waitForNativePlay
       // bypass the gesture wait. Force an actual pause so we genuinely wait
@@ -765,12 +785,18 @@
     // the browser may allow it if the user interacted with the page.
     if (needsGesture && msg.type === "command:play") {
       suppress("playing"); // prevent play event from sending stale position to server
-      if (msg.position != null) hookedVideo.currentTime = msg.position;
-      hookedVideo.play().then(() => {
-        needsGesture = false;
-        hideJoinToast();
-        requestSync(); // gets computed position from server and seeks there
-      }).catch(() => {});
+      if (_stallRecovery) {
+        // Don't re-seek — would just re-wedge the DRM pipeline. Play from
+        // current position and let the server reconcile from our new state.
+        hookedVideo.play().then(() => { exitStallRecovery(); }).catch(() => {});
+      } else {
+        if (msg.position != null) hookedVideo.currentTime = msg.position;
+        hookedVideo.play().then(() => {
+          needsGesture = false;
+          hideJoinToast();
+          requestSync(); // gets computed position from server and seeks there
+        }).catch(() => {});
+      }
       return;
     }
 
@@ -884,9 +910,12 @@
         hookedVideo?.removeEventListener("play", _nativePlayListener);
         _nativePlayListener = null;
       }
-      // Video is actually playing now — clear gesture requirement
-      needsGesture = false;
-      requestSync();
+      if (_stallRecovery) {
+        exitStallRecovery();
+      } else {
+        needsGesture = false;
+        requestSync();
+      }
     };
     hookedVideo.addEventListener("play", _nativePlayListener);
   }
