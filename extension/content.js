@@ -569,29 +569,41 @@
   let _stallTicks = 0;
 
   // Returns "buffering" if in buffering state, null otherwise.
-  // Buffering is LOCAL ONLY — doesn't pause the server. The buffering
-  // client shows an overlay and skips drift correction. When it catches
-  // up, drift correction resumes naturally.
+  // When buffering: pauses the server, shows overlay, notifies peers.
+  // _bufferingPause prevents the echo of our own pause from triggering
+  // the reconcile's play/pause correction on this client.
+  let _bufferingPause = false;
+
   function checkStall(localPosition) {
     const posAdvance = _lastReconcilePos !== null ? (localPosition - _lastReconcilePos) : 1;
     if (posAdvance < 0.05) {
       _stallTicks++;
       if (_stallTicks >= 3 && !isBuffering) {
         isBuffering = true;
+        _bufferingPause = true;
         showBufferingOverlay();
         updateSyncBarStatus(SyncStatus.BUFFERING);
-        _log("reconcile: buffering (local only)");
+        _log("reconcile: buffering — pausing server");
         if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
+        // Pause server so other clients wait
+        if (synced && port) {
+          port.postMessage({ type: Msg.VIDEO_PAUSE, position: localPosition });
+        }
       }
       if (isBuffering) {
         if (_stallTicks >= 20) {
-          // After 10s, accept the site's position (it may have seeked elsewhere)
           _log("reconcile: buffering timeout, accepting pos=", localPosition);
-          updateServerRef(localPosition, expectedPlayState);
-          if (synced && port) port.postMessage({ type: Msg.VIDEO_SEEK, position: localPosition });
+          _bufferingPause = false;
           isBuffering = false;
           hideBufferingOverlay();
-          updateSyncBarStatus(expectedPlayState === State.PLAYING ? SyncStatus.PLAYING : SyncStatus.PAUSED);
+          // Resume from wherever the video actually is
+          expectedPlayState = State.PLAYING;
+          updateServerRef(localPosition, State.PLAYING);
+          if (synced && port) {
+            port.postMessage({ type: Msg.VIDEO_SEEK, position: localPosition });
+            port.postMessage({ type: Msg.VIDEO_PLAY, position: localPosition });
+          }
+          updateSyncBarStatus(SyncStatus.PLAYING);
           _stallTicks = 0;
           return null;
         }
@@ -602,9 +614,16 @@
         _stallTicks = Math.max(0, _stallTicks - 1);
         if (_stallTicks <= 0) {
           isBuffering = false;
+          _bufferingPause = false;
           hideBufferingOverlay();
-          _log("reconcile: buffering cleared");
+          _log("reconcile: buffering cleared — resuming server");
           if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: localPosition, duration: hookedVideo.duration || 0, playing: true });
+          // Resume from current position
+          expectedPlayState = State.PLAYING;
+          updateServerRef(localPosition, State.PLAYING);
+          if (synced && port) {
+            port.postMessage({ type: Msg.VIDEO_PLAY, position: localPosition });
+          }
           updateSyncBarStatus(SyncStatus.PLAYING);
         } else {
           return "buffering";
@@ -627,6 +646,13 @@
       const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
 
       // --- Play/pause state reconciliation ---
+      // Skip if we're in a buffering-pause — the video is playing but we
+      // intentionally paused the server. Don't try to "correct" this.
+      if (_bufferingPause && isBuffering) {
+        // Let checkStall handle exit
+        return;
+      }
+
       // If actual state differs from server-expected state, one of two things:
       // 1. Site glitch (DRM, buffering) — correct locally after 1.5s
       // 2. User deliberately changed state — update server after 1.5s
