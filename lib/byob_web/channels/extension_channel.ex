@@ -158,13 +158,25 @@ defmodule ByobWeb.ExtensionChannel do
 
   def handle_in("sync:request_state", _payload, socket) do
     state = RoomServer.get_state(socket.assigns.room_pid)
+    now = System.monotonic_time(:millisecond)
+
+    # Compute current position accounting for elapsed playback time.
+    # state.current_time is snapped at last state change — if playing,
+    # add elapsed time so joining clients get the actual position.
+    current_time =
+      if state.play_state == :playing do
+        elapsed = (now - state.last_sync_at) / 1000
+        state.current_time + elapsed
+      else
+        state.current_time
+      end
 
     {:reply,
      {:ok,
       %{
         play_state: Atom.to_string(state.play_state),
-        current_time: state.current_time,
-        server_time: System.monotonic_time(:millisecond)
+        current_time: current_time,
+        server_time: now
       }}, socket}
   end
 
@@ -292,12 +304,22 @@ defmodule ByobWeb.ExtensionChannel do
         nil
       end
 
+    now = System.monotonic_time(:millisecond)
+
+    current_time =
+      if state.play_state == :playing do
+        elapsed = (now - state.last_sync_at) / 1000
+        state.current_time + elapsed
+      else
+        state.current_time
+      end
+
     %{
       queue: Enum.map(state.queue, &serialize_item/1),
       current_index: state.current_index,
       play_state: Atom.to_string(state.play_state),
-      current_time: state.current_time,
-      server_time: System.monotonic_time(:millisecond),
+      current_time: current_time,
+      server_time: now,
       playback_rate: state.playback_rate,
       ready_count: ready_count
     }
