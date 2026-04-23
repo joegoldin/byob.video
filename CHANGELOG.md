@@ -4,35 +4,47 @@
 
 # v4.1.0
 
-**Extension sync engine: NTP clock sync, reconcile loop, drift correction.**
+**Extension sync engine: NTP clock sync, reconcile loop, drift correction, buffering detection.**
 
 ### Reconcile loop
-- **Single reconcile loop** replaces all prior correction logic (adaptive command guard, state check interval). Runs every 500ms and handles play/pause mismatch, buffering detection, position drift, and paused position correction in one place.
-- **Play/pause correction:** If video state disagrees with server for 1.5s, retries `play()` with buffering overlay. If play keeps failing (autoplay policy), drops to gesture state with toast.
-- **Paused position correction:** If both server and client are paused but position differs by >1s, hard seeks to server position. Fixes: seeking on one client didn't propagate until the other pressed play.
-- **Playing drift correction:** Proportional playback rate adjustment (0.9–1.1x) for small drift, hard seek for >5s drift. Uses room-wide sync tolerance as dead zone.
+- **Single reconcile loop** (500ms tick) handles play/pause mismatch, buffering/stall detection, position drift, and paused position correction.
+- **Debounced play/pause** (500ms): rapid site toggles (DRM, buffering transitions) cancel each other out. Only stable state changes reach the server.
+- **State-change-only filter:** `onVideoPlay`/`onVideoPause` only send events that change `expectedPlayState`. Redundant confirmations from the site are silently dropped.
+- **Paused position correction:** Both clients paused but different positions → hard seek to server position.
+- **Playing drift correction:** Proportional playback rate (0.9–1.1x) for small drift, hard seek for >5s. Respects recent user seeks (no hard-seek for 5s after user action).
+
+### Buffering detection
+- **Stall-based detection:** If video position frozen for 1.5s (3 ticks), enters buffering state. Suppressed during settling (3s after join) and after seeks (5s buffer time).
+- **Server pause on buffer:** Pauses server so other clients wait. `_bufferingPause` flag prevents the buffering client from fighting its own pause echo.
+- **Buffer clear:** Resumes server from current position. Requires 3s of sustained playback before clearing.
+- **Buffer timeout (10s):** Accepts site's actual position if stuck, seeks server to match.
+- **Position-based ended detection:** Replaces browser `ended` event (unreliable on third-party sites). Checks `position >= duration - 3` with `duration > 60` guard.
 
 ### NTP clock sync
-- **5-probe burst on connect**, median offset selection. Maintenance re-sync every 30s.
-- **Synced clock for drift computation:** `serverMonotonic ≈ Date.now() + clockOffset` — both clients agree on expected position regardless of individual network latency.
-- **RTT reporting:** Each extension client reports its RTT to the server after clock sync.
+- **5-probe burst on connect**, median offset selection. 30s maintenance re-sync.
+- **Synced clock for drift computation:** `serverMonotonic ≈ Date.now() + clockOffset`.
+- **RTT reporting:** Each client reports RTT; room tolerance widens to 500ms if any client > 250ms.
+- **Clock-sync gate:** Drift correction only runs after clock sync completes. Stall detection runs immediately.
 
-### Dynamic room tolerance
-- **250ms default dead zone.** If any client in the room has RTT > 250ms, room tolerance widens to 500ms for all clients.
-- **Server broadcasts tolerance changes** to all extension clients via `sync:tolerance` channel event.
+### Server-authoritative model
+- **Server timestamps on all commands:** play/pause/seek/correction include `server_time` (monotonic ms). Stale messages rejected.
+- **Computed position on sync:** `sync:request_state` and join payload return `current_time + elapsed` for playing rooms.
+- **Per-tab user ID:** `ext_user_id:tab_id` so two tabs in one browser are separate sync clients.
+- **Adaptive command guard:** Holds until site settles (play state matches expected) for incoming server commands. Fixed guard for seeks.
+- **3s settling period after sync:** Suppresses contradictory events during site initialization on join.
 
-### Stale message rejection
-- **Server timestamps on all sync commands:** play/pause/seek/correction messages include `server_time` (monotonic ms).
-- **Client ignores stale commands:** Messages with `server_time` older than the current reference are dropped, preventing out-of-order state corruption (e.g., a correction arriving after a newer play command).
+### Infrastructure
+- **Connection cooldown (3s):** Prevents reconnection storms from cascading socket failures.
+- **Delayed clock sync (2s):** NTP burst starts after connection stabilizes.
+- **Persistence crash recovery:** Gracefully discards incompatible saved room data; validates required fields.
+- **Debug logging:** `[byob]` logs in devtools + `[ext:debug]` in server terminal. Anonymized user IDs (SHA-256 8-char prefix).
+- **Details for nerds panel** in room settings: sync tolerance, correction interval, per-client RTT.
+- **Tab closing:** Extension tabs close when queue advances after autoplay countdown or queue ends.
+- **innerHTML removed:** All `innerHTML` replaced with DOM creation methods (AMO validation).
 
-### Sync correction interval
-- Server sends `sync:correction` every **3s** (was 5s) for tighter drift tracking.
-
-### Details for nerds
-- **New panel in room settings** (above Attribution): shows sync tolerance, correction interval, and per-client RTT with color-coded latency indicators.
-
-### Command guard simplified
-- `commandGuard` is now a simple 500ms echo prevention timer. All state correction logic moved to the reconcile loop — no more stuck buffering states.
+### Known issues
+- **Dual-tab same-browser:** Two tabs sharing one service worker (normal + incognito) can interfere during the second tab's join process. Needs "active player" tracking in the SW.
+- **Seek-hostile sites:** Some streaming sites (e.g., aniwave) don't honor `currentTime` seeks, causing position mismatches that trigger cascading corrections.
 
 ---
 
