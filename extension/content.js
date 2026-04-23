@@ -650,10 +650,23 @@
           isBuffering = true;
           showBufferingOverlay();
           updateSyncBarStatus(SyncStatus.BUFFERING);
-          _log("reconcile: buffering (frozen for", (_stallTicks * 0.5).toFixed(1), "s)");
+          _log("reconcile: buffering (frozen)");
           if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
         }
         if (isBuffering) {
+          // After 10s of buffering (20 ticks), accept the site's position
+          // and update the server. The site may have seeked somewhere else.
+          if (_stallTicks >= 20) {
+            _log("reconcile: buffering timeout, accepting pos=", localPosition);
+            updateServerRef(localPosition, expectedPlayState);
+            if (synced && port) {
+              port.postMessage({ type: Msg.VIDEO_SEEK, position: localPosition });
+            }
+            isBuffering = false;
+            hideBufferingOverlay();
+            updateSyncBarStatus(expectedPlayState === State.PLAYING ? SyncStatus.PLAYING : SyncStatus.PAUSED);
+            _stallTicks = 0;
+          }
           _lastReconcilePos = localPosition;
           return;
         }
