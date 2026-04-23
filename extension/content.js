@@ -519,6 +519,8 @@
   function onVideoSeeked() {
     if (!synced || commandGuard) return;
     lastSeekAt = Date.now();
+    _stallTicks = 0; // reset stall counter — seeking to new position needs buffer time
+    _lastReconcilePos = null;
     updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
     if (port && hookedVideo) {
       port.postMessage({ type: Msg.VIDEO_SEEK, position: hookedVideo.currentTime });
@@ -677,7 +679,8 @@
       const recentSeek = (now - lastSeekAt) < 5000;
 
       // --- Stall/buffering detection (runs even before clock sync) ---
-      if (serverRef.playState === State.PLAYING && actual === State.PLAYING) {
+      // Suppress after seeks — video needs time to buffer at new position.
+      if (serverRef.playState === State.PLAYING && actual === State.PLAYING && !recentSeek) {
         const lp = hookedVideo.currentTime;
         const stallResult = checkStall(lp);
         _lastReconcilePos = lp;
