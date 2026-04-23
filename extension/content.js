@@ -650,8 +650,14 @@
           isBuffering = true;
           showBufferingOverlay();
           updateSyncBarStatus(SyncStatus.BUFFERING);
-          _log("reconcile: buffering (frozen)");
+          _log("reconcile: buffering — pausing server");
           if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: true, position: localPosition, duration: hookedVideo.duration || 0, playing: false });
+          // Pause the server so nobody advances past buffered content
+          if (synced && port && expectedPlayState === State.PLAYING) {
+            port.postMessage({ type: Msg.VIDEO_PAUSE, position: localPosition });
+            expectedPlayState = State.PAUSED;
+            updateServerRef(localPosition, State.PAUSED);
+          }
         }
         if (isBuffering) {
           // After 10s of buffering (20 ticks), accept the site's position
@@ -677,9 +683,15 @@
           if (_stallTicks <= 0) {
             isBuffering = false;
             hideBufferingOverlay();
-            updateSyncBarStatus(SyncStatus.PLAYING);
-            _log("reconcile: buffering cleared");
+            _log("reconcile: buffering cleared — resuming server");
             if (port) port.postMessage({ type: Msg.VIDEO_STATE, buffering: false, position: localPosition, duration: hookedVideo.duration || 0, playing: true });
+            // Resume server playback from current position
+            if (synced && port && expectedPlayState === State.PAUSED) {
+              expectedPlayState = State.PLAYING;
+              updateServerRef(localPosition, State.PLAYING);
+              port.postMessage({ type: Msg.VIDEO_PLAY, position: localPosition });
+            }
+            updateSyncBarStatus(SyncStatus.PLAYING);
           } else {
             _lastReconcilePos = localPosition;
             return; // Still in buffering cooldown
