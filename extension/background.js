@@ -211,8 +211,11 @@ function connectToRoom(roomId, serverUrl, token, username) {
   }));
 
   channel.on("sync:correction", (data) => {
-    // Could implement drift correction in extension too
-    // For v0, just relay seek if drift is large
+    // Relay to content scripts — follower mode uses this to stay synced
+    broadcastToContentScripts({
+      type: "sync:correction",
+      expected_time: data.expected_time,
+    });
   });
 
   channel.on("autoplay:countdown", (data) => {

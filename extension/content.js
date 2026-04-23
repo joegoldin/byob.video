@@ -13,7 +13,12 @@
   let expectedState = null;
   let safetyTimeout = null;
   let timeReportInterval = null;
-  let syncCooldown = null; // { position, playState } — suppress outbound until video matches
+  // Follower mode: after sync, the client is read-only and continuously
+  // applies server corrections until it proves stability (position+state
+  // match server for 3 consecutive ticks = 1.5s). Then becomes a full
+  // participant that can send events.
+  let followerMode = false;
+  let followerStableTicks = 0;
 
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
@@ -254,12 +259,21 @@
     timeReportInterval = setInterval(() => {
       if (!hookedVideo) return;
 
-      // Check if sync cooldown can be cleared — video matches target state
-      if (syncCooldown && hookedVideo) {
-        const posDist = Math.abs(hookedVideo.currentTime - syncCooldown.position);
+      // Follower mode stability check: once the video has been within 3s
+      // of where it should be for 3 consecutive ticks (1.5s), promote to
+      // full participant.
+      if (followerMode) {
+        // Use expectedState and the last command position as reference
         const actualState = hookedVideo.paused ? "paused" : "playing";
-        if (posDist < 3 && actualState === syncCooldown.playState) {
-          syncCooldown = null; // settled — outbound events can flow
+        const stateMatches = !expectedState || actualState === expectedState;
+        if (stateMatches) {
+          followerStableTicks++;
+          if (followerStableTicks >= 3) {
+            followerMode = false;
+            followerStableTicks = 0;
+          }
+        } else {
+          followerStableTicks = 0;
         }
       }
 
@@ -295,7 +309,7 @@
 
   // Event handlers — with suppression
   function onVideoPlay() {
-    if (!synced || syncCooldown) return;
+    if (!synced || followerMode) return;
     if (shouldSuppress("playing")) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -306,7 +320,7 @@
   }
 
   function onVideoPause() {
-    if (!synced || syncCooldown) return;
+    if (!synced || followerMode) return;
     if (shouldSuppress("paused")) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -317,7 +331,7 @@
   }
 
   function onVideoSeeked() {
-    if (!synced || syncCooldown) return;
+    if (!synced || followerMode) return;
     if (shouldSuppress(null)) return;
     if (port && hookedVideo) {
       port.postMessage({
@@ -440,6 +454,19 @@
       return;
     }
 
+    // Server correction — in follower mode, actively seek to stay synced.
+    // In normal mode, ignore (v3.6.3 doesn't have drift correction).
+    if (msg.type === "sync:correction" && hookedVideo && followerMode) {
+      if (msg.expected_time != null && !hookedVideo.paused) {
+        const drift = Math.abs(hookedVideo.currentTime - msg.expected_time);
+        if (drift > 2) {
+          suppress("seeked");
+          hookedVideo.currentTime = msg.expected_time;
+        }
+      }
+      return;
+    }
+
     if (msg.type === "command:initial-state") {
       tryAutoSync();
       return;
@@ -452,14 +479,9 @@
       const wasAlreadySynced = synced;
       synced = true;
       needsGesture = false;
-      // Suppress outbound events until video matches the sync target.
-      // Target comes from the preceding command:play/pause/seek.
-      if (hookedVideo) {
-        syncCooldown = {
-          position: hookedVideo.currentTime, // position we were just seeked to
-          playState: expectedState === "playing" ? "playing" : "paused",
-        };
-      }
+      // Enter follower mode — read-only until video proves stability.
+      followerMode = true;
+      followerStableTicks = 0;
       hideJoinToast();
       if (hookedVideo) {
         updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
