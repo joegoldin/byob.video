@@ -82,6 +82,9 @@ defmodule ByobWeb.ExtensionChannel do
     is_playing = payload["playing"] || false
     is_hooked = payload["hooked"] || false
 
+    client_pos = payload["position"] || 0
+    tab_id = payload["tab_id"] || "?"
+
     if is_playing or is_hooked do
       Phoenix.PubSub.broadcast(
         Byob.PubSub,
@@ -89,13 +92,36 @@ defmodule ByobWeb.ExtensionChannel do
         {:extension_player_state,
          %{
            hooked: is_hooked,
-           position: payload["position"] || 0,
+           position: client_pos,
            duration: payload["duration"] || 0,
            playing: is_playing,
            user_id: socket.assigns.user_id
          }}
       )
     end
+
+    # Compute drift for the sync stats panel (works while paused too)
+    state = RoomServer.get_state(socket.assigns.room_pid)
+    now = System.monotonic_time(:millisecond)
+    server_pos = if state.play_state == :playing do
+      elapsed = (now - Map.get(state, :last_sync_at, now)) / 1000
+      state.current_time + elapsed
+    else
+      state.current_time
+    end
+    drift_ms = round((client_pos - server_pos) * 1000)
+
+    Phoenix.PubSub.broadcast(
+      Byob.PubSub,
+      "room:#{socket.assigns.room_id}",
+      {:sync_client_stats, %{
+        user_id: socket.assigns.user_id,
+        tab_id: tab_id,
+        drift_ms: drift_ms,
+        server_position: Float.round(server_pos * 1.0, 1),
+        play_state: if(is_playing, do: "playing", else: "paused")
+      }}
+    )
 
     {:noreply, socket}
   end

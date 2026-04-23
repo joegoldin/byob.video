@@ -485,10 +485,6 @@
           hookedVideo.playbackRate = 1.0;
         }
 
-        // Report drift to server for the details panel
-        if (port) {
-          port.postMessage({ type: "video:drift", drift: Math.round(drift * 1000) });
-        }
       }
       return;
     }

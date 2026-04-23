@@ -130,7 +130,7 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:state":
-      if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing });
+      if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing, tab_id: String(tabId) });
       break;
 
     case "video:ready":

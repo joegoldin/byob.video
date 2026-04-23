@@ -247,7 +247,15 @@ defmodule Byob.RoomServer do
           end)
           |> Enum.map(fn {uid, _} -> uid end)
 
+        # Also clean orphaned open_tabs/ready_tabs for stale users
+        ready_tabs = Map.get(state, :ready_tabs, %{})
+        open_tabs = Map.get(state, :open_tabs, %{})
+        cleaned_ready = ready_tabs |> Enum.reject(fn {_, owner} -> owner in stale_ids end) |> Map.new()
+        cleaned_open = open_tabs |> Enum.reject(fn {_, owner} -> owner in stale_ids end) |> Map.new()
+
         %{state | users: Map.drop(state.users, stale_ids)}
+        |> Map.put(:ready_tabs, cleaned_ready)
+        |> Map.put(:open_tabs, cleaned_open)
       else
         state
       end
