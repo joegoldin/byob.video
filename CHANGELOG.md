@@ -2,6 +2,18 @@
 
 ---
 
+# v5.0.13
+
+### Fix extension on LAN access: use `window.location.origin` for server URL
+
+The "Open Player Window" button was passing `ByobWeb.Endpoint.url()` (server-rendered) as the extension's `server_url`. In dev that's `http://localhost:4000` regardless of how the browser reached the server, so LAN-access clients would store `server_url=http://localhost:4000` and the extension's WebSocket would try to hit `ws://localhost:4000/extension` on the client machine — nothing there, connection silently fails, no `CONNECTED TO ByobWeb.ExtensionSocket` in logs.
+
+- **Use `window.location.origin` in the `ExtOpenBtn` hook** so the extension connects back to whatever host the user used to reach byob (LAN IP, tunnel URL, production hostname). Works for localhost, LAN, HTTPS deploys.
+
+This also explains why the "stuck on Syncing..." fallback added in v5.0.12 didn't fire — the extension socket was never connecting, so `requestSync()` wasn't being called in the first place on the affected client.
+
+---
+
 # v5.0.12
 
 ### Fix sync bar stuck on "Syncing..." forever

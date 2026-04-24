@@ -56,11 +56,15 @@ const ExtOpenBtn = {
       if (window._byobPlayerWindow && !window._byobPlayerWindow.closed) {
         window._byobPlayerWindow.focus();
       } else {
+        // Use window.location.origin instead of the server-rendered
+        // Endpoint.url() so the extension connects back to the same host
+        // the user reached us on. Otherwise LAN-access users end up with
+        // server_url=http://localhost:4000 which fails on their machine.
         window.postMessage({
           type: "byob:open-external",
           url: this.el.dataset.url,
           room_id: this.el.dataset.roomId,
-          server_url: this.el.dataset.serverUrl,
+          server_url: window.location.origin,
           token: this.el.dataset.token,
           username: this.el.dataset.username,
         }, "*");
@@ -245,13 +249,24 @@ const LocalTime = {
   },
 }
 
+// crypto.randomUUID() is only available in secure contexts (HTTPS or localhost).
+// Fall back to getRandomValues for http://<lan-ip> dev access.
+function uuidv4() {
+  if (crypto.randomUUID) return crypto.randomUUID();
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, x => x.toString(16).padStart(2, "0"));
+  return `${h.slice(0,4).join("")}-${h.slice(4,6).join("")}-${h.slice(6,8).join("")}-${h.slice(8,10).join("")}-${h.slice(10,16).join("")}`;
+}
+
 // Per-tab ID: each tab is an independent user for sync purposes
 if (!sessionStorage.getItem("byob_tab_id")) {
-  sessionStorage.setItem("byob_tab_id", crypto.randomUUID())
+  sessionStorage.setItem("byob_tab_id", uuidv4())
 }
 // Per-browser ID for analytics (all tabs = same person)
 if (!localStorage.getItem("byob_browser_id")) {
-  localStorage.setItem("byob_browser_id", crypto.randomUUID())
+  localStorage.setItem("byob_browser_id", uuidv4())
 }
 
 // Detect duplicate room tabs — show a small notice, don't block
@@ -261,7 +276,7 @@ if (!localStorage.getItem("byob_browser_id")) {
   if (!roomMatch) return;
 
   const bc = new BroadcastChannel(`byob_room_${roomMatch[1]}`);
-  const myId = crypto.randomUUID();
+  const myId = uuidv4();
 
   bc.postMessage({ type: "ping", from: myId });
   bc.onmessage = (e) => {
