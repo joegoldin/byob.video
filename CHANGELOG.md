@@ -2,6 +2,22 @@
 
 ---
 
+# v6.2.5
+
+### Polling-based pause detector + "closed external window" presence event
+
+Two follow-ups to recurring CR pause issues and the new presence toasts.
+
+**Polling-based pause/play detector.** v6.2.1 routed Bitmovin's `paused`/`play`/`seeked` events into our handlers, but some CR UI paths pause the player without either the `<video>` element's `pause` event OR Bitmovin's `paused` event firing. The symptom: `hookedVideo.paused` is true (the poller reports `playing=false`), but no `video:pause` command ever reaches the server, so reconcile force-plays the tab back to playing after ~2s.
+
+Added a defensive layer inside the existing 500ms time-report interval: track the last polled `hookedVideo.paused` state; on any transition dispatch `onVideoPause` or `onVideoPlay`. Guards (`commandGuard`, `isBuffering`, `expectedPlayState`) prevent echoes and buffer stalls from masquerading as user actions.
+
+**New `ext_closed` presence event.** The "X left the room" toast fires only when the user has fully disconnected (no more presence). If they close just the external CR player window but still have the webapp open, the old toast never fired. Added a separate event `{:room_presence, %{event: "ext_closed", username: ...}}` broadcast when `video:all_closed` arrives — content.js shows "X closed their player window" in the same purple pill as the "Click play on the video to start syncing" toast, and the webapp shows it via the generic `toast` event.
+
+Also bumped the presence toast z-index to 999999 and matched its padding to `showJoinToast` so the two toasts share a visual style.
+
+---
+
 # v6.2.4
 
 ### Presence toasts in webapp + pause when ≤1 users remain (reverts v6.2.3 approach)

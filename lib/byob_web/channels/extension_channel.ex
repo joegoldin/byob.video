@@ -70,6 +70,19 @@ defmodule ByobWeb.ExtensionChannel do
     # All extension player windows closed — pause so next joiner syncs without autoplay
     state = RoomServer.get_state(socket.assigns.room_pid)
 
+    # Toast for other users — "X closed their player window". Separate from
+    # the "X left the room" toast since the user may still be in the room
+    # via LiveView; this is purely about the external playback surface.
+    username = get_in(state.users, [socket.assigns.user_id, :username])
+
+    if username do
+      Phoenix.PubSub.broadcast(
+        Byob.PubSub,
+        "room:#{socket.assigns.room_id}",
+        {:room_presence, %{event: "ext_closed", username: username}}
+      )
+    end
+
     if state.play_state == :playing do
       RoomServer.pause(socket.assigns.room_pid, socket.assigns.user_id, state.current_time)
     end

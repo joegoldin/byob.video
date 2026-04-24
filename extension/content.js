@@ -43,6 +43,7 @@
   //   - No time-based "settling" window — behavior is deterministic against
   //     the commands we've executed.
   let _endedReported = false;
+  let _lastPolledPaused = null; // reset per hook; used to detect missed pause events
   let activateArgs = null;
 
   // Clock sync (from background NTP burst)
@@ -349,12 +350,30 @@
       updateSyncBarStatus("syncing");
     }
 
-    // Periodic state report + ended detection.
+    // Periodic state report + ended detection. Also detects pause/play
+    // transitions that both the <video> DOM events and Bitmovin's own
+    // events may miss (some CR UI paths pause the player without either
+    // event firing) — dispatches onVideoPause/onVideoPlay so the state
+    // propagates to the server the same way a native event would.
+    _lastPolledPaused = null;
     timeReportInterval = setInterval(() => {
       if (!hookedVideo) return;
       const pos = hookedVideo.currentTime;
       const dur = hookedVideo.duration || 0;
-      const playing = !hookedVideo.paused && !isBuffering;
+      const paused = hookedVideo.paused;
+      const playing = !paused && !isBuffering;
+
+      if (synced && !isBuffering && !commandGuard
+          && _lastPolledPaused !== null && _lastPolledPaused !== paused) {
+        if (paused && expectedPlayState !== State.PAUSED) {
+          _log("poll: paused transition detected — dispatching onVideoPause");
+          onVideoPause();
+        } else if (!paused && expectedPlayState !== State.PLAYING) {
+          _log("poll: play transition detected — dispatching onVideoPlay");
+          onVideoPlay();
+        }
+      }
+      _lastPolledPaused = paused;
 
       const msg = { type: "video:state", position: pos, duration: dur, playing };
       if (synced && port) port.postMessage(msg);
@@ -674,8 +693,11 @@
     }
 
     if (msg.type === "byob:presence" && window === window.top) {
-      const verb = msg.event === "joined" ? "joined" : "left";
-      showPresenceToast(`${msg.username} ${verb} the room`);
+      let text;
+      if (msg.event === "joined") text = `${msg.username} joined the room`;
+      else if (msg.event === "ext_closed") text = `${msg.username} closed their player window`;
+      else text = `${msg.username} left the room`;
+      showPresenceToast(text);
       return;
     }
 
@@ -911,9 +933,9 @@
     toast.id = "byob-presence-toast";
     toast.style.cssText = `
       position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%) translateY(10px);
-      z-index: 999998; background: #7c3aed; color: white;
+      z-index: 999999; background: #7c3aed; color: white;
       font-family: system-ui, sans-serif; font-size: 15px; font-weight: 600;
-      padding: 12px 24px; border-radius: 12px;
+      padding: 14px 28px; border-radius: 12px;
       box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15);
       pointer-events: none; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
     `;
