@@ -2,6 +2,20 @@
 
 ---
 
+# v6.1.3
+
+### Fix Bitmovin commands silently dropped across ISOLATED↔MAIN worlds
+
+v6.1.2 added `applySyncedState` re-enforcement and the reconcile loop's hard-seek drift correction — both rely on `bitmovinAdapter.seek()` to actually land on the Bitmovin player. In Firefox MV3, the adapter's `CustomEvent` with a `detail` payload dispatched from the ISOLATED content-script world gets xray-wrapped when crossing into the MAIN page world. The page-world script receives the event but can't read `evt.detail` through the wrapper, so every command was silently discarded.
+
+Symptom: receivers joining mid-playback landed on CR's continue-watching position (e.g. 630), reconcile logged `HARD SEEK drift=550s` twice, neither took effect, then `giving up, accepting site pos=644` and the room drifted to whatever CR wanted to play.
+
+- **Switch both directions to `window.postMessage`**. Structured clone crosses worlds cleanly in both directions on Firefox and Chrome.
+- Added `[byob-bm]` logs in the page-world script on every command received / dispatched, so the next failure mode is diagnosable from the server log via `debug:log` passthrough.
+- MAIN→ISOLATED direction (bitmovin events) was actually fine with CustomEvent in this case (the "ready" and event payloads were coming through) — but switched for symmetry.
+
+---
+
 # v6.1.2
 
 ### Fix initial-sync race with Crunchyroll autoplay

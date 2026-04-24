@@ -3,12 +3,13 @@
 // Runs in the page world of the Crunchyroll player iframe
 // (static.crunchyroll.com/vilos-*/vilos/player.html). Finds the Bitmovin
 // Player instance that the page stores on `.bitmovinplayer-container.player`
-// and bridges it to the content script via CustomEvents.
+// and bridges it to the content script via window.postMessage.
 //
-// Direct <video>.currentTime= wedges MSE on Crunchyroll for big seeks-
-// while-playing. Calling Bitmovin's player.seek()/play()/pause() lets the
-// player handle its own buffer transitions. Recon in the iframe confirmed
-// the full Bitmovin v8 API is reachable via .bitmovinplayer-container.player.
+// postMessage (not CustomEvent) is used for cross-world communication
+// because Firefox's xray wrappers strip the .detail field of CustomEvents
+// dispatched from the ISOLATED content-script world when they cross into
+// the MAIN world. postMessage uses structured clone and is safe in both
+// directions.
 
 (() => {
   "use strict";
@@ -16,7 +17,10 @@
   if (window.__byobBitmovinAdapter) return;
   window.__byobBitmovinAdapter = true;
 
-  const log = (...a) => console.debug("[byob-bm]", ...a);
+  const log = (...a) => console.log("[byob-bm]", ...a);
+  const MSG_CMD = "byob-bm:cmd";
+  const MSG_EVT = "byob-bm:evt";
+  const MSG_ACK = "byob-bm:ack";
 
   let player = null;
   let pollInterval = null;
@@ -32,9 +36,7 @@
 
   function emit(event, data) {
     try {
-      window.dispatchEvent(new CustomEvent("byob-bm:evt", {
-        detail: Object.assign({ event }, data || {}),
-      }));
+      window.postMessage(Object.assign({ source: MSG_EVT, event }, data || {}), "*");
     } catch (_) {}
   }
 
@@ -83,24 +85,27 @@
 
   function ack(id, ok, data) {
     try {
-      window.dispatchEvent(new CustomEvent("byob-bm:ack", {
-        detail: { id, ok, data },
-      }));
+      window.postMessage({ source: MSG_ACK, id, ok, data }, "*");
     } catch (_) {}
   }
 
-  function onCmd(evt) {
-    const detail = evt.detail || {};
-    const { id, cmd, arg } = detail;
-    if (!player) { ack(id, false, "no-player"); return; }
+  function onMsg(ev) {
+    // Same-window postMessage only
+    if (ev.source !== window) return;
+    const d = ev.data;
+    if (!d || d.source !== MSG_CMD) return;
+    const { id, cmd, arg } = d;
+    if (!player) { log("cmd", cmd, "rejected (no-player)"); ack(id, false, "no-player"); return; }
 
     try {
       if (cmd === "seek") {
         const t = arg && typeof arg.time === "number" ? arg.time : null;
         if (t == null) { ack(id, false, "bad-arg"); return; }
+        log("cmd seek →", t);
         player.seek(t);
         ack(id, true);
       } else if (cmd === "play") {
+        log("cmd play");
         const r = player.play();
         if (r && typeof r.then === "function") {
           r.then(() => ack(id, true))
@@ -109,6 +114,7 @@
           ack(id, true);
         }
       } else if (cmd === "pause") {
+        log("cmd pause");
         const r = player.pause();
         if (r && typeof r.then === "function") {
           r.then(() => ack(id, true)).catch(() => ack(id, true));
@@ -127,11 +133,12 @@
         ack(id, false, "unknown-cmd");
       }
     } catch (e) {
+      log("cmd", cmd, "threw:", (e && e.message) || String(e));
       ack(id, false, (e && e.message) || String(e));
     }
   }
 
-  window.addEventListener("byob-bm:cmd", onCmd);
+  window.addEventListener("message", onMsg);
 
   // CR loads Bitmovin asynchronously; poll until the player appears.
   pollInterval = setInterval(() => {

@@ -68,14 +68,22 @@
   // the Crunchyroll Bitmovin Player instance. When ready, receiver commands
   // and reconcile hard seeks route through Bitmovin's API; Bitmovin manages
   // the MSE buffer transition cleanly instead of wedging on currentTime=.
+  //
+  // Transport is window.postMessage rather than CustomEvent because Firefox's
+  // ISOLATED↔MAIN world xray wrappers strip the .detail field of CustomEvents
+  // crossing worlds. postMessage uses structured clone and works bidirectionally.
+  const BM_CMD = "byob-bm:cmd";
+  const BM_EVT = "byob-bm:evt";
+
   const bitmovinAdapter = (() => {
     let ready = false;
     let last = null;
     let cmdSeq = 0;
 
-    function onEvt(e) {
-      const d = e && e.detail;
-      if (!d) return;
+    function onMsg(e) {
+      if (e.source !== window) return;
+      const d = e.data;
+      if (!d || d.source !== BM_EVT) return;
       if (d.event === "ready") {
         ready = true;
         last = { time: d.time, isPaused: d.isPaused, duration: d.duration };
@@ -89,16 +97,14 @@
     const host = window.location.hostname;
     const isCr = /(^|\.)crunchyroll\.com$/.test(host);
     if (isCr) {
-      try { window.addEventListener("byob-bm:evt", onEvt); } catch (_) {}
+      try { window.addEventListener("message", onMsg); } catch (_) {}
     }
 
     function send(cmd, arg) {
       if (!ready) return false;
       cmdSeq++;
       try {
-        window.dispatchEvent(new CustomEvent("byob-bm:cmd", {
-          detail: { id: cmdSeq, cmd, arg },
-        }));
+        window.postMessage({ source: BM_CMD, id: cmdSeq, cmd, arg }, "*");
       } catch (_) { return false; }
       return true;
     }
