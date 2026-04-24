@@ -2,6 +2,25 @@
 
 ---
 
+# v6.1.6
+
+### Use `navigator.userActivation.isActive` to distinguish user clicks from autoplay
+
+Instead of a 2.5s minimum guard window after sync that was silently dropping user clicks, the event handlers now check the browser's transient user-activation signal directly. It's deterministic: true for real user gestures (click, keypress, touch), false for programmatic/autoplay-triggered events.
+
+- `onVideoPlay` / `onVideoPause` / `onVideoSeeked` reject events without user activation and log "site-initiated — ignored".
+- `command:synced` guard drops back to default 300ms (just echo suppression).
+- No arbitrary time window where user actions are dropped.
+
+Result:
+- CR's autoplay at T+3s after sync: onVideoPlay fires, `userActivation.isActive === false`, event dropped. Reconcile's 2s mismatch grace then re-enforces paused state.
+- User clicks pause/play any time: `userActivation.isActive === true`, propagates immediately through the 500ms debounce.
+- Fixes the intermittent "pause doesn't work" — that was the guard window racing the debounce.
+
+Browser support: Chrome 72+ and Firefox 118+; both are well below our `strict_min_version: 128` for Firefox.
+
+---
+
 # v6.1.5
 
 ### Drop the time-based settling window; echo suppression via commandGuard only

@@ -381,9 +381,22 @@
   }
 
   // ── Event handlers (send-on-change, debounced) ────────────────────────────
+  // A play/pause/seek event is "user-initiated" only if the browser's
+  // transient activation is currently active. CR's autoplay, Bitmovin's
+  // internal DRM/buffering state changes, and anything else not triggered
+  // by a real user gesture all fail this check. Browser support: Chrome
+  // 72+, Firefox 118+.
+  function userInitiated() {
+    return !!(navigator.userActivation && navigator.userActivation.isActive);
+  }
+
   function onVideoPlay() {
     if (!synced || isBuffering || commandGuard) return;
     if (expectedPlayState === State.PLAYING) return;
+    if (!userInitiated()) {
+      _log("onVideoPlay ignored — no user activation (autoplay/site-initiated)");
+      return;
+    }
     if (_pendingPlayPause) clearTimeout(_pendingPlayPause);
     _pendingPlayPause = setTimeout(() => {
       _pendingPlayPause = null;
@@ -398,6 +411,10 @@
   function onVideoPause() {
     if (!synced || isBuffering || commandGuard) return;
     if (expectedPlayState === State.PAUSED) return;
+    if (!userInitiated()) {
+      _log("onVideoPause ignored — no user activation (site-initiated)");
+      return;
+    }
     if (_pendingPlayPause) clearTimeout(_pendingPlayPause);
     _pendingPlayPause = setTimeout(() => {
       _pendingPlayPause = null;
@@ -411,6 +428,10 @@
 
   function onVideoSeeked() {
     if (!synced || commandGuard) return;
+    if (!userInitiated()) {
+      _log("onVideoSeeked ignored — no user activation");
+      return;
+    }
     lastSeekAt = Date.now();
     _hardSeekFailures = 0;
     updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
@@ -649,13 +670,11 @@
       _log("synced! expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
 
       if (hookedVideo) {
-        // Arm the command guard before applying state so the resulting DOM
-        // events (seeked / pause / play) are treated as echoes. 2.5s minimum
-        // covers the 3-ish-second window where Crunchyroll's player can
-        // autoplay-resume to its continue-watching position; autoplay-fired
-        // play events during that window get dropped instead of propagating
-        // to the server.
-        startCommandGuard(2500);
+        // Arm the command guard so the resulting DOM events (seeked / pause
+        // / play) from applySyncedState are treated as echoes. Releases as
+        // soon as state matches. Any later autoplay from the site is
+        // caught by the userActivation check in the event handlers.
+        startCommandGuard();
         applySyncedState(msg);
         updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
         if (!wasSynced && port) port.postMessage({ type: "video:ready" });
