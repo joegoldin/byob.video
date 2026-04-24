@@ -2,6 +2,17 @@
 
 ---
 
+# v5.0.14
+
+### Fix: joining a paused room would start playing against room state
+
+On join to a paused room, the SW sent `CMD:seek` then `CMD:pause` back-to-back. If the user had just clicked play (to start their Crunchyroll tab), the video was playing at that moment, so `CMD:seek`'s DRM branch called `drmSafeSeek(pos, shouldPlay=true)` — which pauses, seeks, then **resumes playing**, ignoring the subsequent `CMD:pause` (which no-op'd because `drmSafeSeek` had the video momentarily paused mid-operation). Result: host's video plays while room state is paused; observers see stale paused state; divergence persists until host manually pauses.
+
+- **SW sends just `CMD:pause` for paused rooms.** The pause handler already seeks to the target position, so the extra `CMD:seek` was redundant and actively harmful.
+- **`CMD:pause` now pauses first, then seeks.** Setting `currentTime` on a playing DRM pipeline is the main MSE-wedge trigger — pausing first lets the seek land on a paused decoder.
+
+---
+
 # v5.0.13
 
 ### Fix extension on LAN access: use `window.location.origin` for server URL

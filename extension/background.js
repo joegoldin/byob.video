@@ -96,7 +96,10 @@ function handleContentMessage(msg, port, tabId) {
           if (resp.play_state === "playing") {
             port.postMessage({ type: "command:play", position: resp.current_time });
           } else {
-            port.postMessage({ type: "command:seek", position: resp.current_time });
+            // Just pause — the pause handler also seeks to the target
+            // position. A separate CMD:seek would hit the drmSafeSeek
+            // playing-branch (shouldPlay=true) and incorrectly resume
+            // playback before CMD:pause arrives.
             port.postMessage({ type: "command:pause", position: resp.current_time });
           }
           // Wait for seek to settle before enabling bidirectional sync.

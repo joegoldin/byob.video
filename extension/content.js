@@ -968,10 +968,13 @@
         }
         suppress("paused");
         markProgrammaticSeek();
+        // Pause FIRST so the subsequent currentTime= happens on a paused
+        // pipeline. Setting currentTime on a playing DRM stream commonly
+        // wedges MSE (playing=true but frames not advancing).
+        hookedVideo.pause();
         _programmaticSeek = true;
         if (msg.position != null) hookedVideo.currentTime = msg.position;
         _programmaticSeek = false;
-        hookedVideo.pause();
         if (pauseEnforcer) clearInterval(pauseEnforcer);
         pauseEnforcer = setInterval(() => {
           if (hookedVideo && !hookedVideo.paused) {
