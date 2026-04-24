@@ -2,6 +2,20 @@
 
 ---
 
+# v5.0.17
+
+### Fix stall detector racing against MSE's natural buffering
+
+After a big seek on DRM, MSE takes 2–3 seconds to fetch the new segment. During that window the video reports `paused=false` and `currentTime=target` with no advancement — **exactly the stall signature**. The stall detector was firing mid-fetch and kicking the playhead forward, which MSE then had to undo when `play()` finally resolved and ran its own kick seek. Result: the playhead bounces around, MSE re-fetches multiple times, and the video ends up desynced or stuck.
+
+Observed in logs: `CMD:play` called at T → stall detector fires kick at T+2s → `play()` resolves at T+2.5s and kicks backwards, putting MSE in a worse state than if we'd left it alone.
+
+- **`deferStall(ms = 3000)` helper** sets a window during which the stall detector skips its check. Allows MSE to finish buffering/seeking without our interference.
+- Called at the entry of `CMD:play`, `CMD:pause`, `CMD:seek`, and `drmSafeSeek`. Also called inside the resume path and the kick-seek `.then()` to cover the post-resolve operations.
+- Stall detector now gates on `Date.now() >= _deferStallUntil`. Real stalls (pipeline wedged long after any programmatic action) still get caught.
+
+---
+
 # v5.0.16
 
 ### Fix stall recovery counter resetting after each kick

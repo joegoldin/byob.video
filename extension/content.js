@@ -39,6 +39,16 @@
   let _stallRecoveryAttempts = 0;
   let _lastStallRecoveryAt = 0;
   let _cleanPlayTicks = 0; // consecutive normal-advancement ticks
+  // Defer stall detection while MSE is processing a programmatic action. Big
+  // seeks on DRM can take 2-3s to fetch a new segment — during that window
+  // the video reports playing=true with no position advancement, which looks
+  // identical to a real stall. Firing recovery here kicks MSE mid-fetch and
+  // makes things worse.
+  let _deferStallUntil = 0;
+  function deferStall(ms = 3000) {
+    const until = Date.now() + ms;
+    if (until > _deferStallUntil) _deferStallUntil = until;
+  }
   let _lastExpectedPos = null;
   let _lastExpectedAt = 0;
   let _recoveryInProgress = false;
@@ -309,7 +319,7 @@
       // On DRM, the recovery path is a silent kick seek (no user prompt) —
       // handles the rare wedge where drmSafeSeek's pre-emptive kick wasn't
       // enough. Still skipped while a recovery is in progress.
-      if (synced && !followerMode && !_recoveryInProgress) {
+      if (synced && !followerMode && !_recoveryInProgress && Date.now() >= _deferStallUntil) {
         if (!hookedVideo.paused) {
           const pos = hookedVideo.currentTime;
           if (_lastTickPosition != null) {
@@ -635,6 +645,7 @@
   function drmSafeSeek(targetPos, shouldPlay) {
     if (!hookedVideo) return;
     const wasPlaying = !hookedVideo.paused;
+    deferStall();
 
     // Same-position seek is a no-op; don't pause the pipeline for it.
     // Prevents spurious kick-seek echoes from causing pause-seek-play flip-flops.
@@ -689,6 +700,7 @@
       if (shouldPlay && hookedVideo) {
         suppress("playing");
         markProgrammaticSeek();
+        deferStall();
         _programmaticSeek = true;
         hookedVideo.play().then(() => {
           // Kick seek AFTER play resolves. Doing it synchronously after
@@ -696,6 +708,7 @@
           // the video paused despite shouldPlay=true.
           if (hookedVideo && !hookedVideo.paused) {
             markProgrammaticSeek();
+            deferStall();
             _programmaticSeek = true;
             hookedVideo.currentTime = targetPos + 0.01;
             _programmaticSeek = false;
@@ -936,6 +949,7 @@
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         // Clear pending seek — server command overrides any local seek
         _pendingSeekPos = null;
+        deferStall();
         // No-op early return: already playing at the right position. Common
         // when this tab originated the play — server echoes CMD:play back.
         // Without this we'd do a kick-seek that echoes as video:seek and
@@ -965,6 +979,7 @@
             // with "fetching process aborted", leaving video paused while
             // server thinks it's playing.
             markProgrammaticSeek();
+            deferStall();
             _programmaticSeek = true;
             hookedVideo.currentTime = kickTarget;
             _programmaticSeek = false;
@@ -979,6 +994,7 @@
       case "command:pause":
         _log("CMD:pause pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
         _pendingSeekPos = null;
+        deferStall();
         // No-op early return: already paused at the right position. Without
         // this, the currentTime= assignment on DRM fires a spurious seeked
         // event that echoes as video:seek back to the server.
@@ -1011,6 +1027,7 @@
         _log("CMD:seek pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
         // Clear pending seek — server command overrides any local seek we were waiting on
         _pendingSeekPos = null;
+        deferStall();
         // No-op early return: already at the right position. Prevents the
         // echo cascade where a spurious seek emits from e.g. a kick seek and
         // returns as CMD:seek to all clients.
