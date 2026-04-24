@@ -499,6 +499,53 @@
     };
   }
 
+  // Apply synced state with retry enforcement. On sites with aggressive
+  // autoplay (Crunchyroll resuming at the continue-watching position, etc.),
+  // a single seek + pause/play on the first tick is lost to the site's own
+  // playback management. Re-apply for up to 3s to ensure room state wins.
+  let _syncEnforcerTimer = null;
+  function applySyncedState(msg) {
+    if (_syncEnforcerTimer) { clearInterval(_syncEnforcerTimer); _syncEnforcerTimer = null; }
+    const target = msg.current_time;
+    const wantPaused = expectedPlayState === State.PAUSED;
+
+    const apply = () => {
+      if (!hookedVideo) return;
+      // Seek if we're more than 2s off target. Hard-seek threshold, same as
+      // reconcile — avoids bouncing on sub-second drift while still catching
+      // the "video loaded at 588, server wants 111" case.
+      if (target != null && Math.abs(hookedVideo.currentTime - target) > 2.0) {
+        seekTo(target);
+        lastSeekAt = Date.now();
+      }
+      if (wantPaused && !hookedVideo.paused) {
+        if (bitmovinAdapter.isReady()) bitmovinAdapter.pause();
+        else hookedVideo.pause();
+      } else if (!wantPaused && hookedVideo.paused) {
+        if (bitmovinAdapter.isReady()) bitmovinAdapter.play(target);
+        else hookedVideo.play().catch(() => {});
+      }
+    };
+
+    apply();
+    const deadline = Date.now() + 3000;
+    _syncEnforcerTimer = setInterval(() => {
+      if (!hookedVideo || Date.now() > deadline) {
+        clearInterval(_syncEnforcerTimer);
+        _syncEnforcerTimer = null;
+        return;
+      }
+      const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
+      const onTarget = target == null || Math.abs(hookedVideo.currentTime - target) < 2.0;
+      if (actual === expectedPlayState && onTarget) {
+        clearInterval(_syncEnforcerTimer);
+        _syncEnforcerTimer = null;
+        return;
+      }
+      apply();
+    }, 250);
+  }
+
   // ── Command guard ─────────────────────────────────────────────────────────
   // After executing a server command, suppress outgoing events until the
   // video state matches what we commanded. 300ms min, 5s max. Prevents
@@ -571,7 +618,9 @@
       needsGesture = false;
       settlingUntil = Date.now() + 5000;
 
-      if (msg.play_state && !expectedPlayState) {
+      // Always overwrite expectedPlayState/serverRef from the synced payload
+      // — it's the authoritative handoff of room state to this client.
+      if (msg.play_state) {
         expectedPlayState = msg.play_state === "playing" ? State.PLAYING : State.PAUSED;
         updateServerRef(msg.current_time ?? 0, expectedPlayState, msg.server_time);
       }
@@ -580,26 +629,11 @@
       _log("synced! settling 5s expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
 
       if (hookedVideo) {
-        // Jump to server position immediately — don't wait for clock sync.
-        if (msg.current_time != null) {
-          seekTo(msg.current_time);
-          lastSeekAt = Date.now();
-        }
-        // Apply server play/pause state.
-        if (expectedPlayState === State.PAUSED && !hookedVideo.paused) {
-          if (bitmovinAdapter.isReady()) bitmovinAdapter.pause();
-          else hookedVideo.pause();
-        } else if (expectedPlayState === State.PLAYING && hookedVideo.paused) {
-          if (bitmovinAdapter.isReady()) bitmovinAdapter.play();
-          else hookedVideo.play().catch(() => {});
-        }
+        applySyncedState(msg);
         updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
         if (!wasSynced && port) port.postMessage({ type: "video:ready" });
         startReconcile();
       } else if (window === window.top) {
-        // No local <video> (e.g. top frame — player is in an iframe). Just
-        // update the bar to reflect the room state; the iframe's content
-        // script handles the real playback.
         updateSyncBarStatus(expectedPlayState === State.PAUSED ? "paused" : "playing");
       }
       return;

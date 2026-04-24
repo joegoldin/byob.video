@@ -54,15 +54,31 @@
     p.on("stallended",       () => emit("stall",    { state: "ended",   time: safeTime(p) }));
     p.on("playbackfinished", () => emit("ended",    { time: safeTime(p) }));
 
-    let duration = 0;
-    try { duration = p.getDuration() || 0; } catch (_) {}
+    // Wait until the source is actually loaded before signaling ready.
+    // Emitting "ready" while duration=0 causes the content script to issue
+    // seek/pause/play commands that the not-yet-loaded player silently
+    // discards; CR's autoplay then takes over and we can't override it.
+    let readyEmitted = false;
+    function duration() { try { return p.getDuration() || 0; } catch (_) { return 0; } }
+    function maybeEmitReady() {
+      if (readyEmitted) return true;
+      const d = duration();
+      if (d <= 0) return false;
+      readyEmitted = true;
+      emit("ready", { time: safeTime(p), isPaused: p.isPaused(), duration: d });
+      log("attached, pos=", safeTime(p), "paused=", p.isPaused(), "duration=", d);
+      return true;
+    }
 
-    emit("ready", {
-      time: safeTime(p),
-      isPaused: p.isPaused(),
-      duration,
-    });
-    log("attached, pos=", safeTime(p), "paused=", p.isPaused(), "duration=", duration);
+    try { p.on("sourceloaded", maybeEmitReady); } catch (_) {}
+    try { p.on("ready",        maybeEmitReady); } catch (_) {}
+    try { p.on("timechanged",  maybeEmitReady); } catch (_) {}
+
+    if (!maybeEmitReady()) {
+      const pollReady = setInterval(() => {
+        if (maybeEmitReady()) clearInterval(pollReady);
+      }, 250);
+    }
   }
 
   function ack(id, ok, data) {

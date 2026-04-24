@@ -2,6 +2,24 @@
 
 ---
 
+# v6.1.2
+
+### Fix initial-sync race with Crunchyroll autoplay
+
+Clients joining a room mid-playback landed at CR's continue-watching position (e.g. 588) instead of the room's position (e.g. 111.4). Two causes:
+
+1. **Bitmovin adapter emitted `ready` too early.** As soon as `.bitmovinplayer-container.player` existed on the page, we signaled ready — but the source wasn't loaded yet (`duration=0`). The content script then issued `seek`/`pause` that the unloaded player silently discarded, and CR's subsequent autoplay loaded the continue-watching position unopposed.
+
+   `crunchyroll-bitmovin-page.js` now waits for `getDuration() > 0` before emitting `ready`. Listens for `sourceloaded` / `ready` / `timechanged` events and also polls every 250ms as a fallback.
+
+2. **Single-shot apply in `command:synced`.** One `seek + pause/play` call on the first tick, no re-enforcement. CR's autoplay fires immediately after, putting the video back in the "playing at 588" state.
+
+   New `applySyncedState` helper re-applies the seek + play/pause state every 250ms for up to 3 seconds, clearing once actual state matches expected and position is within 2s of target. Similar in spirit to v4.x's `pauseEnforcer`, but covers both pause-and-play enforcement and position convergence.
+
+Also made the `command:synced` payload authoritative — `expectedPlayState` is now always overwritten from the message, not only on first sync. Fixes the case where a stale client-side `expectedPlayState` survives across re-syncs.
+
+---
+
 # v6.1.1
 
 ### Ready-count tooltip: count unique users, not raw tab entries
