@@ -2,6 +2,21 @@
 
 ---
 
+# v6.1.8
+
+### `userInitiated()` only strict within 3s of sync; otherwise trust all events
+
+v6.1.7 added cross-frame click tracking so iframe handlers could see activations that happened in the top frame. That still doesn't help when Bitmovin's shadow-DOM'd player controls call `stopPropagation()` at the shadow boundary — our `document`-level listener never sees the click, so `_lastUserActive` never ticks and `navigator.userActivation.isActive` also misses it. Result: CR-native pause button kept failing to propagate, while byob's sync-bar pause worked every time (because it posts directly to the port, bypassing `onVideoPause`).
+
+The real insight: outside the first 3s after sync, there is no good reason to be paranoid about pause/play events. Our own command echoes are already caught by `commandGuard` and the `expectedPlayState === target` check. CR's autoplay-to-continue-watching fires in that first 3s window and nowhere else in normal usage. So:
+
+- **Within 3s of `command:synced`**: `userInitiated()` requires an activation signal (per-frame `navigator.userActivation` or the cross-frame `_lastUserActive` broadcast). Blocks autoplay.
+- **After 3s**: `userInitiated()` returns true unconditionally. User clicks — from any path, in any frame, through any shadow DOM — propagate normally.
+
+Fixes the intermittent pause-via-CR-player-controls issue. sync-bar pause keeps working (it never went through `onVideoPause` anyway).
+
+---
+
 # v6.1.7
 
 ### Cross-frame user-activity tracking (fixes intermittent pause)

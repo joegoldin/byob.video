@@ -381,13 +381,16 @@
   }
 
   // ── Event handlers (send-on-change, debounced) ────────────────────────────
-  // Track real user gestures across frames. Each frame (top + iframe) listens
-  // for click/keydown/pointerdown/touchstart and broadcasts via the SW so
-  // every frame's content script has a common view of "did the user just
-  // interact somewhere?" — which navigator.userActivation can't provide
-  // reliably cross-frame (iframe doesn't see top-frame activations and
-  // vice-versa).
+  // Autoplay suspicion is time-bounded. The only scenario where we really
+  // need to distinguish "site-initiated" from "user-initiated" is the first
+  // few seconds after sync, when the site might autoplay-resume to its
+  // continue-watching position before the user has interacted. Outside
+  // that window, any play/pause event is overwhelmingly likely to be user
+  // intent (our own command echoes are caught by commandGuard and the
+  // expectedPlayState check).
+  let _syncedAt = 0;
   let _lastUserActive = 0;
+  const SYNC_AUTOPLAY_WINDOW_MS = 3000;
   const USER_ACTIVE_WINDOW_MS = 5000;
 
   function markUserActive() {
@@ -401,6 +404,11 @@
   }
 
   function userInitiated() {
+    // Outside the post-sync autoplay window, trust all events as user
+    // intent. Inside it, require some signal that an actual user clicked
+    // — either the browser's per-frame activation bit, or a cross-frame
+    // click broadcast we've received via the SW.
+    if (_syncedAt && Date.now() - _syncedAt > SYNC_AUTOPLAY_WINDOW_MS) return true;
     if (navigator.userActivation && navigator.userActivation.isActive) return true;
     return Date.now() - _lastUserActive < USER_ACTIVE_WINDOW_MS;
   }
@@ -678,6 +686,7 @@
       const wasSynced = synced;
       synced = true;
       needsGesture = false;
+      _syncedAt = Date.now();
 
       // Always overwrite expectedPlayState/serverRef from the synced payload
       // — it's the authoritative handoff of room state to this client.
