@@ -2,6 +2,18 @@
 
 ---
 
+# v6.2.9
+
+### Auto-restore LV connected state after socket drops
+
+Tooltip counted `1/1` instead of `1/2` after a user closed their CR player because their LiveView socket had briefly dropped during the tab-close noise and never got re-marked connected on the server — `ensure_room_pid` only re-joined when the room GenServer itself had died, not when the user's `connected` flag was stale.
+
+`ensure_room_pid` now also calls a new `maybe_restore_connected/2` on every LV event. If `RoomServer.get_state` shows the current user with `connected: false` (or missing from `state.users` entirely), it rejoins silently. Since sync:ping fires every ~100ms while the LV is alive, a stale-disconnected user gets back to `connected: true` within one tick.
+
+`RoomServer.join/4` grew a `silent: true` opt: skips the `:joined` activity log entry, SyncLog entries, and the "X joined the room" presence toast. The users/ready_count broadcasts still fire (that's the whole point — the room needs to re-learn the user is connected).
+
+---
+
 # v6.2.8
 
 ### Don't cancel pending pause on sync:correction

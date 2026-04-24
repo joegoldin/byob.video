@@ -569,6 +569,12 @@ defmodule ByobWeb.RoomLive do
     pid = socket.assigns[:room_pid]
 
     if pid && Process.alive?(pid) do
+      # The GenServer is alive, but the room may still have us marked
+      # as disconnected — a brief LV socket drop sets connected=false
+      # and nothing else restores it. If we're a connected LV process
+      # processing events, we ARE online; re-mark ourselves to keep
+      # presence + ready-count accurate.
+      maybe_restore_connected(pid, socket)
       socket
     else
       {:ok, new_pid} = RoomManager.ensure_room(socket.assigns.room_id)
@@ -580,6 +586,29 @@ defmodule ByobWeb.RoomLive do
       end
 
       assign(socket, room_pid: new_pid)
+    end
+  end
+
+  defp maybe_restore_connected(pid, socket) do
+    user_id = socket.assigns[:user_id]
+    username = socket.assigns[:username]
+
+    if user_id && username do
+      state = RoomServer.get_state(pid)
+
+      case Map.get(state.users, user_id) do
+        %{connected: false} ->
+          # We were marked offline. Rejoin silently — skip the presence
+          # toast since this is a reconnection, not a new arrival.
+          RoomServer.join(pid, user_id, username, silent: true)
+
+        nil ->
+          # Not in the room's user map at all. Full re-join.
+          RoomServer.join(pid, user_id, username)
+
+        _ ->
+          :ok
+      end
     end
   end
 

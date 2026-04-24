@@ -245,6 +245,7 @@ defmodule Byob.RoomServer do
   @impl true
   def handle_call({:join, user_id, username, opts}, _from, state) do
     is_extension = Keyword.get(opts, :is_extension, false)
+    silent = Keyword.get(opts, :silent, false)
     was_present = username_connected?(state, username)
 
     # Clean up stale disconnected users — reconnections create new user IDs
@@ -294,16 +295,30 @@ defmodule Byob.RoomServer do
       if current_item, do: fetch_sponsor_segments(current_item)
     end
 
-    state = log_activity(state, :joined, user_id)
-    SyncLog.join(state.room_id, user_id, map_size(state.users))
-    SyncLog.snapshot(state.room_id, user_id, state.play_state, current_position(state))
+    # Skip activity logs + presence toasts on silent re-joins (e.g. the
+    # LV ensure_room_pid hook re-marking the user as connected after a
+    # brief socket drop). These shouldn't look like fresh joins.
+    state =
+      if silent do
+        state
+      else
+        log_activity(state, :joined, user_id)
+      end
+
+    unless silent do
+      SyncLog.join(state.room_id, user_id, map_size(state.users))
+      SyncLog.snapshot(state.room_id, user_id, state.play_state, current_position(state))
+    end
+
     broadcast(state, {:users_updated, state.users})
     broadcast_ready_count(state)
+
     # Only toast when a username transitions from "not present" to "present".
-    # Re-connects (same user on a different device) stay quiet.
-    if not was_present do
+    # Re-connects (same user on a different device / after brief drop) stay quiet.
+    if not silent and not was_present do
       broadcast(state, {:room_presence, %{event: "joined", username: username}})
     end
+
     {:reply, {:ok, snapshot(state)}, state}
   end
 
