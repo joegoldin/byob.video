@@ -93,6 +93,10 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:update_current_media, attrs})
   end
 
+  def update_current_url(pid, user_id, url) do
+    GenServer.call(pid, {:update_current_url, user_id, url})
+  end
+
   def get_state(pid) do
     GenServer.call(pid, :get_state)
   end
@@ -438,6 +442,44 @@ defmodule Byob.RoomServer do
     end
   end
 
+  # Update the URL of the currently-playing media item — used by the
+  # extension's "Set room to this page" toast. Re-parses source_type/source_id
+  # from the new URL; resets current_time to 0 and pauses so everyone catches
+  # up on the new video. Broadcasts video:change so all clients navigate.
+  def handle_call({:update_current_url, user_id, url}, _from, state) do
+    with idx when not is_nil(idx) <- state.current_index,
+         %Byob.MediaItem{} = item <- Enum.at(state.queue, idx),
+         {:ok, parsed} <- Byob.MediaItem.parse_url(url) do
+      updated = %{
+        item
+        | url: url,
+          source_type: parsed.source_type,
+          source_id: parsed.source_id,
+          title: nil,
+          thumbnail_url: nil
+      }
+
+      queue = List.replace_at(state.queue, idx, updated)
+      now = System.monotonic_time(:millisecond)
+
+      state = %{
+        state
+        | queue: queue,
+          current_time: 0.0,
+          play_state: :paused,
+          last_sync_at: now
+      }
+
+      state = log_activity(state, :added, user_id, updated.title || updated.url)
+
+      broadcast(state, {:queue_updated, %{queue: queue, current_index: idx}})
+      broadcast(state, {:video_changed, %{media_item: updated, index: idx}})
+      {:reply, {:ok, updated}, state}
+    else
+      _ -> {:reply, {:error, :not_updated}, state}
+    end
+  end
+
   def handle_call({:leave, user_id}, _from, state) do
     state = log_activity(state, :left, user_id)
     leaving_username = get_in(state, [Access.key(:users), user_id, Access.key(:username)])
@@ -738,9 +780,17 @@ defmodule Byob.RoomServer do
     ref = Process.send_after(self(), :advance_pending, @autoplay_countdown_ms)
     state = %{state | pending_advance_ref: ref, play_state: :paused}
 
+    # has_next tells clients (esp. the extension) whether this countdown is
+    # actually going to advance to something. If nothing's next, the extension
+    # suppresses its overlay countdown — the user keeps watching whatever
+    # they've navigated to on the third-party site. The main LV countdown
+    # always shows regardless.
+    has_next = index + 1 < length(state.queue)
+
     broadcast(
       state,
-      {:autoplay_countdown, %{duration_ms: @autoplay_countdown_ms, server_time: now}}
+      {:autoplay_countdown,
+       %{duration_ms: @autoplay_countdown_ms, server_time: now, has_next: has_next}}
     )
 
     {:reply, :ok, state}

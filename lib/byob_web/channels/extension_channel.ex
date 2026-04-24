@@ -21,6 +21,7 @@ defmodule ByobWeb.ExtensionChannel do
   @in_sync_ping Events.in_sync_ping()
   @in_sync_request_state Events.in_sync_request_state()
   @in_debug_log Events.in_debug_log()
+  @in_video_update_url Events.in_video_update_url()
 
   @impl true
   def join("extension:" <> room_id, params, socket) do
@@ -222,13 +223,23 @@ defmodule ByobWeb.ExtensionChannel do
         state.current_time
       end
 
+    current = current_media(state)
+
     {:reply,
      {:ok,
       %{
         play_state: Atom.to_string(state.play_state),
         current_time: current_time,
-        server_time: now
+        server_time: now,
+        current_url: current && current.url,
+        current_source_type: current && Atom.to_string(current.source_type),
+        queue_size: length(state.queue)
       }}, socket}
+  end
+
+  def handle_in(@in_video_update_url, %{"url" => url}, socket) do
+    RoomServer.update_current_url(socket.assigns.room_pid, socket.assigns.user_id, url)
+    {:noreply, socket}
   end
 
   def handle_in(@in_video_drift, %{"drift_ms" => drift_ms} = payload, socket) do
@@ -422,6 +433,8 @@ defmodule ByobWeb.ExtensionChannel do
         state.current_time
       end
 
+    current = current_media(state)
+
     %{
       queue: Enum.map(state.queue, &serialize_item/1),
       current_index: state.current_index,
@@ -429,8 +442,18 @@ defmodule ByobWeb.ExtensionChannel do
       current_time: current_time,
       server_time: now,
       playback_rate: state.playback_rate,
-      ready_count: ready_count
+      ready_count: ready_count,
+      current_url: current && current.url,
+      current_source_type: current && Atom.to_string(current.source_type),
+      queue_size: length(state.queue)
     }
+  end
+
+  defp current_media(state) do
+    case state.current_index do
+      nil -> nil
+      idx -> Enum.at(state.queue, idx)
+    end
   end
 
   defp serialize_item(%Byob.MediaItem{} = item) do

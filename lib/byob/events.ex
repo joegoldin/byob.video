@@ -33,6 +33,7 @@ defmodule Byob.Events do
   def in_sync_ping, do: "sync:ping"
   def in_sync_request_state, do: "sync:request_state"
   def in_debug_log, do: "debug:log"
+  def in_video_update_url, do: "video:update_url"
 
   # ── Channel OUT & LV push_event (server → client) ──────────────────────
   def sync_state, do: "sync:state"

@@ -20,6 +20,7 @@ const EVT = Object.freeze({
   VIDEO_READY: "video:ready",
   VIDEO_DRIFT: "video:drift",
   VIDEO_REQUEST_SYNC: "video:request-sync",
+  VIDEO_UPDATE_URL: "video:update_url",
 
   // background.js → content.js
   COMMAND_PLAY: "command:play",
@@ -27,6 +28,8 @@ const EVT = Object.freeze({
   COMMAND_SEEK: "command:seek",
   COMMAND_INITIAL_STATE: "command:initial-state",
   COMMAND_SYNCED: "command:synced",
+  COMMAND_QUEUE_ENDED: "command:queue-ended",
+  COMMAND_VIDEO_CHANGE: "command:video-change",
   SYNC_CORRECTION: "sync:correction",
   AUTOPLAY_COUNTDOWN: "autoplay:countdown",
   AUTOPLAY_CANCELLED: "autoplay:cancelled",
@@ -47,6 +50,7 @@ const EVT = Object.freeze({
   CHAN_SYNC_PING: "sync:ping",
   CHAN_SYNC_REQUEST_STATE: "sync:request_state",
   CHAN_DEBUG_LOG: "debug:log",
+  CHAN_VIDEO_UPDATE_URL: "video:update_url",
 
   // Channel OUT (server → background.js subscribers)
   CHAN_SYNC_PLAY: "sync:play",
@@ -59,6 +63,7 @@ const EVT = Object.freeze({
   CHAN_ROOM_PRESENCE: "room:presence",
   CHAN_VIDEO_CHANGE: "video:change",
   CHAN_QUEUE_ENDED: "queue:ended",
+  CHAN_QUEUE_UPDATED: "queue:updated",
 
   // Extension-internal broadcasts
   BYOB_VIDEO_HOOKED: "byob:video-hooked",
@@ -87,6 +92,13 @@ let currentServerUrl = null;
 let initialRoomState = null;
 let lastConnectAt = 0;
 let autoplayCountdownActive = false;
+// Canonical URL of the room's current media item. Set on join and updated on
+// video:change / queue:updated. Sent to content scripts so they can detect
+// when a tab has navigated away (SPA or manual) and show the URL-mismatch
+// toast.
+let currentSyncedUrl = null;
+let currentSourceType = null;
+let currentQueueSize = 0;
 
 // NTP-style clock sync state.
 // serverMonotonicMs ≈ Date.now() + clockOffset
@@ -177,11 +189,16 @@ function handleContentMessage(msg, port, tabId) {
       if (channel) {
         channel.push(EVT.CHAN_SYNC_REQUEST_STATE, {}).receive("ok", (resp) => {
           console.log("[byob] Got current state for sync:", resp);
+          if (resp.current_url) currentSyncedUrl = resp.current_url;
+          if (resp.current_source_type) currentSourceType = resp.current_source_type;
+          if (resp.queue_size != null) currentQueueSize = resp.queue_size;
           port.postMessage({
             type: EVT.COMMAND_INITIAL_STATE,
             play_state: resp.play_state,
             current_time: resp.current_time,
             server_time: resp.server_time,
+            current_url: resp.current_url,
+            queue_size: resp.queue_size,
           });
         });
       }
@@ -192,6 +209,9 @@ function handleContentMessage(msg, port, tabId) {
       if (channel) {
         channel.push(EVT.CHAN_SYNC_REQUEST_STATE, {}).receive("ok", (resp) => {
           console.log("[byob] Fresh state for sync:", resp);
+          if (resp.current_url) currentSyncedUrl = resp.current_url;
+          if (resp.current_source_type) currentSourceType = resp.current_source_type;
+          if (resp.queue_size != null) currentQueueSize = resp.queue_size;
           // Broadcast command:synced directly — the content script will
           // seek + play/pause itself based on the play_state/current_time.
           // (Stage-2 simplification: no preceding CMD:play/pause dance.)
@@ -200,6 +220,8 @@ function handleContentMessage(msg, port, tabId) {
             play_state: resp.play_state,
             current_time: resp.current_time,
             server_time: resp.server_time,
+            current_url: resp.current_url,
+            queue_size: resp.queue_size,
           };
           if (tabId != null) broadcastToTab(tabId, synced);
           else broadcastToContentScripts(synced);
@@ -235,6 +257,10 @@ function handleContentMessage(msg, port, tabId) {
 
     case EVT.VIDEO_DRIFT:
       if (channel) channel.push(EVT.CHAN_VIDEO_DRIFT, { drift_ms: msg.drift, tab_id: String(tabId) });
+      break;
+
+    case EVT.VIDEO_UPDATE_URL:
+      if (channel && msg.url) channel.push(EVT.CHAN_VIDEO_UPDATE_URL, { url: msg.url });
       break;
 
     case EVT.BYOB_BAR_UPDATE:
@@ -401,16 +427,48 @@ function connectToRoom(roomId, serverUrl, token, username) {
   });
 
   channel.on(EVT.CHAN_VIDEO_CHANGE, (data) => {
+    // Cache the canonical URL so new tabs joining mid-playback know what
+    // to compare against. `data.media_item` is the serialized MediaItem.
+    const mi = data && data.media_item;
+    if (mi && mi.url) {
+      currentSyncedUrl = mi.url;
+      currentSourceType = mi.source_type;
+    }
+
     // If an autoplay countdown was active, the queue just advanced —
     // close all extension tabs so users navigate to the new video.
     if (autoplayCountdownActive) {
       closeExtensionTabs();
       autoplayCountdownActive = false;
+      return;
+    }
+
+    // Otherwise (manual queue navigation, or "Set room to this page" update):
+    // tell content scripts so they can update their synced URL reference,
+    // without closing the tab.
+    if (mi) {
+      broadcastToContentScripts({
+        type: EVT.COMMAND_VIDEO_CHANGE,
+        url: mi.url,
+        source_type: mi.source_type,
+        source_id: mi.source_id,
+        title: mi.title,
+      });
     }
   });
 
   channel.on(EVT.CHAN_QUEUE_ENDED, () => {
-    closeExtensionTabs();
+    // Queue finished with nothing next — do NOT close tabs. Let the user
+    // keep browsing; content.js flips the sync bar to "Queue ended" and
+    // the URL-mismatch toast will prompt them if they navigate away.
+    currentQueueSize = 0;
+    broadcastToContentScripts({ type: EVT.COMMAND_QUEUE_ENDED });
+  });
+
+  // Refresh the cached queue size on every queue update so content scripts
+  // can distinguish "there's a next video" from "last video".
+  channel.on(EVT.CHAN_QUEUE_UPDATED, (data) => {
+    if (data && Array.isArray(data.queue)) currentQueueSize = data.queue.length;
   });
 
   socket.onOpen(() => console.log("[byob] WebSocket connected to", wsUrl));

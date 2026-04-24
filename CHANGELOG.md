@@ -2,6 +2,71 @@
 
 ---
 
+# v6.5.0
+
+### Keep extension window open on queue end + "URL mismatch" toast
+
+When a room's queue finishes with nothing next, we no longer close the
+third-party tab — the user stays on whatever anime/tv site they were on
+and can keep browsing. The sync bar flips to **Queue finished** and the
+autoplay-countdown overlay is suppressed on the extension side (main LV
+still shows the countdown as before).
+
+When the tab navigates away from the room's canonical URL (SPA click
+into the next episode, site autoplay, or manual browsing), a persistent
+purple toast pops up with two buttons:
+
+- **Back to room video** — reloads the tab to the room's canonical URL.
+- **Set room to this page** — pushes the current URL to the server as
+  the room's new current-media URL; every other user's main player and
+  extension tabs re-sync to it.
+
+The toast self-dismisses when the tab's URL matches the room's again
+(e.g., after clicking "Back to room video" or after "Set room to this
+page" succeeds). It only appears in the top frame — iframes can't
+navigate the window anyway.
+
+**How it works:**
+
+- `Byob.Events.in_video_update_url/0` → new channel event.
+- `RoomServer.update_current_url/3` — re-parses the URL via
+  `Byob.MediaItem.parse_url/1`, resets `current_time` to 0, pauses
+  playback, broadcasts `{:queue_updated, ...}` and `{:video_changed, ...}`.
+- `ExtensionChannel.handle_in(@in_video_update_url, ...)` — plumbs the
+  channel event to `RoomServer`.
+- `sync:request_state` reply and `sync_state_payload/1` now include
+  `current_url`, `current_source_type`, and `queue_size` so the
+  extension knows what to compare against.
+- `autoplay:countdown` payload now carries `has_next` — the extension
+  gates its overlay on this (main LV ignores it, always shows).
+- `extension/background.js`:
+  - Caches `currentSyncedUrl` and propagates it into `command:initial-state`
+    and `command:synced`.
+  - On `queue:ended`, broadcasts `command:queue-ended` to content scripts
+    instead of closing tabs.
+  - On `video:change` without active autoplay countdown, broadcasts
+    `command:video-change` with the new URL so content scripts can
+    refresh their `_syncedUrl` reference.
+  - New `VIDEO_UPDATE_URL` switch case pushes to the channel.
+- `extension/content.js`:
+  - `setSyncedUrl/1` tracks the canonical URL, kicks off a 1 s polling
+    loop that compares `location.href` to `_syncedUrl`, and mirrors the
+    URL into `chrome.storage` so full-page reloads still activate.
+  - `showUrlMismatchToast/0` — persistent purple toast with the two
+    action buttons, matching the style of the existing join and
+    presence toasts.
+  - `normalizeUrl/1` strips trailing slashes and hash fragments so
+    cosmetic differences don't trigger false mismatches.
+  - New sync bar state `queue_ended` — "Queue finished" status.
+
+Cross-origin navigation (e.g., out of crunchyroll.com to google.com)
+remains unhandled — the extension's content script only activates on
+URLs whose pathname matches the launch target, so the toast can't show
+on unrelated sites. Same-origin SPA navigation, manual same-site
+browsing, and full reloads on the original origin are all covered.
+
+---
+
 # v6.4.0
 
 ### Magic-strings + magic-numbers refactor

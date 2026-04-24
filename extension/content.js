@@ -35,6 +35,7 @@
     VIDEO_ENDED: "video:ended",
     VIDEO_READY: "video:ready",
     VIDEO_REQUEST_SYNC: "video:request-sync",
+    VIDEO_UPDATE_URL: "video:update_url",
 
     // background.js → content.js (port message)
     COMMAND_PLAY: "command:play",
@@ -42,6 +43,8 @@
     COMMAND_SEEK: "command:seek",
     COMMAND_INITIAL_STATE: "command:initial-state",
     COMMAND_SYNCED: "command:synced",
+    COMMAND_QUEUE_ENDED: "command:queue-ended",
+    COMMAND_VIDEO_CHANGE: "command:video-change",
     SYNC_CORRECTION: "sync:correction",
     AUTOPLAY_COUNTDOWN: "autoplay:countdown",
     AUTOPLAY_CANCELLED: "autoplay:cancelled",
@@ -113,6 +116,7 @@
   const TOAST_FADE_MS = 250;
   const COUNTDOWN_TICK_MS = 500;
   const SYNC_BAR_RETRY_MS = 500;
+  const URL_POLL_MS = 1000;
   const DRIFT_HARD_THRESHOLD_S = 5.0;
   const DRIFT_RATE_MIN = 0.9;
   const DRIFT_RATE_MAX = 1.1;
@@ -120,6 +124,17 @@
   const HARD_SEEK_GIVE_UP_ATTEMPTS = 2;
   const VIDEO_ENDED_TAIL_S = 3;
   const MIN_ENDED_DURATION_S = 60;
+
+  // ── Room URL tracking (v6.5: URL-mismatch toast) ──────────────────────────
+  // `_syncedUrl` is the canonical URL of the room's current media item.
+  // Set from COMMAND_INITIAL_STATE / COMMAND_SYNCED / COMMAND_VIDEO_CHANGE.
+  // When `location.href` diverges from it (SPA nav / manual browse / autoplay
+  // to next episode on the site), we show a persistent purple toast with
+  // two buttons: re-sync (reload canonical URL) or update-room (push the
+  // current URL to the server).
+  let _syncedUrl = null;
+  let _urlPollInterval = null;
+  let _urlMismatchShown = false;
   // Echo suppression is handled entirely by commandGuard:
   //   - After any server command (play/pause/seek/synced), commandGuard is
   //     armed and auto-releases once the video's actual state matches what
@@ -821,6 +836,11 @@
     }
 
     if (msg.type === EVT.AUTOPLAY_COUNTDOWN && window === window.top) {
+      // v6.5: only show the countdown overlay here when there's a next
+      // video queued. If the queue's exhausted, the countdown fires server-
+      // side but we don't want to distract the user — they're free to
+      // browse to whatever's next on the third-party site.
+      if (msg.has_next === false) return;
       startCountdown(msg.duration_ms || 5000);
       return;
     }
@@ -830,6 +850,7 @@
     }
 
     if (msg.type === EVT.COMMAND_INITIAL_STATE) {
+      if (msg.current_url) setSyncedUrl(msg.current_url);
       tryAutoSync();
       return;
     }
@@ -847,6 +868,8 @@
         updateServerRef(msg.current_time ?? 0, expectedPlayState, msg.server_time);
       }
 
+      if (msg.current_url) setSyncedUrl(msg.current_url);
+
       hideJoinToast();
       _log("synced! expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
 
@@ -863,6 +886,20 @@
       } else if (window === window.top) {
         updateSyncBarStatus(expectedPlayState === State.PAUSED ? "paused" : "playing");
       }
+      return;
+    }
+
+    if (msg.type === EVT.COMMAND_VIDEO_CHANGE) {
+      // Room advanced to a new video (manual queue nav, or "Set room to this
+      // page"). Update our canonical URL reference so the mismatch toast
+      // disappears if this tab happens to already be on that URL, and
+      // appears if we're on a different one.
+      if (msg.url) setSyncedUrl(msg.url);
+      return;
+    }
+
+    if (msg.type === EVT.COMMAND_QUEUE_ENDED && window === window.top) {
+      updateSyncBarStatus("queue_ended");
       return;
     }
 
@@ -1072,6 +1109,136 @@
       toast.style.transform = "translateX(-50%) translateY(10px)";
       setTimeout(() => { if (toast.parentNode) toast.remove(); }, TOAST_FADE_MS);
     }, 2500);
+  }
+
+  // ── URL mismatch tracking (v6.5) ──────────────────────────────────────────
+  // Canonical room URL, polling, and persistent toast. Only runs in the top
+  // frame (same gate as other toasts) — iframes can't navigate the window.
+  function setSyncedUrl(url) {
+    const changed = _syncedUrl !== url;
+    _syncedUrl = url;
+    // Keep chrome.storage's target_url aligned so a full-page reload still
+    // activates sync (tryActivate() uses target_url as the pathname gate).
+    if (changed && url) {
+      try {
+        chrome.storage.local.get(STORAGE_KEY).then((config) => {
+          const cfg = config[STORAGE_KEY];
+          if (cfg) {
+            chrome.storage.local.set({
+              [STORAGE_KEY]: { ...cfg, target_url: url, timestamp: Date.now() },
+            });
+          }
+        });
+      } catch (_) {}
+    }
+    // Re-evaluate on every update so the toast dismisses itself if the
+    // room moved to match our current page (e.g. user clicked "Set room
+    // to this page" and the server broadcast came back).
+    checkUrlMismatch();
+    ensureUrlPollStarted();
+  }
+
+  function ensureUrlPollStarted() {
+    if (window !== window.top) return;
+    if (_urlPollInterval) return;
+    _urlPollInterval = setInterval(checkUrlMismatch, URL_POLL_MS);
+  }
+
+  function checkUrlMismatch() {
+    if (window !== window.top) return;
+    if (!_syncedUrl) { hideUrlMismatchToast(); return; }
+
+    if (normalizeUrl(location.href) === normalizeUrl(_syncedUrl)) {
+      hideUrlMismatchToast();
+    } else {
+      showUrlMismatchToast();
+    }
+  }
+
+  // Strip trailing slash + fragment so "?autoplay=1" and slug variations
+  // don't trigger a false mismatch. Conservative — keep query params so
+  // different YouTube videos aren't treated as identical.
+  function normalizeUrl(u) {
+    try {
+      const url = new URL(u);
+      url.hash = "";
+      let s = url.toString();
+      if (s.endsWith("/")) s = s.slice(0, -1);
+      return s;
+    } catch (_) {
+      return u;
+    }
+  }
+
+  function showUrlMismatchToast() {
+    if (_urlMismatchShown) return;
+    if (document.getElementById("byob-url-toast")) return;
+    _urlMismatchShown = true;
+
+    const toast = document.createElement("div");
+    toast.id = "byob-url-toast";
+    toast.style.cssText = `
+      position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%);
+      z-index: 2147483647; background: #7c3aed; color: white;
+      font-family: system-ui, sans-serif; font-size: 14px;
+      padding: 12px 18px; border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15);
+      display: flex; align-items: center; gap: 12px;
+      max-width: calc(100vw - 32px);
+    `;
+
+    const label = document.createElement("span");
+    label.style.cssText = "font-weight: 600; flex-shrink: 0;";
+    label.textContent = "You've left the room's video";
+
+    const spacer = document.createElement("span");
+    spacer.style.cssText = "flex: 1;";
+
+    const backBtn = document.createElement("button");
+    backBtn.type = "button";
+    backBtn.textContent = "Back to room video";
+    backBtn.style.cssText = `
+      background: rgba(255,255,255,0.18); color: white; border: none;
+      font: inherit; font-weight: 600; font-size: 13px;
+      padding: 6px 12px; border-radius: 8px; cursor: pointer;
+      flex-shrink: 0;
+    `;
+    backBtn.onmouseenter = () => { backBtn.style.background = "rgba(255,255,255,0.3)"; };
+    backBtn.onmouseleave = () => { backBtn.style.background = "rgba(255,255,255,0.18)"; };
+    backBtn.onclick = () => {
+      if (_syncedUrl) window.location.href = _syncedUrl;
+    };
+
+    const updateBtn = document.createElement("button");
+    updateBtn.type = "button";
+    updateBtn.textContent = "Set room to this page";
+    updateBtn.style.cssText = `
+      background: white; color: #7c3aed; border: none;
+      font: inherit; font-weight: 700; font-size: 13px;
+      padding: 6px 12px; border-radius: 8px; cursor: pointer;
+      flex-shrink: 0;
+    `;
+    updateBtn.onmouseenter = () => { updateBtn.style.background = "#f5f3ff"; };
+    updateBtn.onmouseleave = () => { updateBtn.style.background = "white"; };
+    updateBtn.onclick = () => {
+      if (port) port.postMessage({ type: EVT.VIDEO_UPDATE_URL, url: location.href });
+      // Optimistically hide — the server echo via COMMAND_VIDEO_CHANGE will
+      // update _syncedUrl and confirm, or the next poll will re-show if
+      // something went wrong.
+      hideUrlMismatchToast();
+    };
+
+    toast.appendChild(label);
+    toast.appendChild(spacer);
+    toast.appendChild(backBtn);
+    toast.appendChild(updateBtn);
+    document.body.appendChild(toast);
+  }
+
+  function hideUrlMismatchToast() {
+    _urlMismatchShown = false;
+    const el = document.getElementById("byob-url-toast");
+    if (el) el.remove();
   }
 
   function injectSyncBar() {
@@ -1292,6 +1459,7 @@
       playing:   { color: "#00d400", text: "Playing",                            tip: "Video is playing in sync with the room" },
       paused:    { color: "#ff9900", text: "Paused",                             tip: "Video is paused — synced with room" },
       finished:  { color: "#7c3aed", text: "Finished",                           tip: "Video ended — next video loading" },
+      queue_ended: { color: "#7c3aed", text: "Queue finished",                   tip: "No more videos queued — feel free to keep browsing" },
     };
     const s = states[state];
     if (!s) return;
