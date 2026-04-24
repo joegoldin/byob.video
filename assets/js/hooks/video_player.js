@@ -182,6 +182,12 @@ const VideoPlayer = {
 
       this._retryPlayOrShowOverlay(position);
     } else if (state.play_state === "paused") {
+      // If this tab has never received a user gesture, the YouTube embed
+      // often renders as a frozen black rectangle that ignores clicks
+      // on its own controls (browser autoplay policy + iframe quirks).
+      // Preempt that by showing our own overlay; one click activates the
+      // tab so the later sync:play can actually start playback.
+      this._maybeShowReadyOverlay(state.current_time);
       this.expectedPlayState = "paused";
       this.suppression.suppress("paused");
       if (this.sourceType === "youtube" && this.player?.loadVideoById) {
@@ -485,8 +491,11 @@ const VideoPlayer = {
 
   _onSyncPlay(data) {
     this.expectedPlayState = "playing";
-    // Remove click-to-play overlay if present
+    // Remove any of our own overlays — host is taking us out of the
+    // paused "waiting to join" state, or we're already playing and this
+    // is a redundant broadcast.
     this.el.querySelector(".byob-click-to-play")?.remove();
+    this.el.querySelector(".byob-join-ready")?.remove();
     if (data.user_id === this.userId) return;
     this.suppression.suppress("playing");
     this._seekTo(data.time);
@@ -950,6 +959,68 @@ const VideoPlayer = {
     }, 250);
   },
 
+  // Joined-while-paused overlay. The YouTube embed, before the tab has
+  // received any user gesture, sometimes renders as a frozen black box
+  // that even swallows its own native play-button clicks — so we lay
+  // our own overlay on top. The click activates the tab for autoplay;
+  // we don't start playback here because the room state is paused.
+  // Skipped if the user has already interacted with this document
+  // (`navigator.userActivation.hasBeenActive`).
+  _maybeShowReadyOverlay(position) {
+    if (this.sourceType !== "youtube") return;
+    // If the user has already interacted with the doc since load,
+    // the embed will be fully interactive — no overlay needed.
+    if (navigator.userActivation?.hasBeenActive) return;
+    if (document.getElementById("ext-placeholder")) return;
+    // Don't stack with the other overlays.
+    if (this.el.querySelector(".byob-click-to-play")) return;
+    if (this.el.querySelector(".byob-join-ready")) return;
+
+    const overlay = document.createElement("div");
+    overlay.className = "byob-join-ready";
+    // Background layer: video thumbnail (so the user sees the video even
+    // while the YouTube embed is still a black box), dimmed underneath
+    // the call-to-action.
+    const thumbBg = this._lastThumb
+      ? `background-image:url(${JSON.stringify(this._lastThumb)});background-size:cover;background-position:center;`
+      : "";
+    overlay.style.cssText = `position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;cursor:pointer;background:#000;${thumbBg}`;
+
+    const dim = document.createElement("div");
+    dim.style.cssText = "position:absolute;inset:0;background:rgba(0,0,0,0.55);";
+    overlay.appendChild(dim);
+
+    const btn = document.createElement("div");
+    btn.style.cssText = "position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;";
+    btn.innerHTML = `
+      <div style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.9);display:flex;align-items:center;justify-content:center;">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="#000"><polygon points="6,3 20,12 6,21"/></svg>
+      </div>
+      <span style="color:white;font-size:14px;font-weight:600;text-shadow:0 1px 3px rgba(0,0,0,0.5);">Click to join the room</span>
+      <span style="color:white;opacity:0.8;font-size:11px;text-shadow:0 1px 3px rgba(0,0,0,0.5);">Video is paused — you'll start playing when the host does</span>
+    `;
+    overlay.appendChild(btn);
+
+    overlay.addEventListener("click", () => {
+      overlay.remove();
+      // Poke the YouTube embed with a tiny play-then-pause so the iframe
+      // fully initializes (loads the first frame, shows its thumbnail,
+      // accepts later playVideo() without a gesture). `_loadingPaused`
+      // tells the onStateChange handler to swallow the resulting pause
+      // event rather than echoing it to the server.
+      if (this.player?.play && this.player?.pause) {
+        this._loadingPaused = true;
+        try { this.player.play(); } catch (_) {}
+        setTimeout(() => {
+          try { this.player.pause(); } catch (_) {}
+          if (position != null) this._seekTo(position);
+        }, 150);
+      }
+    }, { once: true });
+
+    this.el.appendChild(overlay);
+  },
+
   _showClickToPlay(position) {
     // Don't show when external player is active — user watches in the
     // extension window, not the embedded YouTube player
@@ -960,10 +1031,19 @@ const VideoPlayer = {
 
     const overlay = document.createElement("div");
     overlay.className = "byob-click-to-play";
-    overlay.style.cssText = "position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;cursor:pointer;background:rgba(0,0,0,0.4);";
+    // Thumbnail background so the user sees the video even when the
+    // underlying embed is still a black box.
+    const thumbBg = this._lastThumb
+      ? `background-image:url(${JSON.stringify(this._lastThumb)});background-size:cover;background-position:center;`
+      : "";
+    overlay.style.cssText = `position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;cursor:pointer;background:#000;${thumbBg}`;
+
+    const dim = document.createElement("div");
+    dim.style.cssText = "position:absolute;inset:0;background:rgba(0,0,0,0.4);";
+    overlay.appendChild(dim);
 
     const btn = document.createElement("div");
-    btn.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:8px;";
+    btn.style.cssText = "position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;";
     btn.innerHTML = `
       <div style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.9);display:flex;align-items:center;justify-content:center;">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="#000"><polygon points="6,3 20,12 6,21"/></svg>

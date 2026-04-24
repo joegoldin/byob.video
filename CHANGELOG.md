@@ -2,6 +2,18 @@
 
 ---
 
+# v6.2.14
+
+### Join-ready overlay on paused-state join; thumbnail behind overlays
+
+Joining a paused room often left users staring at an unclickable black box: the YouTube embed had loaded with autoplay=0, but before the tab received any user gesture the iframe ignored clicks on its own native play button and showed no thumbnail. Nothing visible, nothing clickable.
+
+- New `.byob-join-ready` overlay fires on initial paused state when `navigator.userActivation.hasBeenActive` is false. "Click to join the room" — click activates the tab, briefly play-then-pauses the YouTube embed to force it to render the first frame, then seeks back to the room's current position. When the host plays, autoplay is now allowed.
+- Both the join-ready overlay and the existing click-to-play overlay now paint the current video's thumbnail as their background (fetched from `mediaItem.thumbnail_url` or YouTube's hqdefault) with a dark dim layer on top. Users see *what* they're about to watch, not a black void.
+- The join-ready overlay gets removed when a `sync:play` or user click arrives, so it doesn't linger after the embed becomes interactive.
+
+---
+
 # v6.2.13
 
 ### Show click-to-play overlay when another user starts playback into a blocked tab
