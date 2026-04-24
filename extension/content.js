@@ -34,6 +34,7 @@
   let lastSeekAt = 0;
   let _pendingPlayPause = null;    // debounced send
   let _hardSeekFailures = 0;
+  let _mismatchSince = 0;          // Date.now() when actual≠expected started
   let _endedReported = false;
   let activateArgs = null;
   let settlingUntil = 0;
@@ -445,10 +446,38 @@
       const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
       if (isSettling()) return;
 
-      // Don't drift-correct while play state doesn't match — a state
-      // transition is in flight (site is pausing/resuming). The debounced
-      // event handlers will update the server if the state change persists.
-      if (actual !== expectedPlayState && expectedPlayState) return;
+      // State mismatch rectifier. Debounced event handlers handle user-
+      // initiated state changes within ~500ms. If mismatch persists longer,
+      // event handlers aren't going to fire (the play/pause event already
+      // fired during settling, or the site toggled state silently). After
+      // a 2s grace period, enforce server state; after 10s of failed
+      // enforcement, accept the site's state and update the server.
+      if (actual !== expectedPlayState && expectedPlayState) {
+        if (_mismatchSince === 0) _mismatchSince = now;
+        const dur = now - _mismatchSince;
+        if (dur > 10000) {
+          _log(`reconcile: accepting site state after ${dur}ms mismatch, actual=${actual} pos=${hookedVideo.currentTime.toFixed(2)}`);
+          expectedPlayState = actual;
+          updateServerRef(hookedVideo.currentTime, actual);
+          if (port) {
+            const evt = actual === State.PLAYING ? "video:play" : "video:pause";
+            port.postMessage({ type: evt, position: hookedVideo.currentTime });
+          }
+          _mismatchSince = 0;
+        } else if (dur > 2000) {
+          _log(`reconcile: enforce expected=${expectedPlayState} actual=${actual} (mismatch ${Math.round(dur)}ms)`);
+          if (expectedPlayState === State.PAUSED && !hookedVideo.paused) {
+            if (bitmovinAdapter.isReady()) bitmovinAdapter.pause();
+            else hookedVideo.pause();
+          } else if (expectedPlayState === State.PLAYING && hookedVideo.paused) {
+            if (bitmovinAdapter.isReady()) bitmovinAdapter.play();
+            else hookedVideo.play().catch(() => {});
+          }
+        }
+        return;
+      } else {
+        _mismatchSince = 0;
+      }
 
       const recentSeek = (now - lastSeekAt) < 5000;
       if (!clockSynced) return;
@@ -508,8 +537,12 @@
   // Apply synced state with retry enforcement. On sites with aggressive
   // autoplay (Crunchyroll resuming at the continue-watching position, etc.),
   // a single seek + pause/play on the first tick is lost to the site's own
-  // playback management. Re-apply for up to 3s to ensure room state wins.
+  // playback management. Re-apply for up to 8s; if the site still won't
+  // honor our state after that, accept its state and tell the server so
+  // other clients converge to what this client actually sees.
   let _syncEnforcerTimer = null;
+  const SYNC_ENFORCE_MS = 8000;
+
   function applySyncedState(msg) {
     if (_syncEnforcerTimer) { clearInterval(_syncEnforcerTimer); _syncEnforcerTimer = null; }
     const target = msg.current_time;
@@ -517,9 +550,6 @@
 
     const apply = () => {
       if (!hookedVideo) return;
-      // Seek if we're more than 2s off target. Hard-seek threshold, same as
-      // reconcile — avoids bouncing on sub-second drift while still catching
-      // the "video loaded at 588, server wants 111" case.
       if (target != null && Math.abs(hookedVideo.currentTime - target) > 2.0) {
         seekTo(target);
         lastSeekAt = Date.now();
@@ -534,18 +564,29 @@
     };
 
     apply();
-    const deadline = Date.now() + 3000;
+    const startedAt = Date.now();
     _syncEnforcerTimer = setInterval(() => {
-      if (!hookedVideo || Date.now() > deadline) {
-        clearInterval(_syncEnforcerTimer);
-        _syncEnforcerTimer = null;
-        return;
+      if (!hookedVideo) {
+        clearInterval(_syncEnforcerTimer); _syncEnforcerTimer = null; return;
       }
       const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
       const onTarget = target == null || Math.abs(hookedVideo.currentTime - target) < 2.0;
       if (actual === expectedPlayState && onTarget) {
-        clearInterval(_syncEnforcerTimer);
-        _syncEnforcerTimer = null;
+        clearInterval(_syncEnforcerTimer); _syncEnforcerTimer = null;
+        return;
+      }
+      if (Date.now() - startedAt > SYNC_ENFORCE_MS) {
+        // Gave up fighting the site. The user's video is in a state that
+        // disagrees with the server — accept actual, update the server so
+        // other clients converge to what this one is actually doing.
+        clearInterval(_syncEnforcerTimer); _syncEnforcerTimer = null;
+        _log("applySynced: enforcer gave up, accepting site state actual=", actual, "pos=", hookedVideo.currentTime.toFixed(2));
+        expectedPlayState = actual;
+        updateServerRef(hookedVideo.currentTime, actual);
+        if (port) {
+          const evt = actual === State.PLAYING ? "video:play" : "video:pause";
+          port.postMessage({ type: evt, position: hookedVideo.currentTime });
+        }
         return;
       }
       apply();

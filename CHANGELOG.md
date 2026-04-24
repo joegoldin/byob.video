@@ -2,6 +2,34 @@
 
 ---
 
+# v6.1.4
+
+### Make the reconcile loop an actual rectifier + longer initial enforcement
+
+Users joined with the server paused at 441.4 and the receiver's video ended up playing at 442+ for ~50 seconds until someone manually interacted. Two compounding bugs:
+
+**1. Initial enforcer gave up before CR's autoplay started.**
+
+CR's autoplay-to-continue-watching fires 3–4 seconds after the player is ready. v6.1.2's `applySyncedState` enforcer ran for 3 seconds, stopping right as CR's autoplay kicked in. Extended to 8s. After 8s, if the site still won't honor the server state, accept actual and update the server (so other clients converge to the truth).
+
+**2. Reconcile was returning early on persistent state mismatch.**
+
+```js
+if (actual !== expectedPlayState && expectedPlayState) return;
+```
+
+Ported straight from v4.1.0 with the rationale "don't fight the debounced event handlers". Problem: event handlers only fire on state *transitions*. CR's autoplay `play` event fired during the 5s settling window and was dropped by `isSettling()` returning true; no more events, no update, reconcile exits early forever.
+
+New reconcile behavior:
+- Track when the mismatch started (`_mismatchSince`).
+- First 2s: grace period — let debounced event handlers fire and propagate. No action.
+- 2–10s: enforce the server state — call `bitmovinAdapter.pause()` or `.play()` every reconcile tick (500ms).
+- After 10s of failed enforcement: accept actual state, update the server, clear.
+
+Net result: any divergence (autoplay, page JS calling play(), user bypassing extension, etc.) gets rectified within 2s under normal conditions, 10s worst case.
+
+---
+
 # v6.1.3
 
 ### Fix Bitmovin commands silently dropped across ISOLATED↔MAIN worlds
