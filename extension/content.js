@@ -35,9 +35,15 @@
   let _pendingPlayPause = null;    // debounced send
   let _hardSeekFailures = 0;
   let _mismatchSince = 0;          // Date.now() when actual≠expected started
+  // Echo suppression is handled entirely by commandGuard:
+  //   - After any server command (play/pause/seek/synced), commandGuard is
+  //     armed and auto-releases once the video's actual state matches what
+  //     we commanded (or after 5s max).
+  //   - While armed, event handlers drop their outbound sends.
+  //   - No time-based "settling" window — behavior is deterministic against
+  //     the commands we've executed.
   let _endedReported = false;
   let activateArgs = null;
-  let settlingUntil = 0;
 
   // Clock sync (from background NTP burst)
   let clockOffset = 0;             // serverMonotonicMs ≈ Date.now() + clockOffset
@@ -57,7 +63,6 @@
     }
   }
 
-  function isSettling() { return Date.now() < settlingUntil; }
 
   // Signal extension is installed — only on our domain.
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
@@ -377,12 +382,12 @@
 
   // ── Event handlers (send-on-change, debounced) ────────────────────────────
   function onVideoPlay() {
-    if (!synced || isBuffering || isSettling()) return;
+    if (!synced || isBuffering || commandGuard) return;
     if (expectedPlayState === State.PLAYING) return;
     if (_pendingPlayPause) clearTimeout(_pendingPlayPause);
     _pendingPlayPause = setTimeout(() => {
       _pendingPlayPause = null;
-      if (!hookedVideo || hookedVideo.paused || isSettling()) return;
+      if (!hookedVideo || hookedVideo.paused || commandGuard) return;
       expectedPlayState = State.PLAYING;
       updateServerRef(hookedVideo.currentTime, State.PLAYING);
       if (port) port.postMessage({ type: "video:play", position: hookedVideo.currentTime });
@@ -391,12 +396,12 @@
   }
 
   function onVideoPause() {
-    if (!synced || isBuffering || isSettling()) return;
+    if (!synced || isBuffering || commandGuard) return;
     if (expectedPlayState === State.PAUSED) return;
     if (_pendingPlayPause) clearTimeout(_pendingPlayPause);
     _pendingPlayPause = setTimeout(() => {
       _pendingPlayPause = null;
-      if (!hookedVideo || !hookedVideo.paused || isSettling()) return;
+      if (!hookedVideo || !hookedVideo.paused || commandGuard) return;
       expectedPlayState = State.PAUSED;
       updateServerRef(hookedVideo.currentTime, State.PAUSED);
       if (port) port.postMessage({ type: "video:pause", position: hookedVideo.currentTime });
@@ -405,7 +410,7 @@
   }
 
   function onVideoSeeked() {
-    if (!synced || commandGuard || isSettling()) return;
+    if (!synced || commandGuard) return;
     lastSeekAt = Date.now();
     _hardSeekFailures = 0;
     updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
@@ -417,7 +422,7 @@
 
   let isBuffering = false;
   function onVideoWaiting() {
-    if (!synced || isSettling()) return;
+    if (!synced || commandGuard) return;
     isBuffering = true;
     showBufferingOverlay();
     updateSyncBarStatus("loading");
@@ -444,14 +449,13 @@
 
       const now = Date.now();
       const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
-      if (isSettling()) return;
 
       // State mismatch rectifier. Debounced event handlers handle user-
       // initiated state changes within ~500ms. If mismatch persists longer,
-      // event handlers aren't going to fire (the play/pause event already
-      // fired during settling, or the site toggled state silently). After
-      // a 2s grace period, enforce server state; after 10s of failed
-      // enforcement, accept the site's state and update the server.
+      // event handlers aren't going to fire (the site toggled state silently,
+      // e.g. CR autoplay). After a 2s grace period, enforce server state;
+      // after 10s of failed enforcement, accept the site's state and update
+      // the server.
       if (actual !== expectedPlayState && expectedPlayState) {
         if (_mismatchSince === 0) _mismatchSince = now;
         const dur = now - _mismatchSince;
@@ -534,63 +538,26 @@
     };
   }
 
-  // Apply synced state with retry enforcement. On sites with aggressive
-  // autoplay (Crunchyroll resuming at the continue-watching position, etc.),
-  // a single seek + pause/play on the first tick is lost to the site's own
-  // playback management. Re-apply for up to 8s; if the site still won't
-  // honor our state after that, accept its state and tell the server so
-  // other clients converge to what this client actually sees.
-  let _syncEnforcerTimer = null;
-  const SYNC_ENFORCE_MS = 8000;
-
+  // One-shot apply of synced state — seek + pause/play once. Autoplay that
+  // kicks in later (CR resumes at continue-watching after ~3s) is caught by
+  // the reconcile loop's 2s-mismatch-grace → enforcement. Keeping this
+  // one-shot (no long-running enforcer) means user clicks right after sync
+  // aren't fought by a 250ms-tick background loop.
   function applySyncedState(msg) {
-    if (_syncEnforcerTimer) { clearInterval(_syncEnforcerTimer); _syncEnforcerTimer = null; }
+    if (!hookedVideo) return;
     const target = msg.current_time;
     const wantPaused = expectedPlayState === State.PAUSED;
-
-    const apply = () => {
-      if (!hookedVideo) return;
-      if (target != null && Math.abs(hookedVideo.currentTime - target) > 2.0) {
-        seekTo(target);
-        lastSeekAt = Date.now();
-      }
-      if (wantPaused && !hookedVideo.paused) {
-        if (bitmovinAdapter.isReady()) bitmovinAdapter.pause();
-        else hookedVideo.pause();
-      } else if (!wantPaused && hookedVideo.paused) {
-        if (bitmovinAdapter.isReady()) bitmovinAdapter.play(target);
-        else hookedVideo.play().catch(() => {});
-      }
-    };
-
-    apply();
-    const startedAt = Date.now();
-    _syncEnforcerTimer = setInterval(() => {
-      if (!hookedVideo) {
-        clearInterval(_syncEnforcerTimer); _syncEnforcerTimer = null; return;
-      }
-      const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
-      const onTarget = target == null || Math.abs(hookedVideo.currentTime - target) < 2.0;
-      if (actual === expectedPlayState && onTarget) {
-        clearInterval(_syncEnforcerTimer); _syncEnforcerTimer = null;
-        return;
-      }
-      if (Date.now() - startedAt > SYNC_ENFORCE_MS) {
-        // Gave up fighting the site. The user's video is in a state that
-        // disagrees with the server — accept actual, update the server so
-        // other clients converge to what this one is actually doing.
-        clearInterval(_syncEnforcerTimer); _syncEnforcerTimer = null;
-        _log("applySynced: enforcer gave up, accepting site state actual=", actual, "pos=", hookedVideo.currentTime.toFixed(2));
-        expectedPlayState = actual;
-        updateServerRef(hookedVideo.currentTime, actual);
-        if (port) {
-          const evt = actual === State.PLAYING ? "video:play" : "video:pause";
-          port.postMessage({ type: evt, position: hookedVideo.currentTime });
-        }
-        return;
-      }
-      apply();
-    }, 250);
+    if (target != null && Math.abs(hookedVideo.currentTime - target) > 2.0) {
+      seekTo(target);
+      lastSeekAt = Date.now();
+    }
+    if (wantPaused && !hookedVideo.paused) {
+      if (bitmovinAdapter.isReady()) bitmovinAdapter.pause();
+      else hookedVideo.pause();
+    } else if (!wantPaused && hookedVideo.paused) {
+      if (bitmovinAdapter.isReady()) bitmovinAdapter.play(target);
+      else hookedVideo.play().catch(() => {});
+    }
   }
 
   // ── Command guard ─────────────────────────────────────────────────────────
@@ -598,10 +565,15 @@
   // video state matches what we commanded. 300ms min, 5s max. Prevents
   // third-party sites' internal transitions (DRM, buffering, player init)
   // from echoing back to the server.
-  function startCommandGuard() {
+  // Minimum guard window. Default 300ms for discrete commands (play/pause).
+  // Synced uses a longer minimum so a site's autoplay that fires ~3s after
+  // the sync doesn't propagate as a play event through onVideoPlay.
+  let _guardMinMs = 300;
+  function startCommandGuard(minMs = 300) {
     if (commandGuard) clearTimeout(commandGuard);
     _guardStartedAt = Date.now();
-    commandGuard = setTimeout(checkGuard, 300);
+    _guardMinMs = minMs;
+    commandGuard = setTimeout(checkGuard, Math.min(minMs, 300));
   }
 
   function checkGuard() {
@@ -611,7 +583,9 @@
       return;
     }
     const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
-    if (actual === expectedPlayState) {
+    // Hold the guard until BOTH the minimum has elapsed AND state matches,
+    // so site-initiated events during the minimum window can't leak out.
+    if (elapsed >= _guardMinMs && actual === expectedPlayState) {
       commandGuard = null;
     } else {
       commandGuard = setTimeout(checkGuard, 200);
@@ -663,7 +637,6 @@
       const wasSynced = synced;
       synced = true;
       needsGesture = false;
-      settlingUntil = Date.now() + 5000;
 
       // Always overwrite expectedPlayState/serverRef from the synced payload
       // — it's the authoritative handoff of room state to this client.
@@ -673,9 +646,16 @@
       }
 
       hideJoinToast();
-      _log("synced! settling 5s expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
+      _log("synced! expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
 
       if (hookedVideo) {
+        // Arm the command guard before applying state so the resulting DOM
+        // events (seeked / pause / play) are treated as echoes. 2.5s minimum
+        // covers the 3-ish-second window where Crunchyroll's player can
+        // autoplay-resume to its continue-watching position; autoplay-fired
+        // play events during that window get dropped instead of propagating
+        // to the server.
+        startCommandGuard(2500);
         applySyncedState(msg);
         updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
         if (!wasSynced && port) port.postMessage({ type: "video:ready" });

@@ -2,6 +2,27 @@
 
 ---
 
+# v6.1.5
+
+### Drop the time-based settling window; echo suppression via commandGuard only
+
+Previous versions had two overlapping suppression mechanisms:
+
+- **`settlingUntil` / `isSettling()`** — a 5s time window after every `command:synced` where outbound DOM events were unconditionally dropped. Originally copied from v4.1.0. Side effect: user clicks during those 5s were silently lost ("I clicked play, nothing happened").
+- **`commandGuard`** — a deterministic gate that auto-releases once the video's actual state matches the expected state.
+
+Removed `settlingUntil` entirely. All echo suppression now goes through `commandGuard`. Added an optional minimum-duration parameter to `startCommandGuard(minMs)`:
+
+- **`cmd:play` / `cmd:pause`**: default 300ms minimum. Guard releases as soon as state matches.
+- **`command:synced`**: 2.5s minimum. Covers the window where Crunchyroll's player can fire an autoplay-to-continue-watching `play` event ~3 seconds after the player is ready. Without the minimum, that autoplay event would propagate to the server via `onVideoPlay`'s debounced send before reconcile's 2s-grace could catch it.
+
+Also removed:
+- The v6.1.4 `applySyncedState` retry enforcer loop (250ms ticks for 8s). Redundant now that `commandGuard` holds for 2.5s + reconcile catches any residual mismatch.
+
+Net change: state transitions during sync are now determined by the commands we've executed, not by wall-clock timers. User clicks outside the ~2.5s sync guard propagate through debounce as normal.
+
+---
+
 # v6.1.4
 
 ### Make the reconcile loop an actual rectifier + longer initial enforcement
