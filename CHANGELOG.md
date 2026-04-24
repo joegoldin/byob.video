@@ -2,6 +2,18 @@
 
 ---
 
+# v6.2.15
+
+### Click-to-play overlays never sit on top of a playing video
+
+Defense-in-depth against the "overlay stuck while video is actually playing" edge case:
+
+- Added `_isLocallyPlaying/0` — returns true iff the YouTube/direct player's state is `playing` or `buffering`.
+- Both overlay-show paths (`_maybeShowReadyOverlay` and `_showClickToPlay`) bail out early if `_isLocallyPlaying()` returns true.
+- `_onPlayerStateChange` removes both overlays on any transition into `playing` or `buffering`. If the video starts playing while an overlay is on screen (autoplay unblocked itself, host triggered play, whatever), the overlay gets torn down within the same state-change tick.
+
+---
+
 # v6.2.14
 
 ### Join-ready overlay on paused-state join; thumbnail behind overlays

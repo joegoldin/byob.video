@@ -424,6 +424,15 @@ const VideoPlayer = {
 
   // Unified YouTube state change handler (called from YouTube player module)
   _onPlayerStateChange(stateName) {
+    // Any transition into actually-playing (or buffering en route to playing)
+    // makes our click-to-play overlays obsolete — tear them down so they
+    // don't sit on top of a playing video waiting for a click that would
+    // do nothing useful.
+    if (stateName === "playing" || stateName === "buffering") {
+      this.el.querySelector(".byob-join-ready")?.remove();
+      this.el.querySelector(".byob-click-to-play")?.remove();
+    }
+
     // Buffering is transient — don't push to server, don't update expectedPlayState
     if (stateName === "buffering") {
       return;
@@ -975,6 +984,8 @@ const VideoPlayer = {
     // Don't stack with the other overlays.
     if (this.el.querySelector(".byob-click-to-play")) return;
     if (this.el.querySelector(".byob-join-ready")) return;
+    // Never obscure a video that's actually playing locally.
+    if (this._isLocallyPlaying()) return;
 
     const overlay = document.createElement("div");
     overlay.className = "byob-join-ready";
@@ -1025,6 +1036,8 @@ const VideoPlayer = {
     // Don't show when external player is active — user watches in the
     // extension window, not the embedded YouTube player
     if (document.getElementById("ext-placeholder")) return;
+    // Never obscure a video that's actually playing locally.
+    if (this._isLocallyPlaying()) return;
 
     // Remove any existing overlay
     this.el.querySelector(".byob-click-to-play")?.remove();
@@ -1112,6 +1125,14 @@ const VideoPlayer = {
 
   _play() {
     this.player?.play?.();
+  },
+
+  // True iff the YouTube/direct player is actually playing or buffering
+  // right now. Used to suppress "click to play" overlays that would
+  // otherwise sit on top of a live video.
+  _isLocallyPlaying() {
+    const s = this.player?.getState?.();
+    return s === "playing" || s === "buffering";
   },
 
   _pause() {
