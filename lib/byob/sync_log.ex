@@ -56,9 +56,7 @@ defmodule Byob.SyncLog do
   end
 
   def heartbeat(room_id, play_state, position) do
-    Logger.debug(
-      "[sync:heartbeat] room=#{room_id} state=#{play_state} pos=#{fmt_pos(position)}"
-    )
+    Logger.debug("[sync:heartbeat] room=#{room_id} state=#{play_state} pos=#{fmt_pos(position)}")
   end
 
   def redundant(room_id, event, user_id) do

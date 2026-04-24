@@ -215,13 +215,21 @@ defmodule Byob.Persistence do
               {:ok, Migrations.run(state, loaded_version, Migrations.current_version())}
             else
               require Logger
-              Logger.warning("[persistence] Discarding stale room #{room_id}: missing required fields")
+
+              Logger.warning(
+                "[persistence] Discarding stale room #{room_id}: missing required fields"
+              )
+
               :not_found
             end
           rescue
             ArgumentError ->
               require Logger
-              Logger.warning("[persistence] Discarding stale room #{room_id}: incompatible binary format")
+
+              Logger.warning(
+                "[persistence] Discarding stale room #{room_id}: incompatible binary format"
+              )
+
               :not_found
           end
 

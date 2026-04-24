@@ -243,23 +243,28 @@ defmodule Byob.RoomServer do
       state.users
       |> Enum.filter(fn {uid, u} ->
         uid != user_id && !u.connected &&
-          (Map.get(u, :is_extension, false) == is_extension) &&
+          Map.get(u, :is_extension, false) == is_extension &&
           u.username == username
       end)
       |> Enum.map(fn {uid, _} -> uid end)
 
-    state = if length(stale_ids) > 0 do
-      ready_tabs = Map.get(state, :ready_tabs, %{})
-      open_tabs = Map.get(state, :open_tabs, %{})
-      cleaned_ready = ready_tabs |> Enum.reject(fn {_, owner} -> owner in stale_ids end) |> Map.new()
-      cleaned_open = open_tabs |> Enum.reject(fn {_, owner} -> owner in stale_ids end) |> Map.new()
+    state =
+      if length(stale_ids) > 0 do
+        ready_tabs = Map.get(state, :ready_tabs, %{})
+        open_tabs = Map.get(state, :open_tabs, %{})
 
-      %{state | users: Map.drop(state.users, stale_ids)}
-      |> Map.put(:ready_tabs, cleaned_ready)
-      |> Map.put(:open_tabs, cleaned_open)
-    else
-      state
-    end
+        cleaned_ready =
+          ready_tabs |> Enum.reject(fn {_, owner} -> owner in stale_ids end) |> Map.new()
+
+        cleaned_open =
+          open_tabs |> Enum.reject(fn {_, owner} -> owner in stale_ids end) |> Map.new()
+
+        %{state | users: Map.drop(state.users, stale_ids)}
+        |> Map.put(:ready_tabs, cleaned_ready)
+        |> Map.put(:open_tabs, cleaned_open)
+      else
+        state
+      end
 
     state =
       state
@@ -371,8 +376,13 @@ defmodule Byob.RoomServer do
       if is_ext do
         ready_tabs = Map.get(state, :ready_tabs, %{})
         open_tabs = Map.get(state, :open_tabs, %{})
-        cleaned_ready = ready_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
-        cleaned_open = open_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
+
+        cleaned_ready =
+          ready_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
+
+        cleaned_open =
+          open_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
+
         state |> Map.put(:ready_tabs, cleaned_ready) |> Map.put(:open_tabs, cleaned_open)
       else
         state
@@ -393,8 +403,12 @@ defmodule Byob.RoomServer do
         # in the background. When someone reconnects, they'll see it paused.
         state =
           if state.play_state == :playing do
-            %{state | play_state: :paused, current_time: current_position(state),
-              last_sync_at: System.monotonic_time(:millisecond)}
+            %{
+              state
+              | play_state: :paused,
+                current_time: current_position(state),
+                last_sync_at: System.monotonic_time(:millisecond)
+            }
             |> cancel_sync_correction()
           else
             state
@@ -462,8 +476,15 @@ defmodule Byob.RoomServer do
         # State only updates on real transitions (above), but the broadcast
         # ensures clients whose local state disagrees get corrected.
         broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
+
         if was_paused do
-          SyncLog.play(state.room_id, user_id, current_media_url(state), position, "paused→playing")
+          SyncLog.play(
+            state.room_id,
+            user_id,
+            current_media_url(state),
+            position,
+            "paused→playing"
+          )
         end
 
         {:reply, :ok, state}
@@ -498,8 +519,15 @@ defmodule Byob.RoomServer do
           end
 
         broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
+
         if was_playing do
-          SyncLog.pause(state.room_id, user_id, current_media_url(state), position, "playing→paused")
+          SyncLog.pause(
+            state.room_id,
+            user_id,
+            current_media_url(state),
+            position,
+            "playing→paused"
+          )
         end
 
         {:reply, :ok, state}
@@ -944,7 +972,10 @@ defmodule Byob.RoomServer do
 
   # --- round timers ---
 
-  def handle_info({:round_expire, round_id}, %{round: %Round{id: round_id, phase: :active}} = state) do
+  def handle_info(
+        {:round_expire, round_id},
+        %{round: %Round{id: round_id, phase: :active}} = state
+      ) do
     state = %{state | round_expire_ref: nil}
     state = flush_round_coalesce(state)
     state = resolve_round_now(state)
@@ -1326,7 +1357,9 @@ defmodule Byob.RoomServer do
 
   defp current_media_url(state) do
     case state.current_index do
-      nil -> nil
+      nil ->
+        nil
+
       idx ->
         item = Enum.at(state.queue, idx)
         if item, do: item.url, else: nil

@@ -30,7 +30,9 @@ defmodule Byob.OEmbed do
       case URI.parse(url) do
         %URI{scheme: s, host: h, path: p} when is_binary(s) and is_binary(h) ->
           "#{s}://#{h}#{p}"
-        _ -> url
+
+        _ ->
+          url
       end
 
     case Req.get(@vimeo_oembed, params: [url: clean_url], receive_timeout: 5000) do

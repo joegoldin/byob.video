@@ -96,7 +96,9 @@ defmodule Byob.RoomServer.Round do
   """
   def resolve(%__MODULE__{mode: :voting} = r) do
     tallies =
-      Enum.map(r.candidates, fn c -> {c.external_id, MapSet.size(Map.get(r.votes, c.external_id, MapSet.new()))} end)
+      Enum.map(r.candidates, fn c ->
+        {c.external_id, MapSet.size(Map.get(r.votes, c.external_id, MapSet.new()))}
+      end)
 
     max_votes = tallies |> Enum.map(&elem(&1, 1)) |> Enum.max(fn -> 0 end)
 
@@ -105,7 +107,9 @@ defmodule Byob.RoomServer.Round do
         {%{r | phase: :revealing}, :no_votes}
 
       true ->
-        winners = tallies |> Enum.filter(fn {_, v} -> v == max_votes end) |> Enum.map(&elem(&1, 0))
+        winners =
+          tallies |> Enum.filter(fn {_, v} -> v == max_votes end) |> Enum.map(&elem(&1, 0))
+
         winner = Enum.random(winners)
         {%{r | phase: :revealing, winner_external_id: winner}, :winner_chosen}
     end

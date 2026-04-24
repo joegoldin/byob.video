@@ -91,6 +91,19 @@ defmodule ByobWeb.ExtensionChannelTest do
       assert_receive {:sync_seek, %{time: 30.0}}
     end
 
+    test "video:play and video:seek still broadcast separately", %{
+      socket: socket,
+      room_id: room_id
+    } do
+      Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
+
+      ExtensionChannel.handle_in("video:play", %{"position" => 10.0}, socket)
+      ExtensionChannel.handle_in("video:seek", %{"position" => 30.0}, socket)
+
+      assert_receive {:sync_play, %{time: 10.0}}
+      assert_receive {:sync_seek, %{time: 30.0}}
+    end
+
     test "sync:ping replies with pong", %{socket: socket} do
       {:reply, {:ok, reply}, _socket} =
         ExtensionChannel.handle_in("sync:ping", %{"t1" => 12345.0}, socket)

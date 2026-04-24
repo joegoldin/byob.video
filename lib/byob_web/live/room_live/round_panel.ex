@@ -29,7 +29,11 @@ defmodule ByobWeb.RoomLive.RoundPanel do
         <.header round={@round} collapsed={@collapsed} current_user_id={@current_user_id} />
 
         <div :if={not @collapsed} class="mt-2">
-          <.voting_body :if={@round.mode == :voting} round={@round} current_user_id={@current_user_id} />
+          <.voting_body
+            :if={@round.mode == :voting}
+            round={@round}
+            current_user_id={@current_user_id}
+          />
           <.roulette_body :if={@round.mode == :roulette} round={@round} />
         </div>
       </div>
@@ -165,9 +169,18 @@ defmodule ByobWeb.RoomLive.RoundPanel do
   # or fails to load). daisyUI 5 theme vars (`--color-*`) don't resolve
   # inside SVG fill= attributes, so we hard-code a dark-theme-friendly set.
   @slice_palette [
-    "#4338ca", "#a21caf", "#be185d", "#b45309",
-    "#15803d", "#0e7490", "#7c3aed", "#c026d3",
-    "#dc2626", "#ca8a04", "#16a34a", "#0284c7"
+    "#4338ca",
+    "#a21caf",
+    "#be185d",
+    "#b45309",
+    "#15803d",
+    "#0e7490",
+    "#7c3aed",
+    "#c026d3",
+    "#dc2626",
+    "#ca8a04",
+    "#16a34a",
+    "#0284c7"
   ]
 
   defp roulette_body(assigns) do
@@ -556,7 +569,6 @@ defmodule ByobWeb.RoomLive.RoundPanel do
 
     List.last(positions)
   end
-
 
   # --- helpers ---
 

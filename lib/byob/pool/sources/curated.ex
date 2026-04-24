@@ -62,8 +62,7 @@ defmodule Byob.Pool.Sources.Curated do
       if page_token, do: base_params ++ [pageToken: page_token], else: base_params
 
     case Videos.http_get(@api_url, params) do
-      {:ok,
-       %{status: 200, body: %{"items" => items, "nextPageToken" => next_token}}}
+      {:ok, %{status: 200, body: %{"items" => items, "nextPageToken" => next_token}}}
       when is_list(items) ->
         new_entries =
           items

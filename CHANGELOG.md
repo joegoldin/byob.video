@@ -2,6 +2,110 @@
 
 ---
 
+# v5.0.31
+
+### Recover faster when a queued DRM `play` times out but still comes up frozen
+
+v5.0.30 put post-seek `play` behind the correct ready gate, but some Crunchyroll seeks still came out of the timeout release path into a visibly frozen "playing at the target" state. The generic stall detector eventually nudged them forward, but only after several flat state ticks.
+
+- **Queued DRM plays now report whether they were released by readiness or by `ready-timeout`.**
+- **Receivers arm a short one-off recovery watchdog after a `ready-timeout` release** so a play that stays pinned at the target can trigger the existing silent-kick recovery almost immediately.
+- Added a regression test covering the timeout release reason.
+
+# v5.0.30
+
+### Keep post-seek DRM `play` on the full ready gate, not the short seek timer
+
+v5.0.29 correctly routed a receiver's matching `play` into a queued DRM path after a remote `seek`, but that case still reused the short "wait for seek" timeout. When the seek had already been applied before `play` arrived, the receiver released too early and could wedge at the target instead of waiting for the site to become ready.
+
+- **Receivers now have a dedicated DRM queued-play path for "already sought, now wait until ready".**
+- **Matching `CMD:play` after a recent DRM `CMD:seek` now uses the full ready-gated release flow** instead of the short seek timeout.
+- Added a regression test covering the "already at target, still wait for readiness" case.
+
+# v5.0.29
+
+### Keep `play` behind the DRM ready gate immediately after a remote seek
+
+v5.0.28 fixed sender-side seek suppression, but the receiver still had a gap after successful ordered `seek -> play`: once a paused receiver had already applied `CMD:seek`, the following `CMD:play` saw no position delta and bypassed the queued DRM ready-wait path, calling `.play()` immediately and freezing at the target.
+
+- **Receivers now remember a recent DRM `CMD:seek` target** for a short window.
+- **A matching `CMD:play` is forced through the queued ready-wait path** even when `currentTime` already equals the target.
+- Added a regression test for the forced queued-play case.
+
+# v5.0.28
+
+### Let real user scrubs escape the stale programmatic-seek window
+
+v5.0.27 fixed the deferred outbound `play` timing, but a new edge case remained: if a synced `CMD:pause` had just aligned the sender, the sender's next real scrub could still inherit the old programmatic-seek suppression window. That caused `onVideoSeeking` / `onVideoSeeked` to be swallowed locally, so the room saw `play` without the matching `seek`.
+
+- **A real user-triggered deferred DRM play now clears the old programmatic-seek window** before the subsequent scrub events fire.
+- This allows the following `seeking/seeked` pair to propagate as a real outbound `video:seek`.
+
+# v5.0.27
+
+### Keep deferred DRM `play` queued once a real seek starts
+
+v5.0.26 fixed the sender path in principle, but the short fallback timer was still too aggressive for large buffered Crunchyroll scrubs. In those cases the sender emitted `onVideoPlay DEFER`, then `onVideoSeeking`, but the 200ms timeout still fired before `seeked`, so the server again saw `play` before `seek`.
+
+- **Deferred outbound DRM plays now switch to a longer seek-wait window once `seeking` fires.**
+- **Plain play/pause still uses the short timeout** when no seek follows.
+- Added a regression test covering the `play -> seeking -> delayed seeked` path.
+
+# v5.0.26
+
+### Defer outbound DRM `play` until `seeked` so buffered scrubs stay ordered
+
+The remaining Crunchyroll failures were no longer coming from the receiver alone. During some large scrubs, the sender still emitted `play` before `seek`, which forced the receiver to guess whether it should hold or release playback while buffering the new segment. That guess still failed intermittently on long seeks that needed fresh media fetches.
+
+- **DRM senders now briefly defer outbound `video:play` events** instead of sending them immediately.
+- **When the local `seeked` arrives, the sender flushes the deferred play after sending `video:seek`,** so the server sees the stable `seek -> play` order even when the site fires `play` first.
+- **If no seek follows, the deferred play still releases after a short timeout,** so ordinary pause/resume behavior stays immediate enough.
+
+# v5.0.25
+
+### Restore `CMD:pause` ordering to the last known-good sync path
+
+The current Crunchyroll regressions pointed back to a behavioral drift from the old `v3.6.x` sync engine: receivers were applying paused-room alignment as `pause -> seek`, while the older working code used `seek -> pause` for actively playing videos. That ordering change appears to leave Crunchyroll in a bad state where the next play reports `playing=true` but never actually advances frames.
+
+- **`CMD:pause` now restores the old working order for active videos:** seek first, then pause.
+- **Already-paused receivers still align to the room position,** so the paused-room sync fix from v5.0.24 is preserved.
+- Added a regression test for the restored pause ordering in `content_runtime`.
+
+# v5.0.24
+
+### Restore pause-and-seek behavior for paused-room sync
+
+v5.0.23 improved queued DRM play release timing, but a regression in `CMD:pause` meant paused-room sync no longer aligned receivers to the room position. The service worker still sends only `CMD:pause` for paused rooms, so receivers that were paused at the wrong local position could stay there and drift into bad follower-mode state.
+
+- **`CMD:pause` now pauses and aligns to the target position again.**
+- **Already-paused receivers still seek to the room position** instead of no-oping.
+- Kept the DRM queued-play readiness gate from v5.0.23 unchanged.
+
+# v5.0.23
+
+### Gate queued DRM play on actual readiness instead of a fixed delay
+
+v5.0.22 fixed the `CMD:play -> CMD:seek` ordering problem on Crunchyroll, but some large remote seeks still wedged because receivers were releasing `.play()` after a fixed short delay even when the MSE pipeline had not buffered the target position yet.
+
+- **Queued DRM plays now wait for readiness, not just time.** After a matched `CMD:seek`, the receiver polls for a ready-to-play condition before releasing `.play()`.
+- **Long fallback timeout:** if Crunchyroll never exposes a ready state, the queued play still releases after a longer timeout instead of hanging forever.
+- **Longer DRM programmatic-seek suppression:** delayed Crunchyroll `seeked` events are suppressed for longer so they do not leak back out as fake user seeks.
+
+# v5.0.22
+
+### Queue out-of-order DRM plays until the matching seek lands
+
+Crunchyroll's scrubber emits `pause -> play -> seeking/seeked`, so receivers can observe `CMD:play` before the matching `CMD:seek`. v5.0.21 tried to pre-seek inside `CMD:play`, but large seeks still hit the 2s timeout and called `.play()` before the target segment was ready, wedging the receiver's MSE pipeline.
+
+- **New DRM queued-play sequencer:** on DRM hosts, a paused receiver now holds an out-of-order `CMD:play` briefly when it targets a materially different position.
+- **Matching `CMD:seek` consumes the queued play:** the receiver applies `currentTime = target` while still paused, waits a short settle window, then calls `.play()`.
+- **Timeout fallback preserved:** if no matching seek arrives, the queued play releases normally so plain pause/resume still works.
+- **Non-DRM sites are unchanged.**
+
+Added a small Node regression harness for the extension command sequencer and an ExUnit safety test that backend `sync_play` and `sync_seek` broadcasts remain separate.
+
+---
+
 # v5.0.21
 
 ### Wait for `seeked` before `.play()` in pre-seek path + no-op trailing CMD:seek

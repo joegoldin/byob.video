@@ -123,6 +123,7 @@ defmodule Byob.RoomServer.RoundTest do
   describe "simulate_landing_slice/2" do
     test "is deterministic for a given seed" do
       seed = 1_234_567
+
       assert Round.simulate_landing_slice(seed, 12) ==
                Round.simulate_landing_slice(seed, 12)
     end

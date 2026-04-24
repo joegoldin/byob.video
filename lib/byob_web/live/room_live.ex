@@ -2,6 +2,7 @@ defmodule ByobWeb.RoomLive do
   use ByobWeb, :live_view
 
   alias Byob.{RoomManager, RoomServer}
+
   alias ByobWeb.RoomLive.{
     Comments,
     Components,
@@ -74,7 +75,12 @@ defmodule ByobWeb.RoomLive do
       show_comments = get_connect_params(socket)["show_comments"] != false
 
       socket =
-        assign(socket, user_id: user_id, username: username, browser_id: browser_id, show_comments: show_comments)
+        assign(socket,
+          user_id: user_id,
+          username: username,
+          browser_id: browser_id,
+          show_comments: show_comments
+        )
 
       Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
       {:ok, state} = RoomServer.join(pid, user_id, username)
@@ -229,7 +235,8 @@ defmodule ByobWeb.RoomLive do
 
   # Rounds (roulette / voting)
 
-  def handle_event("round:start", %{"mode" => mode}, socket) when mode in ["voting", "roulette"] do
+  def handle_event("round:start", %{"mode" => mode}, socket)
+      when mode in ["voting", "roulette"] do
     mode_atom = String.to_existing_atom(mode)
 
     case RoomServer.start_round(socket.assigns.room_pid, mode_atom, socket.assigns.user_id) do
@@ -299,12 +306,15 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:sync_client_stats, data}, socket) do
     clients = Map.get(socket.assigns.sync_stats, :clients, %{})
     key = "#{data.user_id}:#{data.tab_id}"
-    clients = Map.put(clients, key, %{
-      drift_ms: data.drift_ms,
-      server_position: data.server_position,
-      play_state: data.play_state,
-      updated_at: System.system_time(:second)
-    })
+
+    clients =
+      Map.put(clients, key, %{
+        drift_ms: data.drift_ms,
+        server_position: data.server_position,
+        play_state: data.play_state,
+        updated_at: System.system_time(:second)
+      })
+
     sync_stats = Map.put(socket.assigns.sync_stats, :clients, clients)
     {:noreply, assign(socket, :sync_stats, sync_stats)}
   end

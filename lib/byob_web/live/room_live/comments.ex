@@ -19,20 +19,22 @@ defmodule ByobWeb.RoomLive.Comments do
     <div
       :if={@comments && @comments != []}
       id="comments-panel"
-      class={[
-        "byob-comments-panel relative bg-base-200 rounded-lg",
-        unless @collapsed do
-          if @expanded do
-            "lg:h-[400px] lg:flex-shrink-0 overflow-y-auto"
-          else
-            # min-h-[220px] so comments stay legible on tall viewports where
-            # flex-1 would otherwise squeeze them too short, but without
-            # the `lg:min-h` override that was pushing the main column past
-            # the viewport and killing the sidebar's sticky scroll.
-            "min-h-[220px] max-h-[300px] lg:flex-1 lg:max-h-none lg:min-h-0 overflow-y-auto"
+      class={
+        [
+          "byob-comments-panel relative bg-base-200 rounded-lg",
+          unless @collapsed do
+            if @expanded do
+              "lg:h-[400px] lg:flex-shrink-0 overflow-y-auto"
+            else
+              # min-h-[220px] so comments stay legible on tall viewports where
+              # flex-1 would otherwise squeeze them too short, but without
+              # the `lg:min-h` override that was pushing the main column past
+              # the viewport and killing the sidebar's sticky scroll.
+              "min-h-[220px] max-h-[300px] lg:flex-1 lg:max-h-none lg:min-h-0 overflow-y-auto"
+            end
           end
-        end
-      ]}
+        ]
+      }
     >
       <%!-- Header --%>
       <div class="sticky top-0 bg-base-200 px-3 py-2 border-b border-base-300 z-10 flex items-center justify-between rounded-t-lg">

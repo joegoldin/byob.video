@@ -124,7 +124,11 @@ defmodule ByobWeb.RoomLive.Components do
                 </span>
               </div>
               <div class="flex items-center gap-2 text-xs text-base-content/50">
-                <svg class="w-4 h-4 flex-shrink-0 text-[#1ab7ea]" viewBox="0 0 24 24" fill="currentColor">
+                <svg
+                  class="w-4 h-4 flex-shrink-0 text-[#1ab7ea]"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
                   <path d="M23.977 6.416c-.105 2.338-1.739 5.543-4.894 9.609-3.268 4.247-6.026 6.37-8.29 6.37-1.409 0-2.578-1.294-3.553-3.881L5.322 11.4C4.603 8.816 3.834 7.522 3.01 7.522c-.179 0-.806.378-1.881 1.132L0 7.197c1.185-1.044 2.351-2.084 3.501-3.128C5.08 2.701 6.266 1.984 7.055 1.91c1.867-.178 3.016 1.1 3.447 3.838.465 2.953.789 4.789.971 5.507.539 2.45 1.131 3.674 1.776 3.674.502 0 1.256-.796 2.265-2.385 1.004-1.589 1.54-2.797 1.612-3.628.144-1.371-.395-2.061-1.614-2.061-.574 0-1.167.121-1.777.391 1.186-3.868 3.434-5.757 6.762-5.637 2.473.06 3.628 1.664 3.48 4.807z" />
                 </svg>
                 <span>Vimeo — native embedded player</span>
@@ -341,7 +345,11 @@ defmodule ByobWeb.RoomLive.Components do
           </a>
         </div>
         <%!-- Details for nerds --%>
-        <details class="mt-4 pt-4 border-t border-base-300" id="details-for-nerds" phx-hook="PreserveDetails">
+        <details
+          class="mt-4 pt-4 border-t border-base-300"
+          id="details-for-nerds"
+          phx-hook="PreserveDetails"
+        >
           <summary class="text-xs text-base-content/40 cursor-pointer hover:text-base-content/60 select-none">
             Details for nerds
           </summary>
@@ -366,7 +374,9 @@ defmodule ByobWeb.RoomLive.Components do
                     abs(avg) > 250 -> "text-warning"
                     true -> "text-success"
                   end
-                }>{avg}ms / {mn}ms / {mx}ms</span>
+                }>
+                  {avg}ms / {mn}ms / {mx}ms
+                </span>
               </div>
             <% end %>
             <%= if Map.has_key?(@sync_stats, :clients) and map_size(@sync_stats.clients) > 0 do %>
@@ -393,7 +403,9 @@ defmodule ByobWeb.RoomLive.Components do
                     </div>
                     <div class="flex justify-between">
                       <span>State</span>
-                      <span class={if info.play_state == "playing", do: "text-success", else: "text-warning"}>
+                      <span class={
+                        if info.play_state == "playing", do: "text-success", else: "text-warning"
+                      }>
                         {info.play_state}
                       </span>
                     </div>
@@ -461,21 +473,31 @@ defmodule ByobWeb.RoomLive.Components do
 
         <div class="space-y-3 text-sm">
           <div>
-            <h4 class="font-semibold text-xs uppercase tracking-wide text-base-content/50 mb-1">Chrome / Edge</h4>
+            <h4 class="font-semibold text-xs uppercase tracking-wide text-base-content/50 mb-1">
+              Chrome / Edge
+            </h4>
             <p class="text-xs text-base-content/70">
-              Click the padlock or tune icon in the address bar → <strong>Site settings</strong> → set <strong>Sound</strong> to <em>Allow</em>.
+              Click the padlock or tune icon in the address bar → <strong>Site settings</strong>
+              → set <strong>Sound</strong>
+              to <em>Allow</em>.
             </p>
           </div>
           <div>
-            <h4 class="font-semibold text-xs uppercase tracking-wide text-base-content/50 mb-1">Firefox</h4>
+            <h4 class="font-semibold text-xs uppercase tracking-wide text-base-content/50 mb-1">
+              Firefox
+            </h4>
             <p class="text-xs text-base-content/70">
-              Click the padlock in the address bar → <strong>Autoplay</strong> → <em>Allow Audio and Video</em>.
+              Click the padlock in the address bar → <strong>Autoplay</strong>
+              → <em>Allow Audio and Video</em>.
             </p>
           </div>
           <div>
-            <h4 class="font-semibold text-xs uppercase tracking-wide text-base-content/50 mb-1">Safari</h4>
+            <h4 class="font-semibold text-xs uppercase tracking-wide text-base-content/50 mb-1">
+              Safari
+            </h4>
             <p class="text-xs text-base-content/70">
-              Safari menu → <strong>Settings for This Website…</strong> → <em>Auto-Play: Allow All Auto-Play</em>.
+              Safari menu → <strong>Settings for This Website…</strong>
+              → <em>Auto-Play: Allow All Auto-Play</em>.
             </p>
           </div>
         </div>
@@ -487,8 +509,7 @@ defmodule ByobWeb.RoomLive.Components do
               id="byob-autoplay-help-dont-show"
               class="checkbox checkbox-xs"
               checked
-            />
-            Don't show this again
+            /> Don't show this again
           </label>
           <form method="dialog">
             <button class="btn btn-primary btn-sm">Got it</button>
@@ -1021,7 +1042,11 @@ defmodule ByobWeb.RoomLive.Components do
         <h3 class="card-title text-sm">
           Users
           <span class="badge badge-sm">
-            {@users |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end) |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq() |> length()}
+            {@users
+            |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
+            |> Enum.map(fn {_, u} -> u.username end)
+            |> Enum.uniq()
+            |> length()}
           </span>
         </h3>
         <ul class="space-y-2 mt-1 max-h-48 overflow-y-auto">

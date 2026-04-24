@@ -3,6 +3,8 @@
 (() => {
   "use strict";
 
+  const runtime = globalThis.ByobContentRuntime || {};
+
   const _debug = true;
   const _log = (...args) => {
     if (!_debug) return;
@@ -48,6 +50,30 @@
   function deferStall(ms = 3000) {
     const until = Date.now() + ms;
     if (until > _deferStallUntil) _deferStallUntil = until;
+  }
+  let _queuedPlayRecoveryTimer = null;
+  function clearQueuedPlayRecoveryTimer() {
+    if (_queuedPlayRecoveryTimer != null) {
+      clearTimeout(_queuedPlayRecoveryTimer);
+      _queuedPlayRecoveryTimer = null;
+    }
+  }
+  function armQueuedPlayRecovery(targetPos, releaseReason) {
+    clearQueuedPlayRecoveryTimer();
+    if (!_isDrmSite || releaseReason !== "ready-timeout" || targetPos == null || !hookedVideo) return;
+
+    const baseline = hookedVideo.currentTime;
+    _queuedPlayRecoveryTimer = setTimeout(() => {
+      _queuedPlayRecoveryTimer = null;
+      if (!hookedVideo || !synced || hookedVideo.paused || _recoveryInProgress) return;
+
+      const delta = hookedVideo.currentTime - baseline;
+      if (delta >= 0.2) return;
+      if (Math.abs(hookedVideo.currentTime - targetPos) > 0.5) return;
+
+      _log("DRM queued play stuck after timeout release", "target=", targetPos, "delta=", delta);
+      tryStallRecovery();
+    }, 900);
   }
   let _lastExpectedPos = null;
   let _lastExpectedAt = 0;
@@ -378,6 +404,8 @@
 
   function unhookVideo() {
     if (!hookedVideo) return;
+    drmCommandSequencer?.clearQueuedPlay();
+    outboundPlayCoordinator?.cancel();
     hookedVideo.removeEventListener("play", onVideoPlay);
     hookedVideo.removeEventListener("pause", onVideoPause);
     hookedVideo.removeEventListener("seeking", onVideoSeeking);
@@ -400,7 +428,7 @@
   // all three to the server, which lets receivers seek while paused (safe
   // for MSE) then resume. That's how another sync extension.tv does it.
   function onVideoPlay() {
-    if (!synced || followerMode) {
+    if (!synced) {
       _log("onVideoPlay SKIP synced=", synced, "follower=", followerMode);
       return;
     }
@@ -408,17 +436,35 @@
       _log("onVideoPlay SUPPRESSED (gen)", "pos=", hookedVideo?.currentTime);
       return;
     }
-    _log("onVideoPlay SEND pos=", hookedVideo?.currentTime);
+    if (followerMode) {
+      _log("onVideoPlay follower override", "pos=", hookedVideo?.currentTime);
+      followerMode = false;
+      followerStableTicks = 0;
+    }
     if (port && hookedVideo) {
-      port.postMessage({
-        type: "video:play",
-        position: hookedVideo.currentTime,
-      });
+      const sendPlay = (position) => {
+        _log("onVideoPlay SEND pos=", position);
+        port.postMessage({
+          type: "video:play",
+          position,
+        });
+      };
+
+      if (_isDrmSite && outboundPlayCoordinator?.queue(hookedVideo.currentTime, sendPlay)) {
+        // A real user-triggered play/scrub should cancel any stale
+        // programmatic-seek window left behind by a prior synced command.
+        _programmaticSeek = false;
+        _programmaticSeekUntil = 0;
+        _log("onVideoPlay DEFER pos=", hookedVideo.currentTime);
+        return;
+      }
+
+      sendPlay(hookedVideo.currentTime);
     }
   }
 
   function onVideoPause() {
-    if (!synced || followerMode) {
+    if (!synced) {
       _log("onVideoPause SKIP synced=", synced, "follower=", followerMode);
       return;
     }
@@ -426,26 +472,43 @@
       _log("onVideoPause SUPPRESSED (gen)", "pos=", hookedVideo?.currentTime);
       return;
     }
+    if (followerMode) {
+      _log("onVideoPause follower override", "pos=", hookedVideo?.currentTime);
+      followerMode = false;
+      followerStableTicks = 0;
+    }
+    outboundPlayCoordinator?.cancel();
     if (!port || !hookedVideo) return;
     _log("onVideoPause SEND pos=", hookedVideo.currentTime);
     port.postMessage({ type: "video:pause", position: hookedVideo.currentTime });
   }
 
   let _programmaticSeek = false; // true while we're doing a seek from a command
-  // Record the target of a pending CMD:play pre-seek so CMD:seek can no-op
-  // instead of re-issuing currentTime= on a now-playing pipeline. MSE on
-  // Crunchyroll reports a stale/reverted currentTime briefly during a big
-  // seek, so the usual "already at pos" check isn't enough.
-  let _preSeekTarget = null;
-  let _preSeekTargetAt = 0;
   // Time-based window during which any seeking/seeked event is treated as
   // programmatic (not user-initiated) and suppressed. More robust than the
   // single-gen suppress() for cases like CMD:play's double seek (target + kick)
   // where the single suppression gets consumed by the play event first.
   let _programmaticSeekUntil = 0;
+  let _recentDrmSeekTarget = null;
+  let _recentDrmSeekAt = 0;
   const _isDrmSite = /crunchyroll\.com|funimation\.com|hulu\.com|netflix\.com|disneyplus\.com|peacocktv\.com|paramountplus\.com|hbomax\.com|max\.com/i.test(window.location.hostname);
+  const drmCommandSequencer = runtime.createDrmCommandSequencer
+    ? runtime.createDrmCommandSequencer({
+        isDrmSite: _isDrmSite,
+        log: (...args) => _log(...args)
+      })
+    : null;
+  const outboundPlayCoordinator = runtime.createOutboundPlayCoordinator
+    ? runtime.createOutboundPlayCoordinator({
+        isDrmSite: _isDrmSite,
+        log: (...args) => _log(...args)
+      })
+    : null;
+  const applyPauseAtPosition = runtime.applyPauseAtPosition
+    ? runtime.applyPauseAtPosition
+    : null;
 
-  function markProgrammaticSeek(windowMs = 1500) {
+  function markProgrammaticSeek(windowMs = (_isDrmSite ? 6500 : 1500)) {
     const until = Date.now() + windowMs;
     if (until > _programmaticSeekUntil) _programmaticSeekUntil = until;
   }
@@ -461,6 +524,9 @@
     if (_programmaticSeek || isProgrammaticSeekActive()) {
       _log("onVideoSeeking SKIP (programmatic) pos=", hookedVideo?.currentTime);
       return;
+    }
+    if (_isDrmSite) {
+      outboundPlayCoordinator?.noteSeeking(hookedVideo?.currentTime);
     }
     _log("onVideoSeeking pos=", hookedVideo?.currentTime);
   }
@@ -485,6 +551,9 @@
         type: "video:seek",
         position: hookedVideo.currentTime,
       });
+      if (_isDrmSite && !hookedVideo.paused) {
+        outboundPlayCoordinator?.flush("seeked", hookedVideo.currentTime);
+      }
     }
   }
 
@@ -528,6 +597,7 @@
     const now = Date.now();
     _lastStallRecoveryAt = now;
     _stallTickCount = 0;
+    clearQueuedPlayRecoveryTimer();
 
     if (_isDrmSite) {
       // Silent kick recovery: nudge the playhead forward to force MSE to
@@ -838,85 +908,112 @@
       case "command:play": {
         _log("CMD:play pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
+        clearQueuedPlayRecoveryTimer();
         _pendingSeekPos = null;
         deferStall();
         if (!hookedVideo.paused) {
           _log("CMD:play no-op (already playing)");
           break;
         }
-        const needsPreSeek = msg.position != null
-          && Math.abs(hookedVideo.currentTime - msg.position) > 0.5;
-        if (!needsPreSeek) {
+        const shouldWaitAfterRecentSeek =
+          _isDrmSite &&
+          msg.position != null &&
+          _recentDrmSeekTarget != null &&
+          Math.abs(_recentDrmSeekTarget - msg.position) <= 0.5 &&
+          Date.now() - _recentDrmSeekAt <= 3000;
+        const queuedDrmPlay = shouldWaitAfterRecentSeek
+          ? drmCommandSequencer?.queuePlayUntilReady(hookedVideo, msg.position, (releaseReason) => {
+              if (!hookedVideo) return;
+              _log("CMD:play queued release .play()", "pos=", hookedVideo.currentTime);
+              suppress("playing");
+              armQueuedPlayRecovery(msg.position, releaseReason);
+              hookedVideo.play().catch((e) => {
+                _log("CMD:play play() REJECTED:", e?.message);
+              });
+            })
+          : drmCommandSequencer?.queuePlayIfNeeded(hookedVideo, msg.position, () => {
+              if (!hookedVideo) return;
+              _log("CMD:play queued release .play()", "pos=", hookedVideo.currentTime);
+              suppress("playing");
+              hookedVideo.play().catch((e) => {
+                _log("CMD:play play() REJECTED:", e?.message);
+              });
+            });
+        if (queuedDrmPlay) {
+          if (shouldWaitAfterRecentSeek) {
+            _log("CMD:play queued after recent seek", "pos=", msg.position);
+          }
+          break;
+        }
+        if (msg.position == null || Math.abs(hookedVideo.currentTime - msg.position) <= 0.5) {
           suppress("playing");
           hookedVideo.play().catch((e) => {
             _log("CMD:play play() REJECTED:", e?.message);
           });
           break;
         }
-        // Pre-seek + wait-for-seeked before calling .play(). On Crunchyroll
-        // MSE, calling .play() immediately after currentTime= causes MSE to
-        // abort the seek mid-fetch and revert to the last buffered position
-        // (observed in logs: seek to 315.5 "unwound" to 634.64 within 25ms).
-        // The trailing CMD:seek then sees a playing stream at the wrong
-        // position and retries the seek on a playing pipeline → wedge.
-        // Record the target so the trailing CMD:seek (which will arrive
-        // before our seek completes) knows to no-op.
-        _preSeekTarget = msg.position;
-        _preSeekTargetAt = Date.now();
-        _log("CMD:play pre-seek from", hookedVideo.currentTime, "to", msg.position);
-        markProgrammaticSeek(3000);
+        _log("CMD:play immediate pre-seek from", hookedVideo.currentTime, "to", msg.position);
+        markProgrammaticSeek();
         _programmaticSeek = true;
         hookedVideo.currentTime = msg.position;
         _programmaticSeek = false;
-
-        let played = false;
-        const doPlay = () => {
-          if (played) return;
-          played = true;
-          hookedVideo.removeEventListener("seeked", doPlay);
-          clearTimeout(playTimer);
-          if (!hookedVideo) return;
-          _log("CMD:play post-seek .play()", "pos=", hookedVideo.currentTime);
-          suppress("playing");
-          hookedVideo.play().catch((e) => {
-            _log("CMD:play play() REJECTED:", e?.message);
-          });
-        };
-        hookedVideo.addEventListener("seeked", doPlay);
-        const playTimer = setTimeout(doPlay, 2000);
+        suppress("playing");
+        hookedVideo.play().catch((e) => {
+          _log("CMD:play play() REJECTED:", e?.message);
+        });
         break;
       }
 
       case "command:pause":
         _log("CMD:pause pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
+        drmCommandSequencer?.clearQueuedPlay();
+        clearQueuedPlayRecoveryTimer();
         _pendingSeekPos = null;
         deferStall();
-        if (hookedVideo.paused) {
-          _log("CMD:pause no-op (already paused)");
-          break;
-        }
         suppress("paused");
-        hookedVideo.pause();
+        if (applyPauseAtPosition) {
+          applyPauseAtPosition(hookedVideo, msg.position, {
+            pause: () => {
+              if (!hookedVideo.paused) hookedVideo.pause();
+            },
+            applySeek: (target) => {
+              markProgrammaticSeek();
+              _programmaticSeek = true;
+              hookedVideo.currentTime = target;
+              _programmaticSeek = false;
+            }
+          });
+        } else {
+          if (!hookedVideo.paused) hookedVideo.pause();
+          if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) >= 0.1) {
+            markProgrammaticSeek();
+            _programmaticSeek = true;
+            hookedVideo.currentTime = msg.position;
+            _programmaticSeek = false;
+          }
+        }
         break;
 
       case "command:seek":
         _log("CMD:seek pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
+        clearQueuedPlayRecoveryTimer();
         _pendingSeekPos = null;
         deferStall();
         if (msg.position == null) break;
-        if (Math.abs(hookedVideo.currentTime - msg.position) < 0.1) {
-          _log("CMD:seek no-op (already at pos)");
+        if (_isDrmSite) {
+          _recentDrmSeekTarget = msg.position;
+          _recentDrmSeekAt = Date.now();
+        }
+        if (drmCommandSequencer?.consumeMatchingSeek(hookedVideo, msg.position, () => {
+          markProgrammaticSeek();
+          _programmaticSeek = true;
+          hookedVideo.currentTime = msg.position;
+          _programmaticSeek = false;
+        })) {
           break;
         }
-        // If a recent CMD:play pre-seek targeted the same position, no-op —
-        // MSE may be briefly reporting a stale currentTime while the seek
-        // completes. Re-issuing currentTime= now (especially if .play()
-        // already flipped paused=false) wedges the pipeline.
-        if (_preSeekTarget != null
-            && Date.now() - _preSeekTargetAt < 3000
-            && Math.abs(msg.position - _preSeekTarget) < 0.5) {
-          _log("CMD:seek no-op (matches recent pre-seek target", _preSeekTarget, ")");
-          _preSeekTarget = null;
+        if (Math.abs(hookedVideo.currentTime - msg.position) < 0.1) {
+          _log("CMD:seek no-op (already at pos)");
           break;
         }
         markProgrammaticSeek();

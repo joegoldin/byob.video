@@ -45,7 +45,7 @@ defmodule Byob.PoolTest do
 
       {:ok, 1} = Pool.upsert([mk_entry(:trending, id, title: "second")])
 
-      rows = Persistence.pick_pool_candidates(:trending, 100, [])
+      rows = Persistence.pick_pool_candidates(:trending, Persistence.pool_count(), [])
       row = Enum.find(rows, &(&1.external_id == id))
 
       assert row.title == "second"
@@ -111,10 +111,10 @@ defmodule Byob.PoolTest do
 
       Pool.mark_picked(id)
       # cast is async — flush by doing a sync call on the same GenServer
-      _ = Persistence.pool_count()
+      total_rows = Persistence.pool_count()
 
-      rows_t = Persistence.pick_pool_candidates(:trending, 100, [])
-      rows_s = Persistence.pick_pool_candidates(:subreddit, 100, [])
+      rows_t = Persistence.pick_pool_candidates(:trending, total_rows, [])
+      rows_s = Persistence.pick_pool_candidates(:subreddit, total_rows, [])
 
       row_t = Enum.find(rows_t, &(&1.external_id == id))
       row_s = Enum.find(rows_s, &(&1.external_id == id))

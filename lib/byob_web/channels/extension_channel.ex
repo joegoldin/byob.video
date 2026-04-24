@@ -104,24 +104,28 @@ defmodule ByobWeb.ExtensionChannel do
     # Compute drift for the sync stats panel (works while paused too)
     state = RoomServer.get_state(socket.assigns.room_pid)
     now = System.monotonic_time(:millisecond)
-    server_pos = if state.play_state == :playing do
-      elapsed = (now - Map.get(state, :last_sync_at, now)) / 1000
-      state.current_time + elapsed
-    else
-      state.current_time
-    end
+
+    server_pos =
+      if state.play_state == :playing do
+        elapsed = (now - Map.get(state, :last_sync_at, now)) / 1000
+        state.current_time + elapsed
+      else
+        state.current_time
+      end
+
     drift_ms = round((client_pos - server_pos) * 1000)
 
     Phoenix.PubSub.broadcast(
       Byob.PubSub,
       "room:#{socket.assigns.room_id}",
-      {:sync_client_stats, %{
-        user_id: socket.assigns.user_id,
-        tab_id: tab_id,
-        drift_ms: drift_ms,
-        server_position: Float.round(server_pos * 1.0, 1),
-        play_state: if(is_playing, do: "playing", else: "paused")
-      }}
+      {:sync_client_stats,
+       %{
+         user_id: socket.assigns.user_id,
+         tab_id: tab_id,
+         drift_ms: drift_ms,
+         server_position: Float.round(server_pos * 1.0, 1),
+         play_state: if(is_playing, do: "playing", else: "paused")
+       }}
     )
 
     {:noreply, socket}
@@ -202,24 +206,28 @@ defmodule ByobWeb.ExtensionChannel do
     tab_id = payload["tab_id"] || "?"
     state = RoomServer.get_state(socket.assigns.room_pid)
     now = System.monotonic_time(:millisecond)
-    pos = if state.play_state == :playing do
-      elapsed = (now - Map.get(state, :last_sync_at, now)) / 1000
-      state.current_time + elapsed
-    else
-      state.current_time
-    end
+
+    pos =
+      if state.play_state == :playing do
+        elapsed = (now - Map.get(state, :last_sync_at, now)) / 1000
+        state.current_time + elapsed
+      else
+        state.current_time
+      end
 
     Phoenix.PubSub.broadcast(
       Byob.PubSub,
       "room:#{socket.assigns.room_id}",
-      {:sync_client_stats, %{
-        user_id: socket.assigns.user_id,
-        tab_id: tab_id,
-        drift_ms: drift_ms,
-        server_position: Float.round(pos, 1),
-        play_state: Atom.to_string(state.play_state)
-      }}
+      {:sync_client_stats,
+       %{
+         user_id: socket.assigns.user_id,
+         tab_id: tab_id,
+         drift_ms: drift_ms,
+         server_position: Float.round(pos, 1),
+         play_state: Atom.to_string(state.play_state)
+       }}
     )
+
     {:noreply, socket}
   end
 
