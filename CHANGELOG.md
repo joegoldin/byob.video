@@ -2,6 +2,16 @@
 
 ---
 
+# v6.2.12
+
+### Revert v6.2.11 monotonic counter
+
+v6.2.11 introduced a per-room `broadcast_seq` counter alongside `server_time` for the client-side stale check. In practice it made things less reliable than v6.2.10's simpler strict-`<` timestamp check, so this release reverts to v6.2.10 behavior.
+
+No net code change vs v6.2.10 — this is just a version bump to make the manifest versions reflect the rollback.
+
+---
+
 # v6.2.10
 
 ### Stale-command check uses strict `<` (not `<=`)
