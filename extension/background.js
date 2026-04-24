@@ -17,6 +17,14 @@ let clockOffset = 0;
 let clockRtt = 0;
 let clockSyncTimer = null;
 
+// Tabs that have reported video:hooked. Used to drive video:tab_opened so
+// the server's open_tabs tracks "tabs with an actual player" rather than
+// "every content-script port". Pages where content.js runs but no video
+// is hooked (e.g. a CR browse page, a non-player iframe) never get
+// registered as a player tab, so closing them doesn't confuse the
+// ready-count tooltip / presence toast logic.
+const hookedTabs = new Set();
+
 // Listen for port connections from content scripts
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "watchparty") return;
@@ -25,11 +33,6 @@ chrome.runtime.onConnect.addListener((port) => {
   const entry = { port, tabId };
   ports.push(entry);
 
-  // If channel already connected, report this tab as open immediately
-  if (tabId != null && channel) {
-    channel.push("video:tab_opened", { tab_id: String(tabId) });
-  }
-
   port.onMessage.addListener((msg) => handleContentMessage(msg, port, tabId));
 
   port.onDisconnect.addListener(() => {
@@ -37,13 +40,15 @@ chrome.runtime.onConnect.addListener((port) => {
     void chrome.runtime.lastError;
     const idx = ports.indexOf(entry);
     if (idx > -1) ports.splice(idx, 1);
-    // If no other port from this tab, mark tab as closed + unready
+    // If no other port from this tab and the tab had hooked a video,
+    // tell the server the player tab closed.
     if (tabId != null && channel) {
       const tabStillConnected = ports.some(e => e.tabId === tabId);
-      if (!tabStillConnected) {
+      if (!tabStillConnected && hookedTabs.has(tabId)) {
         channel.push("video:tab_closed", { tab_id: String(tabId) });
         channel.push("video:unready", { tab_id: String(tabId) });
       }
+      if (!tabStillConnected) hookedTabs.delete(tabId);
     }
     if (ports.length === 0 && channel) {
       // All external player windows closed — pause so next joiner doesn't autoplay
@@ -55,6 +60,7 @@ chrome.runtime.onConnect.addListener((port) => {
         socket = null;
       }
       currentRoomId = null;
+      hookedTabs.clear();
     }
   });
 });
@@ -75,6 +81,14 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:hooked":
+      // Register this tab as a player tab (has a hooked video). Fires
+      // exactly once per tab — the server's open_tabs entry matches the
+      // "tab has an actual player" semantic the tooltip / ext_closed
+      // toast rely on.
+      if (tabId != null && channel && !hookedTabs.has(tabId)) {
+        hookedTabs.add(tabId);
+        channel.push("video:tab_opened", { tab_id: String(tabId) });
+      }
       // Send page metadata to server for display on byob.video
       if (channel && (msg.title || msg.thumbnail_url)) {
         channel.push("video:media_info", {
@@ -370,13 +384,10 @@ function connectToRoom(roomId, serverUrl, token, username) {
       // Kick off NTP clock sync and schedule maintenance.
       doClockSync();
       startClockSyncMaintenance();
-      // Report all currently connected tabs as open.
-      const seenTabs = new Set();
-      for (const entry of ports) {
-        if (entry.tabId != null && !seenTabs.has(entry.tabId)) {
-          seenTabs.add(entry.tabId);
-          channel.push("video:tab_opened", { tab_id: String(entry.tabId) });
-        }
+      // Re-announce only tabs that had previously hooked a video —
+      // non-player tabs stay out of open_tabs.
+      for (const tId of hookedTabs) {
+        channel.push("video:tab_opened", { tab_id: String(tId) });
       }
     })
     .receive("error", (resp) => {

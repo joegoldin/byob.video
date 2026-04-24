@@ -321,23 +321,39 @@ defmodule Byob.RoomServer do
     open_tabs = Map.get(state, :open_tabs, %{})
     ready_tabs = Map.get(state, :ready_tabs, %{})
 
+    # Owner of the tab that's being cleared. Used below to decide if
+    # this was the user's LAST player tab (→ emit ext_closed toast).
+    closing_owner = Map.get(open_tabs, tab_id)
+
     # Also clear the ready_tabs entry for this tab. Normally `video:unready`
     # arrives alongside `video:tab_closed`, but if it gets dropped (SW
     # tearing down, port dying before the second push lands), a stale
     # ready entry sticks around and the tooltip never transitions back to
     # "needs to open player window" for that user.
+    new_open_tabs = Map.delete(open_tabs, tab_id)
+    new_ready_tabs = Map.delete(ready_tabs, tab_id)
+
     state =
       state
-      |> Map.put(:open_tabs, Map.delete(open_tabs, tab_id))
-      |> Map.put(:ready_tabs, Map.delete(ready_tabs, tab_id))
+      |> Map.put(:open_tabs, new_open_tabs)
+      |> Map.put(:ready_tabs, new_ready_tabs)
 
-    # Note: we don't auto-pause here. SPA navigations fire tab_closed then
-    # tab_opened in quick succession (port disconnect on page unload, then
-    # reconnect once the new page loads) — pausing in between would yank
-    # the room whenever a user navigates within e.g. Crunchyroll. The
-    # clean "user closed the last tab" path is covered by
-    # `video:all_closed` pushing RoomServer.pause directly, and the
-    # abnormal "SW died" case is caught in `leave` below.
+    # If this was the user's last player tab (they may still have other
+    # non-player extension tabs open, or a LiveView session, but they no
+    # longer have any extension player window for this room), broadcast
+    # ext_closed so other users see "X closed their player window" in
+    # their sync bar + webapp toast. `video:all_closed` in the extension
+    # only fires when ALL ports close — a user with the byob webapp open
+    # alongside the player would otherwise never trigger a presence
+    # update on close.
+    if closing_owner && user_has_no_open_tabs?(new_open_tabs, closing_owner) do
+      username = get_in(state, [Access.key(:users), closing_owner, Access.key(:username)])
+
+      if username do
+        broadcast(state, {:room_presence, %{event: "ext_closed", username: username}})
+      end
+    end
+
     broadcast_ready_count(state)
     {:reply, :ok, state}
   end
@@ -1222,6 +1238,10 @@ defmodule Byob.RoomServer do
   defp username_connected?(state, username) do
     state.users
     |> Enum.any?(fn {_, u} -> u.connected && u.username == username end)
+  end
+
+  defp user_has_no_open_tabs?(open_tabs, ext_user_id) do
+    not Enum.any?(open_tabs, fn {_, owner} -> owner == ext_user_id end)
   end
 
   defp broadcast_ready_count(state) do

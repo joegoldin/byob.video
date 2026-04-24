@@ -2,6 +2,20 @@
 
 ---
 
+# v6.2.7
+
+### Presence updates fire when a player tab closes (not only on full disconnect)
+
+Two linked fixes: the ready-count tooltip now correctly transitions back to "needs to open player window" when a user closes their CR player, and the "X closed their player window" toast fires in that scenario too. Previously, if the user had any other extension-connected tab open (byob webapp, a second CR page, etc.), closing just the player didn't trigger any presence update — `video:all_closed` in the extension requires ALL ports to close, and the server's `open_tabs` lumped together "any port" and "actual player tab".
+
+**Extension side.** `video:tab_opened` now fires on `video:hooked` rather than on port connect. Only tabs that actually hook a video element register as player tabs; non-player pages (CR browse, iframes without video) stay out of `open_tabs`. A per-SW `hookedTabs` Set tracks which tabs have registered.
+
+**Server side.** `clear_tab_opened` now emits `{:room_presence, %{event: "ext_closed", ...}}` when the closing tab was the user's last `open_tabs` entry — even if the user still has other ext ports connected. `video:all_closed` stops emitting ext_closed itself (would have duplicated on the "closed my only player" path).
+
+Net effect: closing a player window always fires the toast + tooltip refresh, regardless of what other tabs the user has open.
+
+---
+
 # v6.2.6
 
 ### Fix ≤1 pause rule; stale ready-count entries after tab close
