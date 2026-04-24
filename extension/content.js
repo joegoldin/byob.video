@@ -30,7 +30,7 @@
   let commandGuard = null;         // suppress outgoing events after a server command
   let _guardStartedAt = 0;
   let expectedPlayState = null;    // State.PLAYING / State.PAUSED / null
-  let serverRef = null;            // { position, playState, serverTime, seq }
+  let serverRef = null;            // { position, playState, serverTime }
   let lastSeekAt = 0;
   let _pendingPlayPause = null;    // debounced send
   let _hardSeekFailures = 0;
@@ -603,12 +603,11 @@
     if (hookedVideo && hookedVideo.playbackRate !== 1.0) hookedVideo.playbackRate = 1.0;
   }
 
-  function updateServerRef(position, playState, serverTime, seq) {
+  function updateServerRef(position, playState, serverTime) {
     serverRef = {
       position,
       playState,
       serverTime: serverTime ?? serverRef?.serverTime ?? 0,
-      seq: seq ?? serverRef?.seq ?? 0,
     };
   }
 
@@ -731,7 +730,7 @@
       // — it's the authoritative handoff of room state to this client.
       if (msg.play_state) {
         expectedPlayState = msg.play_state === "playing" ? State.PLAYING : State.PAUSED;
-        updateServerRef(msg.current_time ?? 0, expectedPlayState, msg.server_time, msg.seq);
+        updateServerRef(msg.current_time ?? 0, expectedPlayState, msg.server_time);
       }
 
       hideJoinToast();
@@ -782,18 +781,13 @@
 
     if (needsGesture) return;
 
-    // Ignore stale commands. Prefer the monotonic `seq` counter the
-    // server attaches — strictly increasing per-room, so there's no
-    // ambiguity when two broadcasts fall on the same ms tick. Fall back
-    // to server_time for messages that don't carry a seq (older builds,
-    // or events we didn't tag).
-    if (msg.seq != null && serverRef && msg.seq <= serverRef.seq) {
-      if (msg.type !== "sync:correction") {
-        _log(`ignoring stale ${msg.type}: seq=${msg.seq} <= ${serverRef.seq}`);
-        return;
-      }
-    } else if (msg.seq == null && msg.server_time != null && serverRef
-               && msg.server_time < serverRef.serverTime) {
+    // Ignore stale commands — server_time must be older than what we have.
+    // Uses strict < (not <=) because the server's System.monotonic_time has
+    // 1ms granularity and two broadcasts (e.g. a sync:correction + a
+    // sync:pause) can share the same server_time. If the correction lands
+    // first it bumps serverRef.serverTime to T; the pause arriving with
+    // the same T must still be processed.
+    if (msg.server_time != null && serverRef && msg.server_time < serverRef.serverTime) {
       if (msg.type !== "sync:correction") {
         _log(`ignoring stale ${msg.type}: server_time=${msg.server_time} < ${serverRef.serverTime}`);
         return;
@@ -807,7 +801,7 @@
         // stale and would echo back incorrectly.
         if (_pendingPlayPause) { clearTimeout(_pendingPlayPause); _pendingPlayPause = null; }
         expectedPlayState = State.PLAYING;
-        updateServerRef(msg.position ?? hookedVideo.currentTime, State.PLAYING, msg.server_time, msg.seq);
+        updateServerRef(msg.position ?? hookedVideo.currentTime, State.PLAYING, msg.server_time);
         startCommandGuard();
         if (bitmovinAdapter.isReady()) {
           bitmovinAdapter.play(msg.position);
@@ -822,7 +816,7 @@
         _log("cmd:pause pos=", msg.position, "server_time=", msg.server_time);
         if (_pendingPlayPause) { clearTimeout(_pendingPlayPause); _pendingPlayPause = null; }
         expectedPlayState = State.PAUSED;
-        updateServerRef(msg.position ?? hookedVideo.currentTime, State.PAUSED, msg.server_time, msg.seq);
+        updateServerRef(msg.position ?? hookedVideo.currentTime, State.PAUSED, msg.server_time);
         startCommandGuard();
         if (bitmovinAdapter.isReady()) {
           bitmovinAdapter.pause(msg.position);
@@ -836,7 +830,7 @@
       case "command:seek":
         _log("cmd:seek pos=", msg.position, "server_time=", msg.server_time);
         lastSeekAt = Date.now();
-        updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time, msg.seq);
+        updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time);
         if (commandGuard) clearTimeout(commandGuard);
         commandGuard = setTimeout(() => { commandGuard = null; }, 1000);
         seekTo(msg.position);
@@ -846,7 +840,7 @@
         // Server periodic refresh (every few seconds). Updates reference so
         // reconcile can drift-correct. No direct player action here.
         if (msg.expected_time != null) {
-          updateServerRef(msg.expected_time, serverRef?.playState ?? expectedPlayState, msg.server_time, msg.seq);
+          updateServerRef(msg.expected_time, serverRef?.playState ?? expectedPlayState, msg.server_time);
         }
         break;
     }

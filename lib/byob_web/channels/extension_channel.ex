@@ -202,8 +202,7 @@ defmodule ByobWeb.ExtensionChannel do
       %{
         play_state: Atom.to_string(state.play_state),
         current_time: current_time,
-        server_time: now,
-        seq: Map.get(state, :broadcast_seq, 0)
+        server_time: now
       }}, socket}
   end
 
@@ -404,9 +403,6 @@ defmodule ByobWeb.ExtensionChannel do
       play_state: Atom.to_string(state.play_state),
       current_time: current_time,
       server_time: now,
-      # Baseline broadcast seq so the client's stale-check has a reference
-      # point for the very first incoming sync event after join.
-      seq: Map.get(state, :broadcast_seq, 0),
       playback_rate: state.playback_rate,
       ready_count: ready_count
     }

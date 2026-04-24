@@ -2,24 +2,6 @@
 
 ---
 
-# v6.2.11
-
-### Monotonic broadcast counter alongside server_time
-
-Upgrades the stale-command check from "strict `<` on server_time" (v6.2.10) to a strictly-monotonic per-room `seq` counter. The timestamp alone has 1ms granularity, so two broadcasts colliding on the same tick are not distinguishable by time — the `seq` counter always is.
-
-- `RoomServer.State` gains `broadcast_seq: 0`.
-- A new `bump_seq_and_broadcast/3` helper increments the counter, tags the payload with `seq: N`, broadcasts, and returns the updated state.
-- All sync-relevant broadcasts use the helper: `:sync_play`, `:sync_pause`, `:sync_seek`, `:sync_correction`, `:state_heartbeat`, and the leave-time auto-pause.
-- `sync_state_payload` (initial ext-channel join reply) and `sync:request_state` reply include the current `broadcast_seq` as a baseline.
-- `bump_seq_and_broadcast` uses `Map.get`/`Map.put` so hot-reloaded state from an older build (which doesn't yet have the field) doesn't crash.
-
-**Client (extension)**: `serverRef` now carries a `seq` field alongside `serverTime`. The stale-check prefers `seq` (`msg.seq <= serverRef.seq` → stale), falling back to the strict-`<` `server_time` comparison for messages that don't carry a seq. Every `updateServerRef` call site threads `msg.seq` through.
-
-Backwards compatible: an old server sending no `seq` still works via the `server_time` fallback path; a new server paired with a pre-v6.2.11 extension still works via the extension's old `server_time` check (same-ms bug could still hit there until the extension is reloaded).
-
----
-
 # v6.2.10
 
 ### Stale-command check uses strict `<` (not `<=`)
