@@ -330,8 +330,32 @@ defmodule ByobWeb.ExtensionChannel do
         non_ext = connected |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
         non_ext_usernames = non_ext |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq()
         total = length(non_ext_usernames)
-        has_tab = min(map_size(open_tabs), total)
-        ready = min(map_size(ready_tabs), total)
+
+        # open_tabs/ready_tabs are keyed by tab_id with ext_user_id as value.
+        # Count unique owners (by username), not tabs — a single user with
+        # top frame + player iframe would otherwise count as 2. Also filter
+        # out stale owners that aren't currently connected.
+        connected_ids =
+          connected |> Enum.map(fn {id, _} -> id end) |> MapSet.new()
+
+        resolve = fn owner_id ->
+          if MapSet.member?(connected_ids, owner_id) do
+            get_in(state, [Access.key(:users), owner_id, Access.key(:username)])
+          else
+            nil
+          end
+        end
+
+        open_users =
+          open_tabs |> Map.values() |> Enum.map(resolve)
+          |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+        ready_users =
+          ready_tabs |> Map.values() |> Enum.map(resolve)
+          |> Enum.reject(&is_nil/1) |> Enum.uniq()
+
+        has_tab = min(length(open_users), total)
+        ready = min(length(ready_users), has_tab)
 
         %{ready: ready, has_tab: has_tab, total: total}
       else

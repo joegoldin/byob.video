@@ -2,6 +2,24 @@
 
 ---
 
+# v6.1.1
+
+### Ready-count tooltip: count unique users, not raw tab entries
+
+`has_tab` and `ready` were using `map_size(open_tabs)` / `map_size(ready_tabs)`. The maps are keyed by tab_id with `ext_user_id` as the value, and a single user has multiple tabs (top frame + player iframe + possibly more). So with `total = 2` non-extension users and one of them having 2 tabs open, `has_tab = min(2, 2) = 2` — making the tooltip say "1 needs to click play" when it should say "1 needs to open window".
+
+- Introduced `count_tab_owners/4` in `room_server.ex`. Resolves each owner back to a username via `state.users` and counts unique usernames. Also filters out owners that aren't currently connected, so stale entries from disconnects that haven't been cleaned up yet don't inflate the count.
+- Applied the same logic in `extension_channel.ex`'s `sync_state_payload/1` for the initial join payload.
+
+Stale-entry cleanup paths that already existed:
+- `RoomServer.leave/2` drops `open_tabs`/`ready_tabs` entries owned by the leaving user_id.
+- `handle_call({:join, ...})` drops stale same-username disconnected users and their tab entries on extension reconnect.
+- Extension SW's `socket.onClose` proactively pushes `video:tab_closed` + `video:unready` for every known port before the channel dies.
+
+The new `connected_ids` filter in the count is the belt-and-suspenders that keeps the display correct during the ~60s window between an abrupt disconnect and Phoenix's heartbeat-timeout-driven `terminate`.
+
+---
+
 # v6.1.0
 
 ### Reconcile-only sync engine + NTP clock + drift correction across all sites

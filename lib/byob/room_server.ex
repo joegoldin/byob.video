@@ -1148,8 +1148,6 @@ defmodule Byob.RoomServer do
   end
 
   defp broadcast_ready_count(state) do
-    # Group connected users by username to deduplicate (extension + LiveView = same person).
-    # A person is "ready" unless they have an extension connection that isn't ready yet.
     connected = state.users |> Enum.filter(fn {_, u} -> u.connected end)
 
     has_extension_users =
@@ -1158,17 +1156,56 @@ defmodule Byob.RoomServer do
     open_tabs = Map.get(state, :open_tabs, %{})
     ready_tabs = Map.get(state, :ready_tabs, %{})
 
-    # Only broadcast when tabs exist — otherwise the count is meaningless
     if has_extension_users or map_size(open_tabs) > 0 do
       non_ext = connected |> Enum.reject(fn {_, u} -> Map.get(u, :is_extension, false) end)
       non_ext_usernames = non_ext |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq()
       total_users = length(non_ext_usernames)
 
-      has_tab = min(map_size(open_tabs), total_users)
-      ready = min(map_size(ready_tabs), has_tab)
+      %{has_tab: has_tab, ready: ready} = count_tab_owners(state, open_tabs, ready_tabs, total_users)
 
       broadcast(state, {:ready_count, %{ready: ready, has_tab: has_tab, total: total_users}})
     end
+  end
+
+  # Count unique usernames that have at least one open tab / ready tab.
+  # open_tabs / ready_tabs are keyed by tab_id with the ext_user_id as the
+  # value; a single user can have multiple tabs (e.g. top frame + player
+  # iframe), and multiple ext_user_ids can share a username (same person
+  # reconnecting). Also filters out owners that aren't currently connected
+  # so stale entries (disconnect cleanup hasn't caught up yet) don't
+  # inflate the count.
+  defp count_tab_owners(state, open_tabs, ready_tabs, total_users) do
+    connected_ids =
+      state.users
+      |> Enum.filter(fn {_, u} -> u.connected end)
+      |> Enum.map(fn {id, _} -> id end)
+      |> MapSet.new()
+
+    resolve = fn owner_id ->
+      if MapSet.member?(connected_ids, owner_id) do
+        get_in(state, [Access.key(:users), owner_id, Access.key(:username)])
+      else
+        nil
+      end
+    end
+
+    open_users =
+      open_tabs
+      |> Map.values()
+      |> Enum.map(resolve)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    ready_users =
+      ready_tabs
+      |> Map.values()
+      |> Enum.map(resolve)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    has_tab = min(length(open_users), total_users)
+    ready = min(length(ready_users), has_tab)
+    %{has_tab: has_tab, ready: ready}
   end
 
   @max_history 99
