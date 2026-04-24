@@ -2,6 +2,16 @@
 
 ---
 
+# v6.2.1
+
+### Route Bitmovin pause/play/seeked events to sync handlers
+
+When a user paused via Crunchyroll's native player controls, the `<video>` element's `pause` event wasn't reliably bubbling to our listener — Bitmovin's MSE pipeline pauses internally without always dispatching a DOM pause to the element we have hooked. Result: server kept believing `state=playing`, reconcile force-played the pausing tab every ~5s, and the user saw the video refuse to stay paused.
+
+The page-world Bitmovin adapter already emits its own `paused` / `play` / `seeked` events via postMessage (it was doing so for `ready` + time updates only). Route those same events through to `onVideoPause` / `onVideoPlay` / `onVideoSeeked`, which carry the same echo-suppression and debounce guards as the native DOM handlers. Duplicate events from both paths are harmless — the debounce + `expectedPlayState` check dedupe.
+
+---
+
 # v6.2.0
 
 ### Presence toasts, username tooltip, and pruned Extension clients panel

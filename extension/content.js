@@ -94,10 +94,20 @@
         ready = true;
         last = { time: d.time, isPaused: d.isPaused, duration: d.duration };
         _log("bitmovin: ready time=", d.time, "paused=", d.isPaused, "duration=", d.duration);
-      } else if (d.time != null) {
+        return;
+      }
+      if (d.time != null) {
         if (!last) last = {};
         last.time = d.time;
       }
+      // Bitmovin's MSE pipeline doesn't always bubble pause/play/seeked to
+      // the <video> element that our native listeners are attached to.
+      // Route the player's own events through to the same handlers so
+      // user-initiated pause via CR's controls reaches the server.
+      if (!ready) return;
+      if (d.event === "paused") onVideoPause();
+      else if (d.event === "play") onVideoPlay();
+      else if (d.event === "seeked") onVideoSeeked();
     }
 
     const host = window.location.hostname;
