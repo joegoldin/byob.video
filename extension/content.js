@@ -38,6 +38,7 @@
   let _stallTickCount = 0;
   let _stallRecoveryAttempts = 0;
   let _lastStallRecoveryAt = 0;
+  let _cleanPlayTicks = 0; // consecutive normal-advancement ticks
   let _lastExpectedPos = null;
   let _lastExpectedAt = 0;
   let _recoveryInProgress = false;
@@ -315,13 +316,20 @@
             const delta = pos - _lastTickPosition;
             if (Math.abs(delta) < 0.05) {
               _stallTickCount++;
-            } else {
+              _cleanPlayTicks = 0;
+            } else if (delta > 0.3 && delta < 0.7) {
+              // Normal-rate advancement (~0.5s per 500ms tick ≈ 1x). Note the
+              // kick seek is ALSO 0.5s on attempt 1 — looks identical to one
+              // healthy tick. Require several consecutive clean ticks before
+              // declaring recovery; otherwise _stallRecoveryAttempts resets
+              // every time we kick and the counter never escalates.
               _stallTickCount = 0;
-              // Only reset the attempt counter on NORMAL playback advancement
-              // (~0.5s per 500ms tick = 1x rate). Our own kick seeks move the
-              // position by a larger amount but the pipeline stays wedged —
-              // we shouldn't treat that as "recovered".
-              if (delta > 0.3 && delta < 0.7) _stallRecoveryAttempts = 0;
+              _cleanPlayTicks++;
+              if (_cleanPlayTicks >= 3) _stallRecoveryAttempts = 0;
+            } else {
+              // Larger jumps (our seek kicks at 1.5s/3s, CMD:seek, user seek)
+              _stallTickCount = 0;
+              _cleanPlayTicks = 0;
             }
           }
           _lastTickPosition = pos;
@@ -332,6 +340,7 @@
         } else {
           _lastTickPosition = null;
           _stallTickCount = 0;
+          _cleanPlayTicks = 0;
         }
       }
 

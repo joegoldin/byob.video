@@ -2,6 +2,17 @@
 
 ---
 
+# v5.0.16
+
+### Fix stall recovery counter resetting after each kick
+
+v5.0.15's "only reset the counter on normal advancement" logic had a hole: the attempt-1 kick is `+0.5s`, which matches normal-rate advancement (~0.5s per 500ms tick at 1x). The kick itself looked like one healthy playback tick, so `_stallRecoveryAttempts` reset to 0 every time, and the counter never reached attempt 2 or 3. Stalls repeated indefinitely with `attempt 1 delta= 0.5`.
+
+- **Require 3 consecutive clean ticks** before resetting the attempt counter. A single healthy-looking tick after a kick is insufficient — the kick itself produces a 0.5s delta, and a briefly-unstuck pipeline that re-stalls would only produce one normal tick.
+- Added `_cleanPlayTicks` counter; cleared whenever delta is out-of-range or a stall tick is detected.
+
+---
+
 # v5.0.15
 
 ### Fix stall recovery never escalating — progressively larger kicks
