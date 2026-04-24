@@ -2,6 +2,19 @@
 
 ---
 
+# v5.0.15
+
+### Fix stall recovery never escalating — progressively larger kicks
+
+Stall recovery kicks of 0.2s weren't un-wedging Crunchyroll because the kick stayed within the already-buffered (stuck) MSE range, so MSE didn't refetch any segments. User manual seeks work because they're typically 1s+ and cross segment boundaries.
+
+On top of that, the 0.2s kick itself moved the position past the 0.05 "stall" threshold, so `_stallRecoveryAttempts` was reset to 0 — next stall fired as "attempt 1" again forever. The counter never reached the give-up limit, and the kick size never grew.
+
+- **Progressive kick sizes:** attempt 1 = 0.5s, attempt 2 = 1.5s, attempt 3 = 3.0s. Larger kicks force MSE to cross a segment boundary and refetch.
+- **Only reset `_stallRecoveryAttempts` on normal playback advancement** (0.3–0.7s per 500ms tick ≈ 1x rate). Kick-seek-induced position changes no longer confuse the counter.
+
+---
+
 # v5.0.14
 
 ### Fix: joining a paused room would start playing against room state

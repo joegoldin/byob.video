@@ -311,11 +311,18 @@
       if (synced && !followerMode && !_recoveryInProgress) {
         if (!hookedVideo.paused) {
           const pos = hookedVideo.currentTime;
-          if (_lastTickPosition != null && Math.abs(pos - _lastTickPosition) < 0.05) {
-            _stallTickCount++;
-          } else {
-            _stallTickCount = 0;
-            _stallRecoveryAttempts = 0;
+          if (_lastTickPosition != null) {
+            const delta = pos - _lastTickPosition;
+            if (Math.abs(delta) < 0.05) {
+              _stallTickCount++;
+            } else {
+              _stallTickCount = 0;
+              // Only reset the attempt counter on NORMAL playback advancement
+              // (~0.5s per 500ms tick = 1x rate). Our own kick seeks move the
+              // position by a larger amount but the pipeline stays wedged —
+              // we shouldn't treat that as "recovered".
+              if (delta > 0.3 && delta < 0.7) _stallRecoveryAttempts = 0;
+            }
           }
           _lastTickPosition = pos;
 
@@ -529,20 +536,25 @@
     _stallTickCount = 0;
 
     if (_isDrmSite) {
-      // Silent kick recovery: nudge the playhead forward a fraction to force
-      // MSE to refetch segments. No user prompt — most users won't even
-      // notice. Up to 3 attempts before giving up silently (user can seek
-      // manually to recover if kicks don't work).
+      // Silent kick recovery: nudge the playhead forward to force MSE to
+      // refetch. Progressively larger kicks — small ones (0.2s) stay inside
+      // the already-buffered wedged range and don't cross segment boundaries,
+      // so MSE doesn't refetch and the wedge persists. User manual seeks work
+      // because they're typically 1s+.
       _stallRecoveryAttempts++;
       if (_stallRecoveryAttempts > 3) {
         _log("STALL: DRM silent recovery exhausted, giving up");
         _stallRecoveryAttempts = 0;
         return;
       }
-      _log("STALL: DRM silent kick recovery attempt", _stallRecoveryAttempts);
+      const kickDelta =
+        _stallRecoveryAttempts === 1 ? 0.5 :
+        _stallRecoveryAttempts === 2 ? 1.5 :
+        3.0;
+      _log("STALL: DRM silent kick recovery attempt", _stallRecoveryAttempts, "delta=", kickDelta);
       markProgrammaticSeek();
       _programmaticSeek = true;
-      try { hookedVideo.currentTime = hookedVideo.currentTime + 0.2; } catch (_) {}
+      try { hookedVideo.currentTime = hookedVideo.currentTime + kickDelta; } catch (_) {}
       _programmaticSeek = false;
       return;
     }
