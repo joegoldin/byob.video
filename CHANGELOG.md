@@ -2,6 +2,32 @@
 
 ---
 
+# v6.0.0
+
+### Crunchyroll: call Bitmovin's JS API instead of fighting `<video>.currentTime=`
+
+Receivers on Crunchyroll wedged on every big seek-while-playing. Every fix from v5.0.4 through v5.0.31 (pre-seek, wait-for-seeked, queued-play-until-ready, progressive stall kicks, DRM sequencer) was working around the same root cause: setting `currentTime` on a playing MSE stream hands MSE an operation it can't complete cleanly, and the pipeline reports `playing=true` with frozen frames for many seconds. Survey of other sync extensions (another sync extension fallback `Playr`, Anime-Watch-Parties, AegroNN/WatchParty, squidync, roll_together, umi, syncwatch) confirmed this is what everyone hits — nobody using direct `<video>` manipulation actually solves it; syncwatch's Netflix path is the architectural template: inject a page-world shim and call the vendor's player API.
+
+Recon in Crunchyroll's player iframe confirmed:
+
+```js
+document.querySelector('.bitmovinplayer-container').player  // Bitmovin v8 Player
+// exposes seek, play, pause, isPlaying, isPaused, isStalled, getBufferedRanges,
+// on, off, getCurrentTime, getDuration, etc.
+```
+
+Verified manually that `p.seek(p.getCurrentTime() + 300)` while playing completes cleanly and playback resumes at normal rate within 1 second — no wedge, no stall, no recovery needed.
+
+- **New page-world content script `extension/sites/crunchyroll-bitmovin-page.js`** runs on `*.crunchyroll.com` via MV3 `world: "MAIN"`, polls for `.bitmovinplayer-container.player`, and bridges it to the isolated content-script world with `CustomEvent`s (`byob-bm:cmd` / `byob-bm:evt` / `byob-bm:ack`).
+- **`content.js` gains a `bitmovinAdapter`** that exposes `seek/play/pause` through the bridge. Receiver `CMD:play/pause/seek` handlers route through Bitmovin when the adapter is ready; otherwise fall through to the existing `<video>` path for non-CR / pre-ready cases.
+- **Sender-side DOM event handlers** are unchanged — Bitmovin's internal `p.seek()` still fires `pause/seek/seeked/play` on the `<video>`, which the existing defer-play coordinator handles correctly (test confirmed: `onVideoPause SEND → onVideoSeeking → onVideoPlay DEFER → onVideoSeeked SEND → Deferred play release → onVideoPlay SEND`).
+- **Firefox moved to MV3** (`manifest_version: 3`, `host_permissions`, `strict_min_version: 128` for `world: "MAIN"` support). Chrome already MV3.
+- **What's not touched (yet)**: stall recovery, DRM command sequencer, queued-play coordinator, pre-seek tracker, `_recentDrmSeekTarget`, markProgrammaticSeek windows. All still run; they become no-ops once Bitmovin handles the transitions. Stage 2 will delete them and port v4.x's reconcile-only architecture.
+
+Stage 1 of the v6 rewrite. Stage 2 is the reconcile-only refactor + drift correction + cleanup.
+
+---
+
 # v5.0.31
 
 ### Recover faster when a queued DRM `play` times out but still comes up frozen

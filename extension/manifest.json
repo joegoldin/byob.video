@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "byob - Bring Your Own Binge",
-  "version": "5.0.31",
+  "version": "6.0.0",
   "description": "Syncs video playback with byob.video rooms",
   "permissions": ["storage"],
   "background": {
@@ -14,6 +14,16 @@
       "js": ["content_runtime.js", "content.js"],
       "run_at": "document_idle",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "https://*.crunchyroll.com/*",
+        "https://crunchyroll.com/*"
+      ],
+      "js": ["sites/crunchyroll-bitmovin-page.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
     }
   ],
   "icons": {

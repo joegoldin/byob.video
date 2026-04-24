@@ -1,9 +1,10 @@
 {
-  "manifest_version": 2,
+  "manifest_version": 3,
   "name": "byob - Bring Your Own Binge",
-  "version": "5.0.31",
+  "version": "6.0.0",
   "description": "Syncs video playback with byob.video rooms",
-  "permissions": ["storage", "<all_urls>"],
+  "permissions": ["storage"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "scripts": ["lib/phoenix.mjs", "background.js"],
     "type": "module"
@@ -14,11 +15,22 @@
       "js": ["content_runtime.js", "content.js"],
       "run_at": "document_idle",
       "all_frames": true
+    },
+    {
+      "matches": [
+        "https://*.crunchyroll.com/*",
+        "https://crunchyroll.com/*"
+      ],
+      "js": ["sites/crunchyroll-bitmovin-page.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
     }
   ],
   "browser_specific_settings": {
     "gecko": {
       "id": "byob@byob.video",
+      "strict_min_version": "128.0",
       "data_collection_permissions": {
         "required": ["none"]
       }

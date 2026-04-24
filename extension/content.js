@@ -80,6 +80,84 @@
   let _recoveryInProgress = false;
   let _stallRecovery = false; // true while waiting for user click to un-wedge DRM
 
+  // ── Bitmovin adapter ──────────────────────────────────────────────────────
+  // Crunchyroll's player is Bitmovin v8. Direct <video>.currentTime= wedges
+  // MSE on big seeks-while-playing; calling Bitmovin's player.seek() lets it
+  // manage the buffer transition. A MAIN-world script
+  // (sites/crunchyroll-bitmovin-page.js) finds .bitmovinplayer-container.player
+  // and bridges it here via CustomEvents. When the adapter is ready, receiver
+  // CMDs route through Bitmovin; sender DOM event handlers still fire from
+  // Bitmovin's internal seek and are absorbed by the existing suppression.
+  const bitmovinAdapter = (() => {
+    let ready = false;
+    let last = null; // { time, isPaused, duration }
+    let cmdSeq = 0;
+
+    function onEvt(e) {
+      const d = e && e.detail;
+      if (!d) return;
+      if (d.event === "ready") {
+        ready = true;
+        last = { time: d.time, isPaused: d.isPaused, duration: d.duration };
+        _log("bitmovin adapter: ready time=", d.time, "paused=", d.isPaused, "duration=", d.duration);
+      } else if (d.time != null) {
+        if (!last) last = {};
+        last.time = d.time;
+      }
+    }
+
+    // Crunchyroll-only. Extending to other Bitmovin sites would just need a
+    // different host check plus (likely) a different container selector in
+    // sites/*.js.
+    const host = window.location.hostname;
+    const isCr = /(^|\.)crunchyroll\.com$/.test(host);
+    if (isCr) {
+      try { window.addEventListener("byob-bm:evt", onEvt); } catch (_) {}
+    }
+
+    function send(cmd, arg) {
+      if (!ready) return false;
+      cmdSeq++;
+      try {
+        window.dispatchEvent(new CustomEvent("byob-bm:cmd", {
+          detail: { id: cmdSeq, cmd, arg },
+        }));
+      } catch (_) { return false; }
+      return true;
+    }
+
+    return {
+      isReady() { return ready; },
+      getCurrentTime() { return last && last.time != null ? last.time : null; },
+      isPaused() { return last && last.isPaused != null ? last.isPaused : null; },
+      seek(time) {
+        if (time == null) return false;
+        return send("seek", { time });
+      },
+      play(position) {
+        if (!ready) return false;
+        // If the target differs from our last-known position, seek first;
+        // Bitmovin handles the MSE transition internally and stays/enters
+        // playing state on the .play() that follows.
+        if (position != null
+            && last && last.time != null
+            && Math.abs(last.time - position) > 0.5) {
+          send("seek", { time: position });
+        }
+        return send("play");
+      },
+      pause(position) {
+        if (!ready) return false;
+        if (position != null
+            && last && last.time != null
+            && Math.abs(last.time - position) > 0.1) {
+          send("seek", { time: position });
+        }
+        return send("pause");
+      },
+    };
+  })();
+
   // Signal extension is installed — only on our domain so other sites can't detect it
   if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
     document.documentElement.setAttribute("data-byob-extension", "true");
@@ -911,6 +989,17 @@
         clearQueuedPlayRecoveryTimer();
         _pendingSeekPos = null;
         deferStall();
+        // Bitmovin fast path: let the player's own API manage the seek +
+        // playback transition. Absorb the DOM echoes (Bitmovin internally
+        // fires pause/seek/seeked/play on the <video>) via the existing
+        // suppression windows.
+        if (bitmovinAdapter.isReady()) {
+          _log("CMD:play → bitmovin pos=", msg.position);
+          suppress("playing");
+          markProgrammaticSeek(6500);
+          bitmovinAdapter.play(msg.position);
+          break;
+        }
         if (!hookedVideo.paused) {
           _log("CMD:play no-op (already playing)");
           break;
@@ -971,6 +1060,12 @@
         _pendingSeekPos = null;
         deferStall();
         suppress("paused");
+        if (bitmovinAdapter.isReady()) {
+          _log("CMD:pause → bitmovin pos=", msg.position);
+          markProgrammaticSeek(3000);
+          bitmovinAdapter.pause(msg.position);
+          break;
+        }
         if (applyPauseAtPosition) {
           applyPauseAtPosition(hookedVideo, msg.position, {
             pause: () => {
@@ -1003,6 +1098,12 @@
         if (_isDrmSite) {
           _recentDrmSeekTarget = msg.position;
           _recentDrmSeekAt = Date.now();
+        }
+        if (bitmovinAdapter.isReady()) {
+          _log("CMD:seek → bitmovin pos=", msg.position);
+          markProgrammaticSeek(3000);
+          bitmovinAdapter.seek(msg.position);
+          break;
         }
         if (drmCommandSequencer?.consumeMatchingSeek(hookedVideo, msg.position, () => {
           markProgrammaticSeek();
