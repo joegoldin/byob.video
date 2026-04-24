@@ -2,6 +2,28 @@
 
 ---
 
+# v5.0.21
+
+### Wait for `seeked` before `.play()` in pre-seek path + no-op trailing CMD:seek
+
+v5.0.20's pre-seek in `CMD:play` helped for short seeks but still wedged on large ones. Observed in logs:
+
+```
+27.050 CMD:play pre-seek from 653.25 to 315.5
+27.052 onVideoPlay SUPPRESSED (gen) pos= 315.5        ← .play() fires immediately
+27.053 onVideoSeeking SKIP (programmatic) pos= 315.5
+27.078 onVideoSeeking SKIP (programmatic) pos= 634.64 ← MSE reverts to old position
+27.106 CMD:seek pos= 315.5 videoPaused=false videoPos=634.64 → currentTime=315.5 on playing → wedge
+```
+
+Calling `.play()` immediately after `currentTime=` on Crunchyroll's MSE makes the pipeline abort the seek mid-fetch and revert to the last buffered position (observed: 315.5 "unwound" to 634.64 within 25ms). The trailing `CMD:seek` then sees a playing stream at the wrong position and re-issues the seek on a **playing** pipeline, which is the wedge condition.
+
+- **Wait for `seeked` event (with 2s timeout fallback) before `.play()` in the pre-seek path.** This lets MSE commit the new segment before playback starts instead of racing `.play()` against the seek fetch.
+- **New `_preSeekTarget` tracker**: `CMD:seek` no-ops if its target matches a recent (<3s) pre-seek target. MSE may briefly report a stale/reverted `currentTime` while the seek finishes — we trust our intent over the getter.
+- Extended `markProgrammaticSeek()` window to 3s for the pre-seek path so the MSE-generated `seeking` event at the "reverted" position gets suppressed.
+
+---
+
 # v5.0.20
 
 ### Fix seek-while-playing on Crunchyroll — pre-seek in `CMD:play` for out-of-order events

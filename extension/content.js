@@ -432,6 +432,12 @@
   }
 
   let _programmaticSeek = false; // true while we're doing a seek from a command
+  // Record the target of a pending CMD:play pre-seek so CMD:seek can no-op
+  // instead of re-issuing currentTime= on a now-playing pipeline. MSE on
+  // Crunchyroll reports a stale/reverted currentTime briefly during a big
+  // seek, so the usual "already at pos" check isn't enough.
+  let _preSeekTarget = null;
+  let _preSeekTargetAt = 0;
   // Time-based window during which any seeking/seeked event is treated as
   // programmatic (not user-initiated) and suppressed. More robust than the
   // single-gen suppress() for cases like CMD:play's double seek (target + kick)
@@ -829,7 +835,7 @@
     // separate server broadcasts, so the receiver gets CMD:pause first,
     // then CMD:seek on a paused video (safe for MSE), then CMD:play.
     switch (msg.type) {
-      case "command:play":
+      case "command:play": {
         _log("CMD:play pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
         if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
         _pendingSeekPos = null;
@@ -838,24 +844,48 @@
           _log("CMD:play no-op (already playing)");
           break;
         }
-        // Pre-seek if target differs from current. Crunchyroll's scrubber
-        // fires events in pause→play→seek order, so CMD:play arrives before
-        // CMD:seek. Seeking now (while paused) lands the seek safely on a
-        // paused decoder; the trailing CMD:seek then no-ops. Without this,
-        // .play() starts MSE at the stale position and the subsequent
-        // currentTime= assignment from CMD:seek wedges the pipeline.
-        suppress("playing");
-        if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) > 0.5) {
-          _log("CMD:play pre-seek from", hookedVideo.currentTime, "to", msg.position);
-          markProgrammaticSeek();
-          _programmaticSeek = true;
-          hookedVideo.currentTime = msg.position;
-          _programmaticSeek = false;
+        const needsPreSeek = msg.position != null
+          && Math.abs(hookedVideo.currentTime - msg.position) > 0.5;
+        if (!needsPreSeek) {
+          suppress("playing");
+          hookedVideo.play().catch((e) => {
+            _log("CMD:play play() REJECTED:", e?.message);
+          });
+          break;
         }
-        hookedVideo.play().catch((e) => {
-          _log("CMD:play play() REJECTED:", e?.message);
-        });
+        // Pre-seek + wait-for-seeked before calling .play(). On Crunchyroll
+        // MSE, calling .play() immediately after currentTime= causes MSE to
+        // abort the seek mid-fetch and revert to the last buffered position
+        // (observed in logs: seek to 315.5 "unwound" to 634.64 within 25ms).
+        // The trailing CMD:seek then sees a playing stream at the wrong
+        // position and retries the seek on a playing pipeline → wedge.
+        // Record the target so the trailing CMD:seek (which will arrive
+        // before our seek completes) knows to no-op.
+        _preSeekTarget = msg.position;
+        _preSeekTargetAt = Date.now();
+        _log("CMD:play pre-seek from", hookedVideo.currentTime, "to", msg.position);
+        markProgrammaticSeek(3000);
+        _programmaticSeek = true;
+        hookedVideo.currentTime = msg.position;
+        _programmaticSeek = false;
+
+        let played = false;
+        const doPlay = () => {
+          if (played) return;
+          played = true;
+          hookedVideo.removeEventListener("seeked", doPlay);
+          clearTimeout(playTimer);
+          if (!hookedVideo) return;
+          _log("CMD:play post-seek .play()", "pos=", hookedVideo.currentTime);
+          suppress("playing");
+          hookedVideo.play().catch((e) => {
+            _log("CMD:play play() REJECTED:", e?.message);
+          });
+        };
+        hookedVideo.addEventListener("seeked", doPlay);
+        const playTimer = setTimeout(doPlay, 2000);
         break;
+      }
 
       case "command:pause":
         _log("CMD:pause pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
@@ -876,6 +906,17 @@
         if (msg.position == null) break;
         if (Math.abs(hookedVideo.currentTime - msg.position) < 0.1) {
           _log("CMD:seek no-op (already at pos)");
+          break;
+        }
+        // If a recent CMD:play pre-seek targeted the same position, no-op —
+        // MSE may be briefly reporting a stale currentTime while the seek
+        // completes. Re-issuing currentTime= now (especially if .play()
+        // already flipped paused=false) wedges the pipeline.
+        if (_preSeekTarget != null
+            && Date.now() - _preSeekTargetAt < 3000
+            && Math.abs(msg.position - _preSeekTarget) < 0.5) {
+          _log("CMD:seek no-op (matches recent pre-seek target", _preSeekTarget, ")");
+          _preSeekTarget = null;
           break;
         }
         markProgrammaticSeek();
