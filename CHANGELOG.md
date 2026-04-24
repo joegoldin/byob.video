@@ -2,6 +2,20 @@
 
 ---
 
+# v6.2.2
+
+### Clamp server-side position projection to current media duration
+
+When a room stayed `play_state=:playing` while nobody was actually playing (all tabs buffering, a pause that never got relayed, or a deploy gap where the load-advance jumped past the end), `current_position/1` would keep adding wall-clock elapsed with no upper bound. The next joiner received a "current_time" past the video's duration and, via reconcile, dragged every existing client to the end of the video (`video:ended` fired, queue advanced).
+
+This is not a clock-sync issue. Server uses `System.monotonic_time(:millisecond)` (a large negative baseline) for both `last_sync_at` and `server_time`; the offset subtracts cleanly on the client. The bug was purely a missing duration bound.
+
+- `current_position/1` now clamps to the current media item's duration when known.
+- Load-advance from SQLite clamps to duration as well, so a deploy gap can't resurrect a room with `current_time > duration`.
+- `sync_state_payload` and `handle_in("sync:request_state")` already consume `snapshot(state)`, which funnels through the clamped `current_position/1` — no separate fix needed there.
+
+---
+
 # v6.2.1
 
 ### Route Bitmovin pause/play/seeked events to sync handlers

@@ -178,11 +178,21 @@ defmodule Byob.RoomServer do
           persisted_wall = Map.get(saved, :persisted_wallclock) || now_wall
           elapsed_sec = max(0, now_wall - persisted_wall)
 
-          advanced_time =
+          raw_time =
             if saved.play_state == :playing do
               (saved.current_time || 0) + elapsed_sec
             else
               saved.current_time || 0
+            end
+
+          # Clamp to current media item's duration so a restart-gap or a
+          # stale persisted "playing" state can't land us past the end of
+          # the video (which would trigger newcomers to hard-seek everyone
+          # to the end via reconcile).
+          advanced_time =
+            case current_item_duration(saved) do
+              nil -> raw_time
+              d -> min(raw_time, d)
             end
 
           # Use Map.merge so this also works when `saved` comes from an
@@ -1095,10 +1105,26 @@ defmodule Byob.RoomServer do
 
   defp current_position(%{play_state: :playing} = state) do
     elapsed = (System.monotonic_time(:millisecond) - state.last_sync_at) / 1000
-    state.current_time + elapsed
+    clamp_to_duration(state.current_time + elapsed, state)
   end
 
-  defp current_position(state), do: state.current_time
+  defp current_position(state), do: clamp_to_duration(state.current_time, state)
+
+  defp clamp_to_duration(pos, state) do
+    case current_item_duration(state) do
+      nil -> pos
+      d -> min(pos, d)
+    end
+  end
+
+  defp current_item_duration(%{current_index: nil}), do: nil
+
+  defp current_item_duration(%{current_index: idx, queue: queue}) do
+    case Enum.at(queue, idx) do
+      %{duration: d} when is_number(d) and d > 0 -> d * 1.0
+      _ -> nil
+    end
+  end
 
   # Fetch YouTube metadata. Prefer the Data API (duration + published_at);
   # fall back to oEmbed (title + thumbnail only) if the API isn't configured
