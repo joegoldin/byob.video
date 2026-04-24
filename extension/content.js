@@ -781,10 +781,15 @@
 
     if (needsGesture) return;
 
-    // Ignore stale commands — server_time must be newer than what we have.
-    if (msg.server_time != null && serverRef && msg.server_time <= serverRef.serverTime) {
+    // Ignore stale commands — server_time must be older than what we have.
+    // Uses strict < (not <=) because the server's System.monotonic_time has
+    // 1ms granularity and two broadcasts (e.g. a sync:correction + a
+    // sync:pause) can share the same server_time. If the correction lands
+    // first it bumps serverRef.serverTime to T; the pause arriving with
+    // the same T must still be processed.
+    if (msg.server_time != null && serverRef && msg.server_time < serverRef.serverTime) {
       if (msg.type !== "sync:correction") {
-        _log(`ignoring stale ${msg.type}: server_time=${msg.server_time} <= ${serverRef.serverTime}`);
+        _log(`ignoring stale ${msg.type}: server_time=${msg.server_time} < ${serverRef.serverTime}`);
         return;
       }
     }

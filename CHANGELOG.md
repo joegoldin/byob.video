@@ -2,6 +2,16 @@
 
 ---
 
+# v6.2.10
+
+### Stale-command check uses strict `<` (not `<=`)
+
+Pause propagated to the sender's tab but not to other tabs: everyone rejected the `command:pause` as stale. The server's `System.monotonic_time(:millisecond)` has 1ms granularity, and a `sync:correction` tick + a `sync_pause` broadcast can land in the same millisecond. The correction arrived first (bumping `serverRef.serverTime` to T), then the pause arrived with the same T, and `msg.server_time <= serverRef.serverTime` treated the equal case as stale and dropped it.
+
+Changed the comparison to strict `<`. Equal server_time is now processed — it's the common case when two server events fire on the same ms boundary.
+
+---
+
 # v6.2.9
 
 ### Auto-restore LV connected state after socket drops
