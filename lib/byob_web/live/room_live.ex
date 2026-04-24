@@ -1,7 +1,7 @@
 defmodule ByobWeb.RoomLive do
   use ByobWeb, :live_view
 
-  alias Byob.{RoomManager, RoomServer}
+  alias Byob.{Events, RoomManager, RoomServer}
 
   alias ByobWeb.RoomLive.{
     Comments,
@@ -13,6 +13,16 @@ defmodule ByobWeb.RoomLive do
     UrlPreview,
     Username
   }
+
+  # Cross-boundary handle_event patterns (browser JS → LV). Module attributes
+  # because handle_event/3 pattern matching requires compile-time strings.
+  @ev_video_play Events.ev_video_play()
+  @ev_video_pause Events.ev_video_pause()
+  @ev_video_seek Events.ev_video_seek()
+  @ev_video_ended Events.ev_video_ended()
+  @ev_video_embed_blocked Events.ev_video_embed_blocked()
+  @ev_video_drift_report Events.ev_video_drift_report()
+  @ev_sync_ping Events.in_sync_ping()
 
   def mount(%{"id" => room_id}, _session, socket) do
     if not Regex.match?(~r/^[a-z0-9]{1,16}$/, room_id) do
@@ -106,14 +116,14 @@ defmodule ByobWeb.RoomLive do
         )
 
       # Push full state to client hook for two-step join
-      socket = push_event(socket, "sync:state", sync_state_payload(state, user_id))
+      socket = push_event(socket, Events.sync_state(), sync_state_payload(state, user_id))
 
       # Push SB settings and sponsor segments
-      socket = push_event(socket, "sb:settings", state.sb_settings)
+      socket = push_event(socket, Events.sb_settings(), state.sb_settings)
 
       socket =
         if state.sponsor_segments != [] && current_media do
-          push_event(socket, "sponsor:segments", %{
+          push_event(socket, Events.sponsor_segments(), %{
             segments: state.sponsor_segments,
             duration: current_media.duration || 0,
             video_id: current_media.source_id
@@ -138,7 +148,7 @@ defmodule ByobWeb.RoomLive do
       # Push media info for extension placeholder
       socket =
         if current_media && current_media.source_type == :extension_required do
-          push_event(socket, "ext:media-info", %{
+          push_event(socket, Events.ext_media_info(), %{
             title: current_media.title,
             thumbnail_url: current_media.thumbnail_url,
             url: current_media.url
@@ -189,11 +199,11 @@ defmodule ByobWeb.RoomLive do
   def handle_event("analytics:has_extension", params, socket),
     do: Playback.handle_has_extension(params, socket)
 
-  def handle_event("video:play", params, socket), do: Playback.handle_play(params, socket)
-  def handle_event("video:pause", params, socket), do: Playback.handle_pause(params, socket)
-  def handle_event("video:seek", params, socket), do: Playback.handle_seek(params, socket)
+  def handle_event(@ev_video_play, params, socket), do: Playback.handle_play(params, socket)
+  def handle_event(@ev_video_pause, params, socket), do: Playback.handle_pause(params, socket)
+  def handle_event(@ev_video_seek, params, socket), do: Playback.handle_seek(params, socket)
 
-  def handle_event("video:drift_report", params, socket) do
+  def handle_event(@ev_video_drift_report, params, socket) do
     # Local (browser) player reports its adjusted drift and learned offset so
     # the "Details for nerds" panel can show it next to extension clients.
     user_id = socket.assigns[:user_id]
@@ -235,10 +245,10 @@ defmodule ByobWeb.RoomLive do
     {:noreply, socket}
   end
 
-  def handle_event("video:embed_blocked", params, socket),
+  def handle_event(@ev_video_embed_blocked, params, socket),
     do: Playback.handle_embed_blocked(params, socket)
 
-  def handle_event("video:ended", params, socket), do: Playback.handle_ended(params, socket)
+  def handle_event(@ev_video_ended, params, socket), do: Playback.handle_ended(params, socket)
 
   def handle_event("queue:skip", params, socket), do: Queue.handle_skip(params, socket)
   def handle_event("queue:remove", params, socket), do: Queue.handle_remove(params, socket)
@@ -273,7 +283,7 @@ defmodule ByobWeb.RoomLive do
     {:noreply, socket}
   end
 
-  def handle_event("sync:ping", params, socket), do: Playback.handle_sync_ping(params, socket)
+  def handle_event(@ev_sync_ping, params, socket), do: Playback.handle_sync_ping(params, socket)
 
   # Rounds (roulette / voting)
 

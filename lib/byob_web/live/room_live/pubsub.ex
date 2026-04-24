@@ -6,45 +6,45 @@ defmodule ByobWeb.RoomLive.PubSub do
   import Phoenix.LiveView, only: [push_event: 3]
   import Phoenix.Component, only: [assign: 2]
 
-  alias Byob.RoomServer
+  alias Byob.{Events, RoomServer}
 
   def handle_sync_play(data, socket) do
-    {:noreply, push_event(socket, "sync:play", data)}
+    {:noreply, push_event(socket, Events.sync_play(), data)}
   end
 
   def handle_sync_pause(data, socket) do
-    {:noreply, push_event(socket, "sync:pause", data)}
+    {:noreply, push_event(socket, Events.sync_pause(), data)}
   end
 
   def handle_sync_seek(data, socket) do
-    {:noreply, push_event(socket, "sync:seek", data)}
+    {:noreply, push_event(socket, Events.sync_seek(), data)}
   end
 
   def handle_sync_correction(data, socket) do
-    {:noreply, push_event(socket, "sync:correction", data)}
+    {:noreply, push_event(socket, Events.sync_correction(), data)}
   end
 
   def handle_state_heartbeat(data, socket) do
-    {:noreply, push_event(socket, "sync:heartbeat", data)}
+    {:noreply, push_event(socket, Events.sync_heartbeat(), data)}
   end
 
   def handle_autoplay_countdown(data, socket) do
-    {:noreply, push_event(socket, "sync:autoplay_countdown", data)}
+    {:noreply, push_event(socket, Events.sync_autoplay_countdown(), data)}
   end
 
   def handle_autoplay_cancelled(socket) do
-    {:noreply, push_event(socket, "sync:autoplay_cancelled", %{})}
+    {:noreply, push_event(socket, Events.sync_autoplay_cancelled(), %{})}
   end
 
   def handle_room_presence(%{event: event, username: username}, socket) do
     text =
-      case event do
-        "joined" -> "#{username} joined the room"
-        "ext_closed" -> "#{username} closed their player window"
-        _ -> "#{username} left the room"
+      cond do
+        event == Events.presence_joined() -> "#{username} joined the room"
+        event == Events.presence_ext_closed() -> "#{username} closed their player window"
+        true -> "#{username} left the room"
       end
 
-    {:noreply, push_event(socket, "toast", %{text: text})}
+    {:noreply, push_event(socket, Events.toast(), %{text: text})}
   end
 
   def handle_queue_updated(%{queue: queue, current_index: current_index}, socket) do
@@ -68,7 +68,7 @@ defmodule ByobWeb.RoomLive.PubSub do
     # Push updated media info to JS for extension placeholder
     socket =
       if current_media && current_media.source_type == :extension_required do
-        push_event(socket, "ext:media-info", %{
+        push_event(socket, Events.ext_media_info(), %{
           title: current_media.title,
           thumbnail_url: current_media.thumbnail_url,
           url: current_media.url
@@ -80,7 +80,7 @@ defmodule ByobWeb.RoomLive.PubSub do
     # Push metadata to JS hook so it can update cached title/thumbnail
     socket =
       if current_media && (current_media.title || current_media.thumbnail_url) do
-        push_event(socket, "media:metadata", %{
+        push_event(socket, Events.media_metadata(), %{
           title: current_media.title,
           thumbnail_url: current_media.thumbnail_url
         })
@@ -92,7 +92,7 @@ defmodule ByobWeb.RoomLive.PubSub do
   end
 
   def handle_sponsor_segments(data, socket) do
-    {:noreply, push_event(socket, "sponsor:segments", data)}
+    {:noreply, push_event(socket, Events.sponsor_segments(), data)}
   end
 
   def handle_queue_ended(_data, socket) do
@@ -109,7 +109,7 @@ defmodule ByobWeb.RoomLive.PubSub do
         history: history
       )
 
-    {:noreply, push_event(socket, "queue:ended", %{})}
+    {:noreply, push_event(socket, Events.queue_ended(), %{})}
   end
 
   def handle_video_changed(data, socket) do
@@ -133,16 +133,16 @@ defmodule ByobWeb.RoomLive.PubSub do
         comments_total: nil
       )
 
-    {:noreply, push_event(socket, "video:change", ByobWeb.RoomLive.serialize_media_item(data))}
+    {:noreply, push_event(socket, Events.video_change(), ByobWeb.RoomLive.serialize_media_item(data))}
   end
 
   def handle_sb_settings_updated(sb_settings, socket) do
     {:noreply,
-     socket |> assign(sb_settings: sb_settings) |> push_event("sb:settings", sb_settings)}
+     socket |> assign(sb_settings: sb_settings) |> push_event(Events.sb_settings(), sb_settings)}
   end
 
   def handle_extension_media_info(info, socket) do
-    {:noreply, push_event(socket, "ext:media-info", info)}
+    {:noreply, push_event(socket, Events.ext_media_info(), info)}
   end
 
   def handle_extension_player_state(state, socket) do
@@ -155,7 +155,7 @@ defmodule ByobWeb.RoomLive.PubSub do
         state[:user_id] == current[:user_id]
 
     if should_update do
-      {:noreply, socket |> assign(ext_player: state) |> push_event("ext:player-state", state)}
+      {:noreply, socket |> assign(ext_player: state) |> push_event(Events.ext_player_state(), state)}
     else
       {:noreply, socket}
     end
@@ -196,7 +196,7 @@ defmodule ByobWeb.RoomLive.PubSub do
     socket = assign(socket, activity_log: log)
     # Push toast to client
     socket =
-      push_event(socket, "toast", %{text: ByobWeb.RoomLive.Components.format_log_entry(entry)})
+      push_event(socket, Events.toast(), %{text: ByobWeb.RoomLive.Components.format_log_entry(entry)})
 
     {:noreply, socket}
   end

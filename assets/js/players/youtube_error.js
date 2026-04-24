@@ -4,6 +4,12 @@
  *
  * Error codes: 100 = not found, 101/150 = embedding restricted.
  */
+import { LV_EVT } from "../sync/event_names";
+
+const YT_ERR_NOT_FOUND = 100;
+const YT_ERR_EMBED_DISABLED_1 = 101;
+const YT_ERR_EMBED_DISABLED_2 = 150;
+const EXT_POLL_INTERVAL_MS = 2000;
 
 /**
  * Handle a YouTube IFrame API error event.
@@ -14,7 +20,7 @@
  */
 export function handleYTError(ctx, event) {
   const code = event.data;
-  if (code !== 100 && code !== 101 && code !== 150) return;
+  if (code !== YT_ERR_NOT_FOUND && code !== YT_ERR_EMBED_DISABLED_1 && code !== YT_ERR_EMBED_DISABLED_2) return;
 
   ctx._embedBlocked = true;
   const videoId = ctx.sourceId;
@@ -44,10 +50,10 @@ export function handleYTError(ctx, event) {
         ctx._extPollInterval = null;
         handleYTError(ctx, { data: code });
       }
-    }, 2000);
+    }, EXT_POLL_INTERVAL_MS);
   }
 
-  ctx.pushEvent("video:embed_blocked", { video_id: videoId, url });
+  ctx.pushEvent(LV_EVT.EV_VIDEO_EMBED_BLOCKED, { video_id: videoId, url });
 }
 
 function _buildFallbackUI(title, thumb, url, hasExtension) {

@@ -2,7 +2,25 @@ defmodule ByobWeb.ExtensionChannel do
   use ByobWeb, :channel
 
   require Logger
-  alias Byob.{RoomManager, RoomServer, SyncLog}
+  alias Byob.{Events, RoomManager, RoomServer, SyncLog}
+
+  # Channel IN event names — module attributes because handle_in/3 patterns
+  # require compile-time constants. Sourced from Byob.Events.
+  @in_video_play Events.in_video_play()
+  @in_video_pause Events.in_video_pause()
+  @in_video_seek Events.in_video_seek()
+  @in_video_ended Events.in_video_ended()
+  @in_video_all_closed Events.in_video_all_closed()
+  @in_video_state Events.in_video_state()
+  @in_video_media_info Events.in_video_media_info()
+  @in_video_tab_opened Events.in_video_tab_opened()
+  @in_video_tab_closed Events.in_video_tab_closed()
+  @in_video_ready Events.in_video_ready()
+  @in_video_unready Events.in_video_unready()
+  @in_video_drift Events.in_video_drift()
+  @in_sync_ping Events.in_sync_ping()
+  @in_sync_request_state Events.in_sync_request_state()
+  @in_debug_log Events.in_debug_log()
 
   @impl true
   def join("extension:" <> room_id, params, socket) do
@@ -31,31 +49,31 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   @impl true
-  def handle_in("video:play", %{"position" => position}, socket) do
+  def handle_in(@in_video_play, %{"position" => position}, socket) do
     RoomServer.play(socket.assigns.room_pid, socket.assigns.user_id, position)
     SyncLog.ext_event(socket.assigns.room_id, "play", socket.assigns.user_id)
     {:noreply, socket}
   end
 
-  def handle_in("video:pause", %{"position" => position}, socket) do
+  def handle_in(@in_video_pause, %{"position" => position}, socket) do
     RoomServer.pause(socket.assigns.room_pid, socket.assigns.user_id, position)
     SyncLog.ext_event(socket.assigns.room_id, "pause", socket.assigns.user_id)
     {:noreply, socket}
   end
 
-  def handle_in("video:seek", %{"position" => position}, socket) do
+  def handle_in(@in_video_seek, %{"position" => position}, socket) do
     RoomServer.seek(socket.assigns.room_pid, socket.assigns.user_id, position)
     SyncLog.ext_event(socket.assigns.room_id, "seek", socket.assigns.user_id)
     {:noreply, socket}
   end
 
-  def handle_in("video:ended", %{"index" => index}, socket) do
+  def handle_in(@in_video_ended, %{"index" => index}, socket) do
     RoomServer.video_ended(socket.assigns.room_pid, index)
     SyncLog.ext_event(socket.assigns.room_id, "ended", socket.assigns.user_id)
     {:noreply, socket}
   end
 
-  def handle_in("video:ended", _payload, socket) do
+  def handle_in(@in_video_ended, _payload, socket) do
     # Extension doesn't know the index — use server's current_index
     state = RoomServer.get_state(socket.assigns.room_pid)
 
@@ -66,7 +84,7 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
-  def handle_in("video:all_closed", _payload, socket) do
+  def handle_in(@in_video_all_closed, _payload, socket) do
     # All extension player windows closed — pause so next joiner syncs
     # without autoplay. The ext_closed presence toast is handled by
     # `RoomServer.clear_tab_opened` when the user's last open_tab
@@ -81,7 +99,7 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
-  def handle_in("video:state", payload, socket) do
+  def handle_in(@in_video_state, payload, socket) do
     # Only broadcast playing state, or hooked notification
     # This prevents multiple paused clients from fighting over the placeholder
     is_playing = payload["playing"] || false
@@ -142,7 +160,7 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
-  def handle_in("video:media_info", payload, socket) do
+  def handle_in(@in_video_media_info, payload, socket) do
     # Update the current media item's title/thumbnail with scraped data
     title = payload["title"]
     thumbnail_url = payload["thumbnail_url"]
@@ -167,32 +185,32 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
-  def handle_in("video:tab_opened", payload, socket) do
+  def handle_in(@in_video_tab_opened, payload, socket) do
     tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
     RoomServer.mark_tab_opened(socket.assigns.room_pid, tab_id, socket.assigns.user_id)
     {:noreply, socket}
   end
 
-  def handle_in("video:tab_closed", payload, socket) do
+  def handle_in(@in_video_tab_closed, payload, socket) do
     tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
     RoomServer.clear_tab_opened(socket.assigns.room_pid, tab_id)
     {:noreply, socket}
   end
 
-  def handle_in("video:ready", payload, socket) do
+  def handle_in(@in_video_ready, payload, socket) do
     # Prefix tab_id with ext user_id to make unique across browser instances
     tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
     RoomServer.mark_tab_ready(socket.assigns.room_pid, tab_id, socket.assigns.user_id)
     {:noreply, socket}
   end
 
-  def handle_in("video:unready", payload, socket) do
+  def handle_in(@in_video_unready, payload, socket) do
     tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
     RoomServer.clear_ready_tab(socket.assigns.room_pid, tab_id)
     {:noreply, socket}
   end
 
-  def handle_in("sync:request_state", _payload, socket) do
+  def handle_in(@in_sync_request_state, _payload, socket) do
     state = RoomServer.get_state(socket.assigns.room_pid)
     now = System.monotonic_time(:millisecond)
 
@@ -213,7 +231,7 @@ defmodule ByobWeb.ExtensionChannel do
       }}, socket}
   end
 
-  def handle_in("video:drift", %{"drift_ms" => drift_ms} = payload, socket) do
+  def handle_in(@in_video_drift, %{"drift_ms" => drift_ms} = payload, socket) do
     tab_id = payload["tab_id"] || "?"
     state = RoomServer.get_state(socket.assigns.room_pid)
     now = System.monotonic_time(:millisecond)
@@ -242,13 +260,13 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
-  def handle_in("sync:ping", %{"t1" => t1}, socket) do
+  def handle_in(@in_sync_ping, %{"t1" => t1}, socket) do
     t2 = System.monotonic_time(:millisecond)
     t3 = System.monotonic_time(:millisecond)
     {:reply, {:ok, %{t1: t1, t2: t2, t3: t3}}, socket}
   end
 
-  def handle_in("debug:log", %{"message" => message} = payload, socket) do
+  def handle_in(@in_debug_log, %{"message" => message} = payload, socket) do
     room_id = socket.assigns.room_id
     tab_id = payload["tab_id"] || "?"
     user_id = socket.assigns.user_id |> String.slice(0..7)
@@ -262,58 +280,58 @@ defmodule ByobWeb.ExtensionChannel do
 
   @impl true
   def handle_info({:sync_play, data}, socket) do
-    push(socket, "sync:play", data)
+    push(socket, Events.sync_play(), data)
     {:noreply, socket}
   end
 
   def handle_info({:sync_pause, data}, socket) do
-    push(socket, "sync:pause", data)
+    push(socket, Events.sync_pause(), data)
     {:noreply, socket}
   end
 
   def handle_info({:sync_seek, data}, socket) do
-    push(socket, "sync:seek", data)
+    push(socket, Events.sync_seek(), data)
     {:noreply, socket}
   end
 
   def handle_info({:sync_correction, data}, socket) do
-    push(socket, "sync:correction", data)
+    push(socket, Events.sync_correction(), data)
     {:noreply, socket}
   end
 
   def handle_info({:autoplay_countdown, data}, socket) do
-    push(socket, "autoplay:countdown", data)
+    push(socket, Events.autoplay_countdown(), data)
     {:noreply, socket}
   end
 
   def handle_info({:autoplay_countdown_cancelled, _data}, socket) do
-    push(socket, "autoplay:cancelled", %{})
+    push(socket, Events.autoplay_cancelled(), %{})
     {:noreply, socket}
   end
 
   def handle_info({:ready_count, data}, socket) do
-    push(socket, "ready:count", data)
+    push(socket, Events.ready_count(), data)
     {:noreply, socket}
   end
 
   def handle_info({:room_presence, data}, socket) do
-    push(socket, "room:presence", data)
+    push(socket, Events.room_presence(), data)
     {:noreply, socket}
   end
 
   def handle_info({:queue_updated, %{queue: queue} = data}, socket) do
     serialized = %{data | queue: Enum.map(queue, &serialize_item/1)}
-    push(socket, "queue:updated", serialized)
+    push(socket, Events.queue_updated(), serialized)
     {:noreply, socket}
   end
 
   def handle_info({:video_changed, %{media_item: item} = data}, socket) do
-    push(socket, "video:change", %{data | media_item: serialize_item(item)})
+    push(socket, Events.video_change(), %{data | media_item: serialize_item(item)})
     {:noreply, socket}
   end
 
   def handle_info({:queue_ended, _data}, socket) do
-    push(socket, "queue:ended", %{})
+    push(socket, Events.queue_ended(), %{})
     {:noreply, socket}
   end
 

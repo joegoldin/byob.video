@@ -1,6 +1,7 @@
 defmodule Byob.RoomServer do
   use GenServer
 
+  alias Byob.Events
   alias Byob.RoomServer.Round
   alias Byob.SyncLog
 
@@ -46,6 +47,13 @@ defmodule Byob.RoomServer do
   @autoplay_countdown_ms 5_000
 
   @max_log_entries 200
+
+  # Timing constants
+  @state_heartbeat_interval_ms 5_000
+  @sync_correction_interval_ms 1_000
+  @persist_interval_ms 5_000
+  @rate_limit_reset_interval_ms 5_000
+  @sync_broadcast_debounce_ms 500
 
   def default_sb_settings, do: @default_sb_settings
 
@@ -238,7 +246,7 @@ defmodule Byob.RoomServer do
     state = schedule_rate_limit_reset(state)
     state = schedule_persist(state)
     state = if state.play_state == :playing, do: schedule_sync_correction(state), else: state
-    Process.send_after(self(), :state_heartbeat, 5_000)
+    Process.send_after(self(), :state_heartbeat, @state_heartbeat_interval_ms)
     {:ok, schedule_cleanup(state)}
   end
 
@@ -316,7 +324,7 @@ defmodule Byob.RoomServer do
     # Only toast when a username transitions from "not present" to "present".
     # Re-connects (same user on a different device / after brief drop) stay quiet.
     if not silent and not was_present do
-      broadcast(state, {:room_presence, %{event: "joined", username: username}})
+      broadcast(state, {:room_presence, %{event: Events.presence_joined(), username: username}})
     end
 
     {:reply, {:ok, snapshot(state)}, state}
@@ -365,7 +373,7 @@ defmodule Byob.RoomServer do
       username = get_in(state, [Access.key(:users), closing_owner, Access.key(:username)])
 
       if username do
-        broadcast(state, {:room_presence, %{event: "ext_closed", username: username}})
+        broadcast(state, {:room_presence, %{event: Events.presence_ext_closed(), username: username}})
       end
     end
 
@@ -505,7 +513,7 @@ defmodule Byob.RoomServer do
     # Toast "username left" only if no other connection with the same
     # username is still present.
     if leaving_username && not username_connected?(state, leaving_username) do
-      broadcast(state, {:room_presence, %{event: "left", username: leaving_username}})
+      broadcast(state, {:room_presence, %{event: Events.presence_left(), username: leaving_username}})
     end
 
     {:reply, :ok, state}
@@ -625,7 +633,7 @@ defmodule Byob.RoomServer do
     now = System.monotonic_time(:millisecond)
     last = Map.get(state.last_seek_at, user_id)
 
-    if last != nil and now - last < 500 do
+    if last != nil and now - last < @sync_broadcast_debounce_ms do
       {:reply, {:error, :debounced}, state}
     else
       old_pos = current_position(state)
@@ -1114,7 +1122,7 @@ defmodule Byob.RoomServer do
        }}
     )
 
-    Process.send_after(self(), :state_heartbeat, 5_000)
+    Process.send_after(self(), :state_heartbeat, @state_heartbeat_interval_ms)
     {:noreply, state}
   end
 
@@ -1122,7 +1130,7 @@ defmodule Byob.RoomServer do
     now = System.monotonic_time(:millisecond)
     position = current_position(state)
     broadcast(state, {:sync_correction, %{expected_time: position, server_time: now}})
-    state = %{state | sync_correction_ref: Process.send_after(self(), :sync_correction, 1000)}
+    state = %{state | sync_correction_ref: Process.send_after(self(), :sync_correction, @sync_correction_interval_ms)}
     {:noreply, state}
   end
 
@@ -1586,12 +1594,12 @@ defmodule Byob.RoomServer do
 
   defp schedule_sync_correction(state) do
     state = cancel_sync_correction(state)
-    ref = Process.send_after(self(), :sync_correction, 1000)
+    ref = Process.send_after(self(), :sync_correction, @sync_correction_interval_ms)
     %{state | sync_correction_ref: ref}
   end
 
   defp schedule_rate_limit_reset(state) do
-    ref = Process.send_after(self(), :reset_rate_limits, 5000)
+    ref = Process.send_after(self(), :reset_rate_limits, @rate_limit_reset_interval_ms)
     %{state | rate_limit_ref: ref}
   end
 
@@ -1641,7 +1649,7 @@ defmodule Byob.RoomServer do
   end
 
   defp schedule_persist(state) do
-    Process.send_after(self(), :persist, 5_000)
+    Process.send_after(self(), :persist, @persist_interval_ms)
     state
   end
 

@@ -4,6 +4,7 @@
  * All functions receive the state they need explicitly so this module stays
  * stateless and easy to test.
  */
+import { LV_EVT } from "./sync/event_names";
 
 const CATEGORY_DEFAULTS = {
   sponsor: "auto_skip",
@@ -66,7 +67,7 @@ export function sendSegmentsToEmbed(el, segments, duration) {
   if (iframe) {
     iframe.contentWindow.postMessage(
       {
-        type: "byob:sponsor-segments",
+        type: LV_EVT.PW_SPONSOR_SEGMENTS,
         segments,
         duration,
       },

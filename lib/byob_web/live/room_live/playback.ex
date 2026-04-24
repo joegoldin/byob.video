@@ -8,7 +8,7 @@ defmodule ByobWeb.RoomLive.Playback do
 
   import Phoenix.LiveView, only: [push_event: 3]
 
-  alias Byob.{RoomServer, Analytics}
+  alias Byob.{Analytics, Events, RoomServer}
 
   def handle_play(%{"position" => position}, socket) do
     RoomServer.play(socket.assigns.room_pid, socket.assigns.user_id, position)
@@ -60,6 +60,6 @@ defmodule ByobWeb.RoomLive.Playback do
   def handle_sync_ping(%{"t1" => t1}, socket) do
     t2 = System.monotonic_time(:millisecond)
     t3 = System.monotonic_time(:millisecond)
-    {:noreply, push_event(socket, "sync:pong", %{t1: t1, t2: t2, t3: t3})}
+    {:noreply, push_event(socket, Events.sync_pong(), %{t1: t1, t2: t2, t3: t3})}
   end
 end

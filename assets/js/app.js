@@ -25,6 +25,7 @@ import {LiveSocket} from "phoenix_live_view"
 import {hooks as colocatedHooks} from "phoenix-colocated/byob"
 import topbar from "../vendor/topbar"
 import VideoPlayer from "./hooks/video_player"
+import { LV_EVT } from "./sync/event_names"
 import CopyUrl from "./hooks/copy_url"
 import RouletteWheel from "./hooks/roulette_wheel"
 import RoundTimer from "./hooks/round_timer"
@@ -61,7 +62,7 @@ const ExtOpenBtn = {
         // the user reached us on. Otherwise LAN-access users end up with
         // server_url=http://localhost:4000 which fails on their machine.
         window.postMessage({
-          type: "byob:open-external",
+          type: LV_EVT.PW_OPEN_EXTERNAL,
           url: this.el.dataset.url,
           room_id: this.el.dataset.roomId,
           server_url: window.location.origin,

@@ -9,6 +9,13 @@ import { handleYTError } from "../players/youtube_error";
 import * as SponsorBlock from "../sponsor_block";
 import { showToast, showSkipToast } from "../ui/toasts";
 import { showQueueFinished } from "../ui/queue_finished";
+import { LV_EVT } from "../sync/event_names";
+
+const DRIFT_REPORT_INTERVAL_MS = 1000;
+const PAUSE_ON_LOAD_POLL_MS = 100;
+const PAUSE_ON_LOAD_MAX_ATTEMPTS = 10;
+const VIDEO_CHANGE_RETRY_1_MS = 1000;
+const VIDEO_CHANGE_RETRY_2_MS = 3000;
 
 const VideoPlayer = {
   mounted() {
@@ -40,7 +47,7 @@ const VideoPlayer = {
 
     // Listen for YouTube embed iframe signaling it's ready for segments
     this._embedReadyHandler = (e) => {
-      if (e.data?.type === "byob:embed-ready") {
+      if (e.data?.type === LV_EVT.PW_EMBED_READY) {
         this._sendSegmentsToEmbed();
       }
     };
@@ -55,29 +62,29 @@ const VideoPlayer = {
     window.addEventListener("beforeunload", this._unloadHandler);
 
     // Listen for server events
-    this.handleEvent("sync:state", (state) => this._onSyncState(state));
-    this.handleEvent("sync:play", (data) => this._onSyncPlay(data));
-    this.handleEvent("sync:pause", (data) => this._onSyncPause(data));
-    this.handleEvent("sync:seek", (data) => this._onSyncSeek(data));
-    this.handleEvent("sync:pong", (data) => this.clockSync.handlePong(data));
-    this.handleEvent("sync:correction", (data) => this._onSyncCorrection(data));
-    this.handleEvent("sync:heartbeat", (data) => this._onSyncHeartbeat(data));
-    this.handleEvent("sync:autoplay_countdown", (data) => this._onAutoplayCountdown(data));
-    this.handleEvent("sync:autoplay_cancelled", () => this._hideAutoplayCountdown());
-    this.handleEvent("sponsor:segments", (data) => this._onSponsorSegments(data));
-    this.handleEvent("ext:player-state", (data) => this._onExtPlayerState(data));
-    this.handleEvent("ext:media-info", (data) => this._onExtMediaInfo(data));
-    this.handleEvent("sb:settings", (data) => {
+    this.handleEvent(LV_EVT.SYNC_STATE, (state) => this._onSyncState(state));
+    this.handleEvent(LV_EVT.SYNC_PLAY, (data) => this._onSyncPlay(data));
+    this.handleEvent(LV_EVT.SYNC_PAUSE, (data) => this._onSyncPause(data));
+    this.handleEvent(LV_EVT.SYNC_SEEK, (data) => this._onSyncSeek(data));
+    this.handleEvent(LV_EVT.SYNC_PONG, (data) => this.clockSync.handlePong(data));
+    this.handleEvent(LV_EVT.SYNC_CORRECTION, (data) => this._onSyncCorrection(data));
+    this.handleEvent(LV_EVT.SYNC_HEARTBEAT, (data) => this._onSyncHeartbeat(data));
+    this.handleEvent(LV_EVT.SYNC_AUTOPLAY_COUNTDOWN, (data) => this._onAutoplayCountdown(data));
+    this.handleEvent(LV_EVT.SYNC_AUTOPLAY_CANCELLED, () => this._hideAutoplayCountdown());
+    this.handleEvent(LV_EVT.SPONSOR_SEGMENTS, (data) => this._onSponsorSegments(data));
+    this.handleEvent(LV_EVT.EXT_PLAYER_STATE, (data) => this._onExtPlayerState(data));
+    this.handleEvent(LV_EVT.EXT_MEDIA_INFO, (data) => this._onExtMediaInfo(data));
+    this.handleEvent(LV_EVT.SB_SETTINGS, (data) => {
       this.sbSettings = data;
       this._applySponsorSettingsFull();
     });
-    this.handleEvent("video:change", (data) => this._onVideoChange(data));
-    this.handleEvent("queue:ended", () => this._onQueueEnded());
-    this.handleEvent("media:metadata", (data) => {
+    this.handleEvent(LV_EVT.VIDEO_CHANGE, (data) => this._onVideoChange(data));
+    this.handleEvent(LV_EVT.QUEUE_ENDED, () => this._onQueueEnded());
+    this.handleEvent(LV_EVT.MEDIA_METADATA, (data) => {
       if (data.title) this._lastTitle = data.title;
       if (data.thumbnail_url) this._lastThumb = data.thumbnail_url;
     });
-    this.handleEvent("toast", (data) => showToast(data.text));
+    this.handleEvent(LV_EVT.TOAST, (data) => showToast(data.text));
 
     // Size the player to fit viewport: cap height so aspect-ratio shrinks width
     this._sizePlayer();
@@ -91,12 +98,12 @@ const VideoPlayer = {
       if (!this.player || !this.isReady) return;
       if (!this.clockSync?.isReady?.()) return;
       const state = this.player.getState?.();
-      this.pushEvent("video:drift_report", {
+      this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
         drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
         offset_ms: Math.round(this.reconcile.getOffsetMs?.() || 0),
         playing: state === "playing",
       });
-    }, 1000);
+    }, DRIFT_REPORT_INTERVAL_MS);
   },
 
   reconnected() {
@@ -119,9 +126,9 @@ const VideoPlayer = {
       const position = this.player.getCurrentTime?.();
       if (typeof position === "number" && !isNaN(position)) {
         if (localState === "playing") {
-          this.pushEvent("video:play", { position });
+          this.pushEvent(LV_EVT.EV_VIDEO_PLAY, { position });
         } else if (localState === "paused") {
-          this.pushEvent("video:pause", { position });
+          this.pushEvent(LV_EVT.EV_VIDEO_PAUSE, { position });
         }
       }
     }
@@ -221,13 +228,13 @@ const VideoPlayer = {
             this._pause();
             return;
           }
-          if (this._loadPauseAttempts < 10) {
+          if (this._loadPauseAttempts < PAUSE_ON_LOAD_MAX_ATTEMPTS) {
             this._loadPauseAttempts = (this._loadPauseAttempts || 0) + 1;
-            setTimeout(pauseOnLoad, 100);
+            setTimeout(pauseOnLoad, PAUSE_ON_LOAD_POLL_MS);
           }
         };
         this._loadPauseAttempts = 0;
-        setTimeout(pauseOnLoad, 100);
+        setTimeout(pauseOnLoad, PAUSE_ON_LOAD_POLL_MS);
       } else {
         this._seekTo(state.current_time);
       }
@@ -385,7 +392,7 @@ const VideoPlayer = {
           if (this.suppression.shouldSuppress("playing")) return;
           this.expectedPlayState = "playing";
           const position = this.player.getCurrentTime();
-          this.pushEvent("video:play", { position });
+          this.pushEvent(LV_EVT.EV_VIDEO_PLAY, { position });
           const serverTime = this.clockSync.serverNow();
           this.reconcile.setServerState(position, serverTime, this.clockSync);
           this.reconcile.pauseFor(1000);
@@ -394,20 +401,20 @@ const VideoPlayer = {
           if (this.suppression.shouldSuppress("paused")) return;
           this.expectedPlayState = "paused";
           const position = this.player.getCurrentTime();
-          this.pushEvent("video:pause", { position });
+          this.pushEvent(LV_EVT.EV_VIDEO_PAUSE, { position });
           this.reconcile.stop();
         } else if (stateName === "ended") {
           this.expectedPlayState = null;
           this.reconcile.stop();
           const currentIndex = this.el.dataset.currentIndex;
           if (currentIndex != null) {
-            this.pushEvent("video:ended", { index: parseInt(currentIndex) });
+            this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { index: parseInt(currentIndex) });
           }
         }
       },
       onSeeked: (currentTime) => {
         if (this.suppression.isActive()) return;
-        this.pushEvent("video:seek", { position: currentTime });
+        this.pushEvent(LV_EVT.EV_VIDEO_SEEK, { position: currentTime });
         const serverTime = this.clockSync.serverNow();
         this.reconcile.setServerState(currentTime, serverTime, this.clockSync);
         this.reconcile.pauseFor(1000);
@@ -484,7 +491,7 @@ const VideoPlayer = {
       this.expectedPlayState = "playing";
       window.__byobPlaying = true;
       const position = this.player.getCurrentTime();
-      this.pushEvent("video:play", { position });
+      this.pushEvent(LV_EVT.EV_VIDEO_PLAY, { position });
       // Update own reconcile so it doesn't drift-correct back to old position
       const serverTime = this.clockSync.serverNow();
       this.reconcile.setServerState(position, serverTime, this.clockSync);
@@ -494,7 +501,7 @@ const VideoPlayer = {
       this.expectedPlayState = "paused";
       window.__byobPlaying = false;
       const position = this.player.getCurrentTime();
-      this.pushEvent("video:pause", { position });
+      this.pushEvent(LV_EVT.EV_VIDEO_PAUSE, { position });
       this.reconcile.stop();
     } else if (stateName === "ended") {
       // Stop heartbeat from force-replaying the video
@@ -506,7 +513,7 @@ const VideoPlayer = {
         this._endedFired = true;
         const currentIndex = this.el.dataset.currentIndex;
         if (currentIndex != null) {
-          this.pushEvent("video:ended", { index: parseInt(currentIndex) });
+          this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { index: parseInt(currentIndex) });
         }
       }
     }
@@ -708,7 +715,7 @@ const VideoPlayer = {
       window._byobPlayerWindow = null;
     }
     // Clear extension storage config
-    window.postMessage({ type: "byob:clear-external" }, "*");
+    window.postMessage({ type: LV_EVT.PW_CLEAR_EXTERNAL }, "*");
     // Clear old sponsor data — new segments will arrive via sponsor:segments event
     this._lastSponsorData = null;
     this.sponsorSegments = [];
@@ -832,8 +839,8 @@ const VideoPlayer = {
           this._sendSegmentsToEmbed();
         }
       };
-      setTimeout(retry, 1000);
-      setTimeout(retry, 3000);
+      setTimeout(retry, VIDEO_CHANGE_RETRY_1_MS);
+      setTimeout(retry, VIDEO_CHANGE_RETRY_2_MS);
     }
   },
 
@@ -849,7 +856,7 @@ const VideoPlayer = {
       const jumpThreshold = isPaused ? 1 : 3;
       if (Math.abs(pos - this.lastKnownPosition) > jumpThreshold) {
         if (!this.suppression.isActive()) {
-          this.pushEvent("video:seek", { position: pos });
+          this.pushEvent(LV_EVT.EV_VIDEO_SEEK, { position: pos });
           const serverTime = this.clockSync.serverNow();
           this.reconcile.setServerState(pos, serverTime, this.clockSync);
           this.reconcile.pauseFor(1000);
@@ -866,7 +873,7 @@ const VideoPlayer = {
           this.reconcile.stop();
           const currentIndex = this.el.dataset.currentIndex;
           if (currentIndex != null) {
-            this.pushEvent("video:ended", { index: parseInt(currentIndex) });
+            this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { index: parseInt(currentIndex) });
           }
         }
       } else if (pos < dur - 2) {
@@ -961,9 +968,9 @@ const VideoPlayer = {
           const localState = this.player?.getState?.();
           const pos = this._getCurrentTime();
           if (localState === "playing") {
-            this.pushEvent("video:play", { position: pos });
+            this.pushEvent(LV_EVT.EV_VIDEO_PLAY, { position: pos });
           } else if (localState === "paused") {
-            this.pushEvent("video:pause", { position: pos });
+            this.pushEvent(LV_EVT.EV_VIDEO_PAUSE, { position: pos });
           }
         } catch (_) {}
       }, 200);

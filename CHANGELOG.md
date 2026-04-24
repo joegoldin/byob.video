@@ -2,6 +2,68 @@
 
 ---
 
+# v6.4.0
+
+### Magic-strings + magic-numbers refactor
+
+Every cross-boundary event name (channel, LV push_event, extension port
+message, page-world postMessage) and every meaningful timing/threshold
+constant now lives in one place. A typo in a constant name is a
+compile-time (Elixir) or import-time (JS) error instead of a silent
+sync-breaks-for-no-obvious-reason bug.
+
+**New modules:**
+
+- `lib/byob/events.ex` — `Byob.Events` exposes every event string as a
+  function (`Events.in_video_play/0`, `Events.sync_play/0`, …). Channel
+  `handle_in/3` patterns require compile-time strings, so
+  `ExtensionChannel` binds them to module attributes
+  (`@in_video_play Events.in_video_play()`) and pattern-matches on those.
+- `assets/js/sync/event_names.js` — `LV_EVT` table of every
+  push_event/pushEvent/handle_event string + page-world postMessage type.
+- `extension/content.js` and `extension/background.js` each carry a
+  duplicated `EVT` table (MV3 content scripts can't import modules). Both
+  tables are identical and comment-referenced for sync.
+
+**Server-side conversions:**
+
+- `extension_channel.ex` — all 15 `handle_in/3` heads and 11 `push/3`
+  calls now reference the Events module.
+- `room_server.ex` — presence-event broadcasts (`joined`, `left`,
+  `ext_closed`), timing constants (`@state_heartbeat_interval_ms`,
+  `@sync_correction_interval_ms`, `@persist_interval_ms`,
+  `@rate_limit_reset_interval_ms`, `@sync_broadcast_debounce_ms`).
+- `room_live/pubsub.ex` — every `push_event/3` now uses `Events.*`.
+- `room_live.ex` — cross-boundary handle_event patterns
+  (`@ev_video_play Events.ev_video_play()` style) and sync-state pushes.
+- `room_live/playback.ex` — sync_pong push_event.
+
+**Client-side conversions:**
+
+- `video_player.js` — all 16 `handleEvent`/`pushEvent` calls and the
+  `byob:clear-external` postMessage now reference `LV_EVT`; drift-report
+  interval extracted to `DRIFT_REPORT_INTERVAL_MS`, YouTube pause-on-load
+  retries to `PAUSE_ON_LOAD_*` constants.
+- `sync/clock_sync.js` — `sync:ping` pushEvent uses `LV_EVT.EV_SYNC_PING`.
+- `players/youtube_error.js` — embed error codes (100/101/150) and
+  `video:embed_blocked` now named.
+- `sponsor_block.js`, `app.js` — page-world postMessage types use
+  `LV_EVT.PW_*`.
+
+**Extension-side conversions:**
+
+- `content.js` — all 30+ port postMessages, switch cases, and msg.type
+  comparisons reference `EVT`; presence values (`joined`/`ext_closed`)
+  reference `PRESENCE`. New timing block covers reconcile tick, debounce,
+  guard windows, drift thresholds, rate clamps.
+- `background.js` — all 18 `channel.push`/`channel.on` calls, content
+  dispatch switch, and clock-sync constants now named.
+
+Zero semantic changes — every string and number resolves to the same
+literal value it did before. This is a pure readability + safety pass.
+
+---
+
 # v6.3.0
 
 ### Adaptive drift offset — learn structural latency, converge reported drift to zero

@@ -20,6 +20,59 @@
   const STORAGE_KEY = "watchparty_config";
   const PORT_NAME = "watchparty";
 
+  // Named event strings. Mirror Byob.Events on the server and the same table
+  // duplicated in extension/background.js (MV3 content scripts can't import).
+  // Group by flow direction.
+  const EVT = Object.freeze({
+    // content.js → background.js (port.postMessage / chrome.runtime.sendMessage)
+    CONNECT: "connect",
+    DEBUG_LOG: "debug:log",
+    VIDEO_HOOKED: "video:hooked",
+    VIDEO_STATE: "video:state",
+    VIDEO_PLAY: "video:play",
+    VIDEO_PAUSE: "video:pause",
+    VIDEO_SEEK: "video:seek",
+    VIDEO_ENDED: "video:ended",
+    VIDEO_READY: "video:ready",
+    VIDEO_REQUEST_SYNC: "video:request-sync",
+
+    // background.js → content.js (port message)
+    COMMAND_PLAY: "command:play",
+    COMMAND_PAUSE: "command:pause",
+    COMMAND_SEEK: "command:seek",
+    COMMAND_INITIAL_STATE: "command:initial-state",
+    COMMAND_SYNCED: "command:synced",
+    SYNC_CORRECTION: "sync:correction",
+    AUTOPLAY_COUNTDOWN: "autoplay:countdown",
+    AUTOPLAY_CANCELLED: "autoplay:cancelled",
+
+    // Extension-internal broadcasts (chrome.runtime.sendMessage)
+    BYOB_VIDEO_HOOKED: "byob:video-hooked",
+    BYOB_USER_ACTIVE: "byob:user-active",
+    BYOB_CHANNEL_READY: "byob:channel-ready",
+    BYOB_CLOCK_SYNC: "byob:clock-sync",
+    BYOB_PRESENCE: "byob:presence",
+    BYOB_BAR_UPDATE: "byob:bar-update",
+    BYOB_READY_COUNT: "byob:ready-count",
+    BYOB_EMBED_READY: "byob:embed-ready",
+
+    // Page-world CustomEvents (window.postMessage) — contract with
+    // assets/js (LiveView). Matching literals live in assets/js/app.js,
+    // assets/js/hooks/video_player.js, assets/js/sponsor_block.js.
+    BYOB_CLEAR_EXTERNAL: "byob:clear-external",
+    BYOB_OPEN_EXTERNAL: "byob:open-external",
+    BYOB_RELAY: "byob:relay",
+    BYOB_SPONSOR_SEGMENTS: "byob:sponsor-segments",
+  });
+
+  // Presence event values inside EVT.BYOB_PRESENCE payloads (mirror
+  // Byob.Events.presence_*).
+  const PRESENCE = Object.freeze({
+    JOINED: "joined",
+    LEFT: "left",
+    EXT_CLOSED: "ext_closed",
+  });
+
   // ── State ─────────────────────────────────────────────────────────────────
   let port = null;
   let hookedVideo = null;
@@ -43,6 +96,30 @@
   const _OFFSET_ALPHA = 0.02;
   const _OFFSET_CAP_MS = 500;
   const _OFFSET_WARMUP = 10;
+
+  // ── Timing constants (ms) ─────────────────────────────────────────────────
+  const RECONCILE_TICK_MS = 500;
+  const STATE_REPORT_TICK_MS = 500;
+  const PLAY_PAUSE_DEBOUNCE_MS = 500;
+  const SEEK_COMMAND_GUARD_MS = 500;
+  const SEEK_HARD_COMMAND_GUARD_MS = 2000;
+  const CMD_SEEK_COMMAND_GUARD_MS = 1000;
+  const COMMAND_GUARD_MAX_MS = 5000;
+  const COMMAND_GUARD_CHECK_MS = 200;
+  const MISMATCH_ACCEPT_MS = 10000;
+  const MISMATCH_ENFORCE_MS = 2000;
+  const RECENT_SEEK_WINDOW_MS = 5000;
+  const ACTIVATE_RETRY_MS = 500;
+  const TOAST_FADE_MS = 250;
+  const COUNTDOWN_TICK_MS = 500;
+  const SYNC_BAR_RETRY_MS = 500;
+  const DRIFT_HARD_THRESHOLD_S = 5.0;
+  const DRIFT_RATE_MIN = 0.9;
+  const DRIFT_RATE_MAX = 1.1;
+  const DRIFT_RATE_TIME_CONSTANT = 5;
+  const HARD_SEEK_GIVE_UP_ATTEMPTS = 2;
+  const VIDEO_ENDED_TAIL_S = 3;
+  const MIN_ENDED_DURATION_S = 60;
   // Echo suppression is handled entirely by commandGuard:
   //   - After any server command (play/pause/seek/synced), commandGuard is
   //     armed and auto-releases once the video's actual state matches what
@@ -67,7 +144,7 @@
     if (port) {
       try {
         const msg = args.map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ");
-        port.postMessage({ type: "debug:log", message: msg });
+        port.postMessage({ type: EVT.DEBUG_LOG, message: msg });
       } catch (_) {}
     }
   }
@@ -177,11 +254,11 @@
     window.addEventListener("message", (e) => {
       if (e.origin !== window.location.origin) return;
       try {
-        if (e.data?.type === "byob:clear-external") {
+        if (e.data?.type === EVT.BYOB_CLEAR_EXTERNAL) {
           chrome.storage.local.remove(STORAGE_KEY);
           return;
         }
-        if (e.data?.type === "byob:open-external") {
+        if (e.data?.type === EVT.BYOB_OPEN_EXTERNAL) {
           chrome.storage.local.set({
             [STORAGE_KEY]: {
               room_id: e.data.room_id,
@@ -224,7 +301,7 @@
           }
         }
       } catch (_) {}
-      setTimeout(() => tryActivate(attempt + 1), 500);
+      setTimeout(() => tryActivate(attempt + 1), ACTIVATE_RETRY_MS);
     };
     tryActivate(0);
   }
@@ -248,7 +325,7 @@
     }
 
     port.postMessage({
-      type: "connect",
+      type: EVT.CONNECT,
       room_id: roomId,
       server_url: serverUrl,
       token: token,
@@ -258,7 +335,7 @@
     port.onMessage.addListener(handleSWMessage);
 
     window.addEventListener("message", (e) => {
-      if (e.data?.type === "byob:relay" && e.data.payload && port) {
+      if (e.data?.type === EVT.BYOB_RELAY && e.data.payload && port) {
         port.postMessage(e.data.payload);
       }
     });
@@ -346,10 +423,10 @@
 
     const meta = scrapePageMetadata();
     if (port) {
-      port.postMessage({ type: "video:hooked", duration: video.duration || 0, ...meta });
+      port.postMessage({ type: EVT.VIDEO_HOOKED, duration: video.duration || 0, ...meta });
     }
     if (!window.location.hostname.includes("youtube.com")) {
-      try { chrome.runtime.sendMessage({ type: "byob:video-hooked" }); } catch (_) {}
+      try { chrome.runtime.sendMessage({ type: EVT.BYOB_VIDEO_HOOKED }); } catch (_) {}
     }
 
     if (needsGesture) {
@@ -384,7 +461,7 @@
       _lastPolledPaused = paused;
 
       const msg = {
-        type: "video:state",
+        type: EVT.VIDEO_STATE,
         position: pos,
         duration: dur,
         playing,
@@ -393,16 +470,16 @@
       if (synced && port) port.postMessage(msg);
       if (port) {
         port.postMessage({
-          type: "byob:bar-update",
+          type: EVT.BYOB_BAR_UPDATE,
           position: pos, duration: dur, playing,
         });
       }
 
-      if (synced && !_endedReported && playing && isFinite(dur) && dur > 60 && pos >= dur - 3) {
+      if (synced && !_endedReported && playing && isFinite(dur) && dur > MIN_ENDED_DURATION_S && pos >= dur - VIDEO_ENDED_TAIL_S) {
         _endedReported = true;
-        if (port) port.postMessage({ type: "video:ended" });
+        if (port) port.postMessage({ type: EVT.VIDEO_ENDED });
       }
-    }, 500);
+    }, STATE_REPORT_TICK_MS);
   }
 
   function unhookVideo() {
@@ -440,7 +517,7 @@
 
   function markUserActive() {
     _lastUserActive = Date.now();
-    try { chrome.runtime.sendMessage({ type: "byob:user-active", t: _lastUserActive }); } catch (_) {}
+    try { chrome.runtime.sendMessage({ type: EVT.BYOB_USER_ACTIVE, t: _lastUserActive }); } catch (_) {}
   }
 
   const _userActiveEvents = ["click", "keydown", "pointerdown", "touchstart"];
@@ -471,9 +548,9 @@
       if (!hookedVideo || hookedVideo.paused || commandGuard) return;
       expectedPlayState = State.PLAYING;
       updateServerRef(hookedVideo.currentTime, State.PLAYING);
-      if (port) port.postMessage({ type: "video:play", position: hookedVideo.currentTime });
+      if (port) port.postMessage({ type: EVT.VIDEO_PLAY, position: hookedVideo.currentTime });
       _log("play →server", hookedVideo.currentTime.toFixed(2));
-    }, 500);
+    }, PLAY_PAUSE_DEBOUNCE_MS);
   }
 
   function onVideoPause() {
@@ -489,9 +566,9 @@
       if (!hookedVideo || !hookedVideo.paused || commandGuard) return;
       expectedPlayState = State.PAUSED;
       updateServerRef(hookedVideo.currentTime, State.PAUSED);
-      if (port) port.postMessage({ type: "video:pause", position: hookedVideo.currentTime });
+      if (port) port.postMessage({ type: EVT.VIDEO_PAUSE, position: hookedVideo.currentTime });
       _log("pause →server", hookedVideo.currentTime.toFixed(2));
-    }, 500);
+    }, PLAY_PAUSE_DEBOUNCE_MS);
   }
 
   function onVideoSeeked() {
@@ -503,9 +580,9 @@
     lastSeekAt = Date.now();
     _hardSeekFailures = 0;
     updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
-    if (port) port.postMessage({ type: "video:seek", position: hookedVideo.currentTime });
+    if (port) port.postMessage({ type: EVT.VIDEO_SEEK, position: hookedVideo.currentTime });
     if (commandGuard) clearTimeout(commandGuard);
-    commandGuard = setTimeout(() => { commandGuard = null; }, 500);
+    commandGuard = setTimeout(() => { commandGuard = null; }, SEEK_COMMAND_GUARD_MS);
     _log("seek →server", hookedVideo.currentTime.toFixed(2));
   }
 
@@ -548,16 +625,16 @@
       if (actual !== expectedPlayState && expectedPlayState) {
         if (_mismatchSince === 0) _mismatchSince = now;
         const dur = now - _mismatchSince;
-        if (dur > 10000) {
+        if (dur > MISMATCH_ACCEPT_MS) {
           _log(`reconcile: accepting site state after ${dur}ms mismatch, actual=${actual} pos=${hookedVideo.currentTime.toFixed(2)}`);
           expectedPlayState = actual;
           updateServerRef(hookedVideo.currentTime, actual);
           if (port) {
-            const evt = actual === State.PLAYING ? "video:play" : "video:pause";
+            const evt = actual === State.PLAYING ? EVT.VIDEO_PLAY : EVT.VIDEO_PAUSE;
             port.postMessage({ type: evt, position: hookedVideo.currentTime });
           }
           _mismatchSince = 0;
-        } else if (dur > 2000) {
+        } else if (dur > MISMATCH_ENFORCE_MS) {
           _log(`reconcile: enforce expected=${expectedPlayState} actual=${actual} (mismatch ${Math.round(dur)}ms)`);
           if (expectedPlayState === State.PAUSED && !hookedVideo.paused) {
             if (bitmovinAdapter.isReady()) bitmovinAdapter.pause();
@@ -572,7 +649,7 @@
         _mismatchSince = 0;
       }
 
-      const recentSeek = (now - lastSeekAt) < 5000;
+      const recentSeek = (now - lastSeekAt) < RECENT_SEEK_WINDOW_MS;
       if (!clockSynced) return;
 
       // Paused: don't auto-correct position. User seeks handle position,
@@ -611,27 +688,27 @@
       if (absDrift < deadZone) {
         if (hookedVideo.playbackRate !== 1.0) hookedVideo.playbackRate = 1.0;
         _hardSeekFailures = 0;
-      } else if (absDrift > 5.0 && !recentSeek && _hardSeekFailures < 2) {
+      } else if (absDrift > DRIFT_HARD_THRESHOLD_S && !recentSeek && _hardSeekFailures < HARD_SEEK_GIVE_UP_ATTEMPTS) {
         _log(`reconcile HARD SEEK drift=${drift.toFixed(1)}s expected=${expectedPos.toFixed(1)} local=${localPos.toFixed(1)} attempt=${_hardSeekFailures + 1}`);
         _hardSeekFailures++;
         lastSeekAt = now;
         if (commandGuard) clearTimeout(commandGuard);
-        commandGuard = setTimeout(() => { commandGuard = null; }, 2000);
+        commandGuard = setTimeout(() => { commandGuard = null; }, SEEK_HARD_COMMAND_GUARD_MS);
         seekTo(expectedPos);
         hookedVideo.playbackRate = 1.0;
-      } else if (absDrift > 5.0 && _hardSeekFailures >= 2) {
+      } else if (absDrift > DRIFT_HARD_THRESHOLD_S && _hardSeekFailures >= HARD_SEEK_GIVE_UP_ATTEMPTS) {
         _log(`reconcile: giving up on hard seek, accepting site pos=${localPos.toFixed(1)}`);
         _hardSeekFailures = 0;
         updateServerRef(localPos, expectedPlayState);
-        if (synced && port) port.postMessage({ type: "video:seek", position: localPos });
+        if (synced && port) port.postMessage({ type: EVT.VIDEO_SEEK, position: localPos });
         lastSeekAt = now;
       } else if (absDrift > deadZone) {
-        // Proportional rate adjustment 0.9–1.1x. Negative drift (behind) →
-        // speed up; positive (ahead) → slow down.
-        const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
+        // Proportional rate adjustment. Negative drift (behind) → speed up;
+        // positive (ahead) → slow down. Clamped to DRIFT_RATE_MIN/MAX.
+        const rate = Math.max(DRIFT_RATE_MIN, Math.min(DRIFT_RATE_MAX, 1.0 - drift / DRIFT_RATE_TIME_CONSTANT));
         hookedVideo.playbackRate = rate;
       }
-    }, 500);
+    }, RECONCILE_TICK_MS);
   }
 
   function stopReconcile() {
@@ -677,17 +754,18 @@
   // Minimum guard window. Default 300ms for discrete commands (play/pause).
   // Synced uses a longer minimum so a site's autoplay that fires ~3s after
   // the sync doesn't propagate as a play event through onVideoPlay.
-  let _guardMinMs = 300;
-  function startCommandGuard(minMs = 300) {
+  const GUARD_MIN_DEFAULT_MS = 300;
+  let _guardMinMs = GUARD_MIN_DEFAULT_MS;
+  function startCommandGuard(minMs = GUARD_MIN_DEFAULT_MS) {
     if (commandGuard) clearTimeout(commandGuard);
     _guardStartedAt = Date.now();
     _guardMinMs = minMs;
-    commandGuard = setTimeout(checkGuard, Math.min(minMs, 300));
+    commandGuard = setTimeout(checkGuard, Math.min(minMs, GUARD_MIN_DEFAULT_MS));
   }
 
   function checkGuard() {
     const elapsed = Date.now() - _guardStartedAt;
-    if (elapsed > 5000 || !hookedVideo || !expectedPlayState) {
+    if (elapsed > COMMAND_GUARD_MAX_MS || !hookedVideo || !expectedPlayState) {
       commandGuard = null;
       return;
     }
@@ -697,25 +775,25 @@
     if (elapsed >= _guardMinMs && actual === expectedPlayState) {
       commandGuard = null;
     } else {
-      commandGuard = setTimeout(checkGuard, 200);
+      commandGuard = setTimeout(checkGuard, COMMAND_GUARD_CHECK_MS);
     }
   }
 
   // ── SW message handling ───────────────────────────────────────────────────
   function handleSWMessage(msg) {
-    if (msg.type === "byob:channel-ready" && window === window.top) {
+    if (msg.type === EVT.BYOB_CHANNEL_READY && window === window.top) {
       if (!synced && needsGesture) {
         updateSyncBarStatus("searching");
         showJoinToast("Play the video to start syncing");
       }
       return;
     }
-    if (msg.type === "byob:video-hooked" && window === window.top) {
+    if (msg.type === EVT.BYOB_VIDEO_HOOKED && window === window.top) {
       if (!window.location.hostname.includes("youtube.com")) injectSyncBar();
       return;
     }
 
-    if (msg.type === "byob:clock-sync") {
+    if (msg.type === EVT.BYOB_CLOCK_SYNC) {
       clockOffset = msg.offset;
       clockRtt = msg.rtt;
       clockSynced = true;
@@ -723,40 +801,40 @@
       return;
     }
 
-    if (msg.type === "byob:user-active") {
+    if (msg.type === EVT.BYOB_USER_ACTIVE) {
       if (msg.t && msg.t > _lastUserActive) _lastUserActive = msg.t;
       return;
     }
 
-    if (msg.type === "byob:presence" && window === window.top) {
+    if (msg.type === EVT.BYOB_PRESENCE && window === window.top) {
       let text;
-      if (msg.event === "joined") text = `${msg.username} joined the room`;
-      else if (msg.event === "ext_closed") text = `${msg.username} closed their player window`;
+      if (msg.event === PRESENCE.JOINED) text = `${msg.username} joined the room`;
+      else if (msg.event === PRESENCE.EXT_CLOSED) text = `${msg.username} closed their player window`;
       else text = `${msg.username} left the room`;
       showPresenceToast(text);
       return;
     }
 
-    if (msg.type === "byob:bar-update" && window === window.top && synced) {
+    if (msg.type === EVT.BYOB_BAR_UPDATE && window === window.top && synced) {
       renderBarUpdate(msg);
       return;
     }
 
-    if (msg.type === "autoplay:countdown" && window === window.top) {
+    if (msg.type === EVT.AUTOPLAY_COUNTDOWN && window === window.top) {
       startCountdown(msg.duration_ms || 5000);
       return;
     }
-    if (msg.type === "autoplay:cancelled" && window === window.top) {
+    if (msg.type === EVT.AUTOPLAY_CANCELLED && window === window.top) {
       clearCountdown();
       return;
     }
 
-    if (msg.type === "command:initial-state") {
+    if (msg.type === EVT.COMMAND_INITIAL_STATE) {
       tryAutoSync();
       return;
     }
 
-    if (msg.type === "command:synced") {
+    if (msg.type === EVT.COMMAND_SYNCED) {
       const wasSynced = synced;
       synced = true;
       needsGesture = false;
@@ -780,7 +858,7 @@
         startCommandGuard();
         applySyncedState(msg);
         updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
-        if (!wasSynced && port) port.postMessage({ type: "video:ready" });
+        if (!wasSynced && port) port.postMessage({ type: EVT.VIDEO_READY });
         startReconcile();
       } else if (window === window.top) {
         updateSyncBarStatus(expectedPlayState === State.PAUSED ? "paused" : "playing");
@@ -788,7 +866,7 @@
       return;
     }
 
-    if (msg.type === "byob:ready-count" && window === window.top) {
+    if (msg.type === EVT.BYOB_READY_COUNT && window === window.top) {
       updateReadyCount(msg.ready, msg.has_tab, msg.total, msg.needs_open || [], msg.needs_play || []);
       return;
     }
@@ -797,7 +875,7 @@
 
     // If waiting for gesture and a play command arrives, try playing —
     // the browser may allow it if the user interacted with the page.
-    if (needsGesture && msg.type === "command:play") {
+    if (needsGesture && msg.type === EVT.COMMAND_PLAY) {
       _log("cmd:play while needsGesture — attempting play()");
       if (msg.position != null) seekTo(msg.position);
       const p = bitmovinAdapter.isReady() ? null : hookedVideo.play();
@@ -824,14 +902,14 @@
     // first it bumps serverRef.serverTime to T; the pause arriving with
     // the same T must still be processed.
     if (msg.server_time != null && serverRef && msg.server_time < serverRef.serverTime) {
-      if (msg.type !== "sync:correction") {
+      if (msg.type !== EVT.SYNC_CORRECTION) {
         _log(`ignoring stale ${msg.type}: server_time=${msg.server_time} < ${serverRef.serverTime}`);
         return;
       }
     }
 
     switch (msg.type) {
-      case "command:play":
+      case EVT.COMMAND_PLAY:
         _log("cmd:play pos=", msg.position, "server_time=", msg.server_time);
         // Genuine play command from server — any locally-pending pause is
         // stale and would echo back incorrectly.
@@ -848,7 +926,7 @@
         startReconcile();
         break;
 
-      case "command:pause":
+      case EVT.COMMAND_PAUSE:
         _log("cmd:pause pos=", msg.position, "server_time=", msg.server_time);
         if (_pendingPlayPause) { clearTimeout(_pendingPlayPause); _pendingPlayPause = null; }
         expectedPlayState = State.PAUSED;
@@ -863,16 +941,16 @@
         startReconcile();
         break;
 
-      case "command:seek":
+      case EVT.COMMAND_SEEK:
         _log("cmd:seek pos=", msg.position, "server_time=", msg.server_time);
         lastSeekAt = Date.now();
         updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time);
         if (commandGuard) clearTimeout(commandGuard);
-        commandGuard = setTimeout(() => { commandGuard = null; }, 1000);
+        commandGuard = setTimeout(() => { commandGuard = null; }, CMD_SEEK_COMMAND_GUARD_MS);
         seekTo(msg.position);
         break;
 
-      case "sync:correction":
+      case EVT.SYNC_CORRECTION:
         // Server periodic refresh (every few seconds). Updates reference so
         // reconcile can drift-correct. No direct player action here.
         if (msg.expected_time != null) {
@@ -900,7 +978,7 @@
   function requestSync() {
     hideJoinToast();
     updateSyncBarStatus("syncing");
-    if (port) port.postMessage({ type: "video:request-sync" });
+    if (port) port.postMessage({ type: EVT.VIDEO_REQUEST_SYNC });
   }
 
   let _nativePlayListener = null;
@@ -992,7 +1070,7 @@
       _presenceToastHideTimer = null;
       toast.style.opacity = "0";
       toast.style.transform = "translateX(-50%) translateY(10px)";
-      setTimeout(() => { if (toast.parentNode) toast.remove(); }, 250);
+      setTimeout(() => { if (toast.parentNode) toast.remove(); }, TOAST_FADE_MS);
     }, 2500);
   }
 
@@ -1033,9 +1111,9 @@
     playPauseBtn.addEventListener("click", () => {
       if (!port) return;
       if (playPauseBtn.dataset.playing === "true") {
-        port.postMessage({ type: "video:pause", position: parseFloat(playPauseBtn.dataset.position || 0) });
+        port.postMessage({ type: EVT.VIDEO_PAUSE, position: parseFloat(playPauseBtn.dataset.position || 0) });
       } else {
-        port.postMessage({ type: "video:play", position: parseFloat(playPauseBtn.dataset.position || 0) });
+        port.postMessage({ type: EVT.VIDEO_PLAY, position: parseFloat(playPauseBtn.dataset.position || 0) });
       }
     });
 
@@ -1050,7 +1128,7 @@
       const rect = progressWrap.getBoundingClientRect();
       const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const dur = parseFloat(progressWrap.dataset.duration || 0);
-      if (dur > 0 && port) port.postMessage({ type: "video:seek", position: frac * dur });
+      if (dur > 0 && port) port.postMessage({ type: EVT.VIDEO_SEEK, position: frac * dur });
     });
 
     const time = document.createElement("span");
@@ -1196,7 +1274,7 @@
       if (remaining <= 0) clearCountdown();
     };
     update();
-    _countdownInterval = setInterval(update, 500);
+    _countdownInterval = setInterval(update, COUNTDOWN_TICK_MS);
   }
   function clearCountdown() {
     if (_countdownInterval) { clearInterval(_countdownInterval); _countdownInterval = null; }
@@ -1270,7 +1348,7 @@
     if (!window.location.pathname.startsWith("/embed/")) return;
 
     window.addEventListener("message", (e) => {
-      if (!e.data || e.data.type !== "byob:sponsor-segments") return;
+      if (!e.data || e.data.type !== EVT.BYOB_SPONSOR_SEGMENTS) return;
       const { segments, duration } = e.data;
       if (!segments || !duration) return;
 
@@ -1282,7 +1360,7 @@
           document.querySelector(".ytProgressBarLineProgressBarLine") ||
           document.querySelector(".ytp-progress-bar");
         if (!progressBar) {
-          setTimeout(() => tryInject(attempt + 1), 500);
+          setTimeout(() => tryInject(attempt + 1), SYNC_BAR_RETRY_MS);
           return;
         }
         injectSegments(progressBar, segments, duration);
@@ -1290,7 +1368,7 @@
       tryInject(0);
     });
 
-    try { window.parent.postMessage({ type: "byob:embed-ready" }, "*"); } catch (_) {}
+    try { window.parent.postMessage({ type: EVT.BYOB_EMBED_READY }, "*"); } catch (_) {}
   }
 
   function injectSegments(progressBar, segments, duration) {

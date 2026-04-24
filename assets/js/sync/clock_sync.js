@@ -1,4 +1,6 @@
 // NTP-style clock synchronization over LiveView push_event/handleEvent
+import { LV_EVT } from "./event_names";
+
 const MAINTENANCE_INTERVAL_MS = 10000;
 const BURST_PROBE_GAP_MS = 100;
 const INITIAL_BURST_SIZE = 5;
@@ -103,7 +105,7 @@ export class ClockSync {
   }
 
   _sendPing() {
-    this.pushEvent("sync:ping", { t1: performance.now() });
+    this.pushEvent(LV_EVT.EV_SYNC_PING, { t1: performance.now() });
   }
 
   _computeOffset() {
