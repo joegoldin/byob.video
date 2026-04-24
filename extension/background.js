@@ -11,6 +11,12 @@ let initialRoomState = null;
 let lastConnectAt = 0;
 let autoplayCountdownActive = false;
 
+// NTP-style clock sync state.
+// serverMonotonicMs ≈ Date.now() + clockOffset
+let clockOffset = 0;
+let clockRtt = 0;
+let clockSyncTimer = null;
+
 // Listen for port connections from content scripts
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== "watchparty") return;
@@ -60,6 +66,9 @@ function handleContentMessage(msg, port, tabId) {
         // Already connected — just notify this port it's ready
         port.postMessage({ type: "byob:channel-ready" });
         if (lastReadyCount) port.postMessage(lastReadyCount);
+        // Share the current clock offset so the reconcile loop has a
+        // baseline before the next 30s maintenance tick fires.
+        port.postMessage({ type: "byob:clock-sync", offset: clockOffset, rtt: clockRtt });
       } else {
         connectToRoom(msg.room_id, msg.server_url, msg.token, msg.username);
       }
@@ -81,6 +90,7 @@ function handleContentMessage(msg, port, tabId) {
             type: "command:initial-state",
             play_state: resp.play_state,
             current_time: resp.current_time,
+            server_time: resp.server_time,
           });
         });
       }
@@ -88,30 +98,20 @@ function handleContentMessage(msg, port, tabId) {
 
     case "video:request-sync":
       // User interacted — request fresh state and apply it.
-      // Delay synced flag so the seek/play commands land before the
-      // content script starts sending its own events to the server.
       if (channel) {
         channel.push("sync:request_state", {}).receive("ok", (resp) => {
           console.log("[byob] Fresh state for sync:", resp);
-          if (resp.play_state === "playing") {
-            port.postMessage({ type: "command:play", position: resp.current_time });
-          } else {
-            // Just pause — the pause handler also seeks to the target
-            // position. A separate CMD:seek would hit the drmSafeSeek
-            // playing-branch (shouldPlay=true) and incorrectly resume
-            // playback before CMD:pause arrives.
-            port.postMessage({ type: "command:pause", position: resp.current_time });
-          }
-          // Wait for seek to settle before enabling bidirectional sync.
-          // Broadcast to same-tab ports only (top frame + iframe) so the
-          // top frame can hide the toast without affecting other tabs.
-          setTimeout(() => {
-            if (tabId != null) {
-              broadcastToTab(tabId, { type: "command:synced" });
-            } else {
-              broadcastToContentScripts({ type: "command:synced" });
-            }
-          }, 500);
+          // Broadcast command:synced directly — the content script will
+          // seek + play/pause itself based on the play_state/current_time.
+          // (Stage-2 simplification: no preceding CMD:play/pause dance.)
+          const synced = {
+            type: "command:synced",
+            play_state: resp.play_state,
+            current_time: resp.current_time,
+            server_time: resp.server_time,
+          };
+          if (tabId != null) broadcastToTab(tabId, synced);
+          else broadcastToContentScripts(synced);
         });
       }
       break;
@@ -165,6 +165,45 @@ function closeExtensionTabs() {
   }
 }
 
+// NTP-style clock sync — burst of 5 pings, take median-RTT offset as the
+// current clock offset. Runs on channel join + every 30s while connected.
+function doClockSync() {
+  if (!channel) return;
+  const samples = [];
+  let remaining = 5;
+  const sendPing = () => {
+    if (!channel) return;
+    const t1 = Date.now();
+    channel.push("sync:ping", { t1 }).receive("ok", (resp) => {
+      const t4 = Date.now();
+      const { t2, t3 } = resp;
+      const rtt = (t4 - t1) - (t3 - t2);
+      const offset = ((t2 - t1) + (t3 - t4)) / 2;
+      samples.push({ rtt, offset });
+      remaining--;
+      if (remaining > 0) {
+        setTimeout(sendPing, 100);
+      } else {
+        samples.sort((a, b) => a.rtt - b.rtt);
+        const median = samples[Math.floor(samples.length / 2)];
+        clockOffset = median.offset;
+        clockRtt = median.rtt;
+        console.log(`[byob] clock sync: offset=${clockOffset}ms rtt=${clockRtt}ms`);
+        broadcastToContentScripts({ type: "byob:clock-sync", offset: clockOffset, rtt: clockRtt });
+      }
+    });
+  };
+  sendPing();
+}
+
+function startClockSyncMaintenance() {
+  if (clockSyncTimer) clearInterval(clockSyncTimer);
+  clockSyncTimer = setInterval(doClockSync, 30000);
+}
+function stopClockSyncMaintenance() {
+  if (clockSyncTimer) { clearInterval(clockSyncTimer); clockSyncTimer = null; }
+}
+
 function connectToRoom(roomId, serverUrl, token, username) {
   // Don't reconnect if already connected to this room
   if (currentRoomId === roomId && channel) return;
@@ -211,23 +250,26 @@ function connectToRoom(roomId, serverUrl, token, username) {
   channel.on("sync:play", (data) => broadcastToContentScripts({
     type: "command:play",
     position: data.time,
+    server_time: data.server_time,
   }));
 
   channel.on("sync:pause", (data) => broadcastToContentScripts({
     type: "command:pause",
     position: data.time,
+    server_time: data.server_time,
   }));
 
   channel.on("sync:seek", (data) => broadcastToContentScripts({
     type: "command:seek",
     position: data.time,
+    server_time: data.server_time,
   }));
 
   channel.on("sync:correction", (data) => {
-    // Relay to content scripts — follower mode uses this to stay synced
     broadcastToContentScripts({
       type: "sync:correction",
       expected_time: data.expected_time,
+      server_time: data.server_time,
     });
   });
 
@@ -268,6 +310,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
   socket.onError(() => {}); // suppress — onClose handles cleanup
   socket.onClose(() => {
     console.log("[byob] WebSocket closed, cleaning up");
+    stopClockSyncMaintenance();
     // Send tab_closed/unready for all ports BEFORE clearing channel —
     // otherwise port.onDisconnect finds channel=null and can't send.
     if (channel) {
@@ -302,7 +345,10 @@ function connectToRoom(roomId, serverUrl, token, username) {
       }
       broadcastToContentScripts({ type: "byob:channel-ready" });
       if (lastReadyCount) broadcastToContentScripts(lastReadyCount);
-      // Report all currently connected tabs as open
+      // Kick off NTP clock sync and schedule maintenance.
+      doClockSync();
+      startClockSyncMaintenance();
+      // Report all currently connected tabs as open.
       const seenTabs = new Set();
       for (const entry of ports) {
         if (entry.tabId != null && !seenTabs.has(entry.tabId)) {

@@ -2,6 +2,78 @@
 
 ---
 
+# v6.1.0
+
+### Reconcile-only sync engine + NTP clock + drift correction across all sites
+
+v6.0.0 proved Bitmovin's API handles CR's MSE transitions cleanly. With that
+root-cause fix in place, the entire pile of receiver-side DRM workarounds
+that accumulated through v5.0.4–v5.0.31 was redundant. Stage 2 rips them
+out and ports the v4.1.0 reconcile architecture on top of the Bitmovin
+adapter — with drift correction enabled for every site, not just non-DRM.
+
+**Sync engine (content.js) rewritten:**
+
+- **Reconcile loop (500ms tick)** with three bands: <250ms dead zone
+  (playbackRate = 1.0), medium drift (proportional 0.9–1.1x rate adjust),
+  large drift ≥5s (hard seek). Hard seek routes through `bitmovinAdapter`
+  when available (safe on CR), otherwise `<video>.currentTime=` (may fight
+  some DRM sites; v4.x's "give up after 2 failures" fallback accepts the
+  site's position and updates the server instead).
+- **Send-on-change event handlers**: `onVideoPlay` / `onVideoPause` only
+  send if local state actually differs from `expectedPlayState`, and only
+  after a 500ms debounce. Rapid site-internal toggles (DRM, buffering,
+  player init) no longer relay to the server.
+- **Adaptive `commandGuard`**: after executing a server command, suppress
+  outgoing events until the video state matches what we commanded, 300ms
+  min / 5s max. Replaces the v5.x generation-counter `suppress()` system.
+- **5s settling gate** on sync — read-only mode so the join sequence
+  doesn't disrupt already-playing clients.
+- **Stale-command detection** via `server_time` — commands older than our
+  current `serverRef.serverTime` are ignored (except periodic corrections).
+
+**Clock sync (background.js):**
+
+- NTP-style 5-ping burst on channel join, median-RTT sample used as
+  `clockOffset`. Maintenance tick every 30s while connected. Broadcast as
+  `byob:clock-sync` to all content scripts. Reconcile refuses to
+  drift-correct until clock is synced.
+
+**Server integration:**
+
+- Background now forwards `server_time` from `sync:play/pause/seek/correction`
+  through to content scripts, and requests it in `sync:request_state` for
+  `command:synced`. The server already produced these; we just pass them
+  through.
+- `video:request-sync` simplified — server response flows straight into a
+  single `command:synced` instead of the v5.x `CMD:play|pause → CMD:synced`
+  two-step. The receiving content script does the seek + play/pause itself.
+
+**Deleted:**
+
+- `extension/content_runtime.js` — DRM command sequencer + outbound play
+  coordinator + `applyPauseAtPosition` + `queuePlayUntilReady`. All
+  obsolete now that Bitmovin handles CR and reconcile handles everything
+  else.
+- `extension/tests/content_runtime.test.js`.
+- From content.js: all stall detection/recovery (`_lastTickPosition`,
+  `_stallTickCount`, `_stallRecoveryAttempts`, `tryStallRecovery`,
+  `exitStallRecovery`, progressive silent-kick recovery, `_stallRecovery`
+  gesture prompt); `suppress()` / `shouldSuppress()` / suppression gen
+  counter; `markProgrammaticSeek` / `isProgrammaticSeekActive` /
+  `_programmaticSeek`; `deferStall` / `_deferStallUntil` /
+  `_queuedPlayRecoveryTimer` / `armQueuedPlayRecovery`; `_recentDrmSeekTarget`
+  / `_recentDrmSeekAt`; `_isDrmSite` detection + branches;
+  `pauseEnforcer`; `followerMode` / `followerStableTicks`; `_pendingSeekPos`
+  / `_lastCorrectionSeek`; `_endedReported` per-instance flag.
+
+**Net change:** content.js down from ~1500 to ~1100 lines. The sync engine
+is simpler, more predictable, and drift correction now runs uniformly on
+every site instead of being disabled on DRM to avoid wedges that don't
+exist anymore.
+
+---
+
 # v6.0.0
 
 ### Crunchyroll: call Bitmovin's JS API instead of fighting `<video>.currentTime=`

@@ -1,96 +1,76 @@
-// WatchParty content script — hooks <video> elements and relays sync commands via port to SW
+// byob content script — hooks <video> elements and reconciles playback with
+// the server. This is the Stage-2 rewrite based on the v4.1.0 reconcile
+// architecture, plus the v6.0.0 Bitmovin adapter for Crunchyroll.
+//
+// Core model:
+//   - serverRef + clockOffset = authoritative position at any instant.
+//   - expectedPlayState = what the server wants us to be doing (playing/paused).
+//   - event handlers only send state CHANGES to the server (debounced 500ms).
+//   - reconcile loop (500ms) nudges playback rate and hard-seeks on large
+//     drift. Hard seeks go through bitmovinAdapter when available (safe on
+//     Crunchyroll), otherwise via <video>.currentTime (may fight some DRM
+//     sites — v4.x's "give up after 2 failures" fallback accepts the site's
+//     position if seeks don't stick).
 
 (() => {
   "use strict";
 
-  const runtime = globalThis.ByobContentRuntime || {};
+  // ── Constants ─────────────────────────────────────────────────────────────
+  const State = Object.freeze({ PLAYING: "playing", PAUSED: "paused" });
+  const STORAGE_KEY = "watchparty_config";
+  const PORT_NAME = "watchparty";
 
-  const _debug = true;
-  const _log = (...args) => {
-    if (!_debug) return;
-    const msg = args.map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ");
-    console.log("[byob]", ...args);
-    if (port) port.postMessage({ type: "debug:log", message: msg });
-  };
-
+  // ── State ─────────────────────────────────────────────────────────────────
   let port = null;
   let hookedVideo = null;
-  let synced = false; // Don't send events until initial sync is done
-  let needsGesture = true; // True until video actually plays — blocks commands
-  let pauseEnforcer = null;
-  let suppressGen = 0;
-  let suppressUntilGen = 0;
-  let expectedState = null;
-  let safetyTimeout = null;
+  let synced = false;
+  let needsGesture = true;
   let timeReportInterval = null;
-  // Follower mode: after sync, the client is read-only and continuously
-  // applies server corrections until it proves stability (position+state
-  // match server for 3 consecutive ticks = 1.5s). Then becomes a full
-  // participant that can send events.
-  let followerMode = false;
-  let followerStableTicks = 0;
-  let _barPausedCount = 0;
-  let _statusPausedCount = 0;
+  let reconcileInterval = null;
+  let commandGuard = null;         // suppress outgoing events after a server command
+  let _guardStartedAt = 0;
+  let expectedPlayState = null;    // State.PLAYING / State.PAUSED / null
+  let serverRef = null;            // { position, playState, serverTime }
+  let lastSeekAt = 0;
+  let _pendingPlayPause = null;    // debounced send
+  let _hardSeekFailures = 0;
   let _endedReported = false;
-  let _lastCorrectionSeek = 0;
-  let _pendingSeekPos = null; // after user seek, ignore corrections until server reflects new position
+  let activateArgs = null;
+  let settlingUntil = 0;
 
-  // Stall detection + recovery for DRM pipeline freezes (video.paused===false but frames not rendering)
-  let _lastTickPosition = null;
-  let _stallTickCount = 0;
-  let _stallRecoveryAttempts = 0;
-  let _lastStallRecoveryAt = 0;
-  let _cleanPlayTicks = 0; // consecutive normal-advancement ticks
-  // Defer stall detection while MSE is processing a programmatic action. Big
-  // seeks on DRM can take 2-3s to fetch a new segment — during that window
-  // the video reports playing=true with no position advancement, which looks
-  // identical to a real stall. Firing recovery here kicks MSE mid-fetch and
-  // makes things worse.
-  let _deferStallUntil = 0;
-  function deferStall(ms = 3000) {
-    const until = Date.now() + ms;
-    if (until > _deferStallUntil) _deferStallUntil = until;
-  }
-  let _queuedPlayRecoveryTimer = null;
-  function clearQueuedPlayRecoveryTimer() {
-    if (_queuedPlayRecoveryTimer != null) {
-      clearTimeout(_queuedPlayRecoveryTimer);
-      _queuedPlayRecoveryTimer = null;
+  // Clock sync (from background NTP burst)
+  let clockOffset = 0;             // serverMonotonicMs ≈ Date.now() + clockOffset
+  let clockRtt = 0;
+  let clockSynced = false;
+  let syncToleranceMs = 250;       // room-wide dead zone (server can widen)
+
+  const _DEBUG = true;
+  function _log(...args) {
+    if (!_DEBUG) return;
+    console.log("[byob]", ...args);
+    if (port) {
+      try {
+        const msg = args.map(a => typeof a === "object" ? JSON.stringify(a) : String(a)).join(" ");
+        port.postMessage({ type: "debug:log", message: msg });
+      } catch (_) {}
     }
   }
-  function armQueuedPlayRecovery(targetPos, releaseReason) {
-    clearQueuedPlayRecoveryTimer();
-    if (!_isDrmSite || releaseReason !== "ready-timeout" || targetPos == null || !hookedVideo) return;
 
-    const baseline = hookedVideo.currentTime;
-    _queuedPlayRecoveryTimer = setTimeout(() => {
-      _queuedPlayRecoveryTimer = null;
-      if (!hookedVideo || !synced || hookedVideo.paused || _recoveryInProgress) return;
+  function isSettling() { return Date.now() < settlingUntil; }
 
-      const delta = hookedVideo.currentTime - baseline;
-      if (delta >= 0.2) return;
-      if (Math.abs(hookedVideo.currentTime - targetPos) > 0.5) return;
-
-      _log("DRM queued play stuck after timeout release", "target=", targetPos, "delta=", delta);
-      tryStallRecovery();
-    }, 900);
+  // Signal extension is installed — only on our domain.
+  if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
+    document.documentElement.setAttribute("data-byob-extension", "true");
   }
-  let _lastExpectedPos = null;
-  let _lastExpectedAt = 0;
-  let _recoveryInProgress = false;
-  let _stallRecovery = false; // true while waiting for user click to un-wedge DRM
 
   // ── Bitmovin adapter ──────────────────────────────────────────────────────
-  // Crunchyroll's player is Bitmovin v8. Direct <video>.currentTime= wedges
-  // MSE on big seeks-while-playing; calling Bitmovin's player.seek() lets it
-  // manage the buffer transition. A MAIN-world script
-  // (sites/crunchyroll-bitmovin-page.js) finds .bitmovinplayer-container.player
-  // and bridges it here via CustomEvents. When the adapter is ready, receiver
-  // CMDs route through Bitmovin; sender DOM event handlers still fire from
-  // Bitmovin's internal seek and are absorbed by the existing suppression.
+  // Page-world script (extension/sites/crunchyroll-bitmovin-page.js) bridges
+  // the Crunchyroll Bitmovin Player instance. When ready, receiver commands
+  // and reconcile hard seeks route through Bitmovin's API; Bitmovin manages
+  // the MSE buffer transition cleanly instead of wedging on currentTime=.
   const bitmovinAdapter = (() => {
     let ready = false;
-    let last = null; // { time, isPaused, duration }
+    let last = null;
     let cmdSeq = 0;
 
     function onEvt(e) {
@@ -99,16 +79,13 @@
       if (d.event === "ready") {
         ready = true;
         last = { time: d.time, isPaused: d.isPaused, duration: d.duration };
-        _log("bitmovin adapter: ready time=", d.time, "paused=", d.isPaused, "duration=", d.duration);
+        _log("bitmovin: ready time=", d.time, "paused=", d.isPaused, "duration=", d.duration);
       } else if (d.time != null) {
         if (!last) last = {};
         last.time = d.time;
       }
     }
 
-    // Crunchyroll-only. Extending to other Bitmovin sites would just need a
-    // different host check plus (likely) a different container selector in
-    // sites/*.js.
     const host = window.location.hostname;
     const isCr = /(^|\.)crunchyroll\.com$/.test(host);
     if (isCr) {
@@ -129,16 +106,12 @@
     return {
       isReady() { return ready; },
       getCurrentTime() { return last && last.time != null ? last.time : null; },
-      isPaused() { return last && last.isPaused != null ? last.isPaused : null; },
       seek(time) {
         if (time == null) return false;
         return send("seek", { time });
       },
       play(position) {
         if (!ready) return false;
-        // If the target differs from our last-known position, seek first;
-        // Bitmovin handles the MSE transition internally and stays/enters
-        // playing state on the .play() that follows.
         if (position != null
             && last && last.time != null
             && Math.abs(last.time - position) > 0.5) {
@@ -158,24 +131,28 @@
     };
   })();
 
-  // Signal extension is installed — only on our domain so other sites can't detect it
-  if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
-    document.documentElement.setAttribute("data-byob-extension", "true");
+  // seekTo — unified hard-seek that prefers Bitmovin's API when available.
+  function seekTo(target) {
+    if (target == null || !hookedVideo) return;
+    if (bitmovinAdapter.isReady()) {
+      bitmovinAdapter.seek(target);
+      return;
+    }
+    try { hookedVideo.currentTime = target; } catch (_) {}
   }
 
-  // Check if we should activate on this page
+  // ── Init / activation ─────────────────────────────────────────────────────
   async function init() {
-    // Listen for room page messages — only accept from our own origin
     window.addEventListener("message", (e) => {
       if (e.origin !== window.location.origin) return;
       try {
         if (e.data?.type === "byob:clear-external") {
-          chrome.storage.local.remove("watchparty_config");
+          chrome.storage.local.remove(STORAGE_KEY);
           return;
         }
         if (e.data?.type === "byob:open-external") {
           chrome.storage.local.set({
-            watchparty_config: {
+            [STORAGE_KEY]: {
               room_id: e.data.room_id,
               server_url: e.data.server_url,
               target_url: e.data.url,
@@ -185,34 +162,25 @@
             },
           });
         }
-      } catch (_) {
-        // Extension context invalidated (reloaded while page is open)
-      }
+      } catch (_) {}
     });
 
-    // Check storage for active room config — retry a few times since
-    // storage write from room page may not have completed yet
     const tryActivate = async (attempt) => {
       if (attempt > 5) return;
       try {
-        const config = await chrome.storage.local.get("watchparty_config");
-        if (config.watchparty_config) {
-          const { room_id, server_url, target_url, token, username, timestamp } = config.watchparty_config;
+        const config = await chrome.storage.local.get(STORAGE_KEY);
+        if (config[STORAGE_KEY]) {
+          const { room_id, server_url, target_url, token, username, timestamp } = config[STORAGE_KEY];
           const age = Date.now() - (timestamp || 0);
           if (age < 30 * 60 * 1000) {
-            // Don't activate extension sync on our own domain — the main
-            // site handles sync via LiveView. Extension only sets the
-            // data-byob-extension attribute there (done above).
             const host = window.location.hostname;
             if (host === "byob.video" || host === "localhost") return;
 
-            // In nested iframes (video player embeds), always activate
             const isTopFrame = window === window.top;
             if (!isTopFrame) {
               activate(room_id, server_url, token, username);
               return;
             }
-            // In top frame, match URL
             if (target_url) {
               const targetBase = new URL(target_url).origin + new URL(target_url).pathname;
               const currentBase = window.location.origin + window.location.pathname;
@@ -224,13 +192,11 @@
             }
           }
         }
-      } catch (e) {}
+      } catch (_) {}
       setTimeout(() => tryActivate(attempt + 1), 500);
     };
     tryActivate(0);
   }
-
-  let activateArgs = null; // saved for reconnection
 
   function activate(roomId, serverUrl, token, username) {
     activateArgs = { roomId, serverUrl, token, username };
@@ -238,17 +204,14 @@
   }
 
   function connectToSW(roomId, serverUrl, token, username) {
-    // Show sync bar immediately in top frame with "Loading..." status
     if (window === window.top) {
       injectSyncBar();
       updateSyncBarStatus("loading");
     }
 
-    // Connect port to service worker
     try {
-      port = chrome.runtime.connect({ name: "watchparty" });
+      port = chrome.runtime.connect({ name: PORT_NAME });
     } catch (e) {
-      // Service worker not available — retry after a delay
       setTimeout(() => connectToSW(roomId, serverUrl, token, username), 2000);
       return;
     }
@@ -263,7 +226,6 @@
 
     port.onMessage.addListener(handleSWMessage);
 
-    // Relay messages from nested iframes to the SW port
     window.addEventListener("message", (e) => {
       if (e.data?.type === "byob:relay" && e.data.payload && port) {
         port.postMessage(e.data.payload);
@@ -272,7 +234,6 @@
 
     port.onDisconnect.addListener(() => {
       port = null;
-      // If SW was terminated (Chrome MV3 lifecycle), reconnect after a delay
       if (activateArgs) {
         setTimeout(() => {
           const { roomId: r, serverUrl: s, token: t, username: u } = activateArgs;
@@ -283,12 +244,11 @@
       }
     });
 
-    // Start observing for <video> elements
     observeVideos();
   }
 
+  // ── Video discovery ───────────────────────────────────────────────────────
   function observeVideos() {
-    // Monkey-patch attachShadow to observe shadow roots
     const origAttachShadow = HTMLElement.prototype.attachShadow;
     HTMLElement.prototype.attachShadow = function (...args) {
       const root = origAttachShadow.apply(this, args);
@@ -300,8 +260,7 @@
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
           if (node.nodeType !== Node.ELEMENT_NODE) continue;
-          checkForVideo(node);
-          // Check children one level deep
+          if (node.tagName === "VIDEO") hookVideo(node);
           if (node.querySelectorAll) {
             node.querySelectorAll("video").forEach((v) => hookVideo(v));
           }
@@ -309,27 +268,13 @@
       }
     });
 
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true,
-    });
-
-    // Also check for existing videos
+    observer.observe(document.documentElement, { childList: true, subtree: true });
     document.querySelectorAll("video").forEach((v) => hookVideo(v));
-  }
-
-  function checkForVideo(node) {
-    if (node.tagName === "VIDEO") {
-      hookVideo(node);
-    }
   }
 
   function scrapePageMetadata() {
     try {
-      // Try site-specific selectors first
       const host = window.location.hostname;
-
-      // Crunchyroll
       if (host.includes("crunchyroll.com")) {
         const showEl = document.querySelector("[data-t='show-title-link'] h4, .show-title-link h4");
         const epEl = document.querySelector(".title, h1.title");
@@ -337,19 +282,11 @@
         const show = showEl?.textContent?.trim();
         const ep = epEl?.textContent?.trim();
         const title = show && ep ? `${show} — ${ep}` : show || ep || null;
-        return {
-          title: title || document.title,
-          thumbnail_url: thumbEl?.content || null,
-        };
+        return { title: title || document.title, thumbnail_url: thumbEl?.content || null };
       }
-
-      // Generic: use OpenGraph or document title
       const ogTitle = document.querySelector("meta[property='og:title']")?.content;
       const ogImage = document.querySelector("meta[property='og:image']")?.content;
-      return {
-        title: ogTitle || document.title || null,
-        thumbnail_url: ogImage || null,
-      };
+      return { title: ogTitle || document.title || null, thumbnail_url: ogImage || null };
     } catch (_) {
       return { title: document.title || null, thumbnail_url: null };
     }
@@ -358,14 +295,13 @@
   function hookVideo(video) {
     if (hookedVideo === video) return;
     const wasHooked = !!hookedVideo;
-    if (hookedVideo) {
-      // Unhook previous
-      unhookVideo();
-    }
-    // If a previously-hooked video was replaced while synced, reset synced
-    // to prevent sending position=0 from the new element before re-sync.
+    if (hookedVideo) unhookVideo();
+
+    // Site replaced the <video>: pause syncing until we re-sync. Otherwise
+    // position=0 on the new element would corrupt server state.
     if (wasHooked && synced) {
       synced = false;
+      stopReconcile();
     }
 
     hookedVideo = video;
@@ -373,432 +309,222 @@
 
     video.addEventListener("play", onVideoPlay);
     video.addEventListener("pause", onVideoPause);
-    video.addEventListener("seeking", onVideoSeeking);
     video.addEventListener("seeked", onVideoSeeked);
-    // No "ended" listener — position-based detection in time report is more reliable
+    video.addEventListener("waiting", onVideoWaiting);
+    video.addEventListener("canplay", onVideoCanPlay);
 
-    // Report that we found a video — include page metadata for byob display
     const meta = scrapePageMetadata();
-    const reportHooked = { type: "video:hooked", duration: video.duration || 0, ...meta };
     if (port) {
-      port.postMessage(reportHooked);
+      port.postMessage({ type: "video:hooked", duration: video.duration || 0, ...meta });
     }
-    // Notify top frame via extension messaging (works cross-origin, no postMessage("*"))
     if (!window.location.hostname.includes("youtube.com")) {
       try { chrome.runtime.sendMessage({ type: "byob:video-hooked" }); } catch (_) {}
     }
 
-    // If still waiting for gesture (site replaced video element), re-register
     if (needsGesture) {
       waitForNativePlay();
     } else {
       updateSyncBarStatus("syncing");
     }
 
-    // Send periodic state updates (position, duration, playing) for relay to room + sync bar
+    // Periodic state report + ended detection.
     timeReportInterval = setInterval(() => {
       if (!hookedVideo) return;
+      const pos = hookedVideo.currentTime;
+      const dur = hookedVideo.duration || 0;
+      const playing = !hookedVideo.paused && !isBuffering;
 
-      // Follower mode stability check: once the video has been within 3s
-      // of where it should be for 3 consecutive ticks (1.5s), promote to
-      // full participant.
-      if (followerMode) {
-        // Use expectedState and the last command position as reference
-        const actualState = hookedVideo.paused ? "paused" : "playing";
-        const stateMatches = !expectedState || actualState === expectedState;
-        if (stateMatches) {
-          followerStableTicks++;
-          if (followerStableTicks >= 3) {
-            followerMode = false;
-            followerStableTicks = 0;
-            // NOW send video:ready — the client proved it can keep up
-            if (port) port.postMessage({ type: "video:ready" });
-          }
-        } else {
-          followerStableTicks = 0;
-        }
+      const msg = { type: "video:state", position: pos, duration: dur, playing };
+      if (synced && port) port.postMessage(msg);
+      if (port) {
+        port.postMessage({
+          type: "byob:bar-update",
+          position: pos, duration: dur, playing,
+        });
       }
 
-      // Stall detection: video reports !paused but frames aren't advancing.
-      // On DRM, the recovery path is a silent kick seek (no user prompt).
-      // Skipped while a recovery is in progress.
-      if (synced && !followerMode && !_recoveryInProgress && Date.now() >= _deferStallUntil) {
-        if (!hookedVideo.paused) {
-          const pos = hookedVideo.currentTime;
-          if (_lastTickPosition != null) {
-            const delta = pos - _lastTickPosition;
-            if (Math.abs(delta) < 0.05) {
-              _stallTickCount++;
-              _cleanPlayTicks = 0;
-            } else if (delta > 0.3 && delta < 0.7) {
-              // Normal-rate advancement (~0.5s per 500ms tick ≈ 1x). Note the
-              // kick seek is ALSO 0.5s on attempt 1 — looks identical to one
-              // healthy tick. Require several consecutive clean ticks before
-              // declaring recovery; otherwise _stallRecoveryAttempts resets
-              // every time we kick and the counter never escalates.
-              _stallTickCount = 0;
-              _cleanPlayTicks++;
-              if (_cleanPlayTicks >= 3) _stallRecoveryAttempts = 0;
-            } else {
-              // Larger jumps (our seek kicks at 1.5s/3s, CMD:seek, user seek)
-              _stallTickCount = 0;
-              _cleanPlayTicks = 0;
-            }
-          }
-          _lastTickPosition = pos;
-
-          if (_stallTickCount >= 3 && Date.now() - _lastStallRecoveryAt > 3000) {
-            tryStallRecovery();
-          }
-        } else {
-          _lastTickPosition = null;
-          _stallTickCount = 0;
-          _cleanPlayTicks = 0;
-        }
-      }
-
-      const msg = {
-        type: "video:state",
-        position: hookedVideo.currentTime,
-        duration: hookedVideo.duration || 0,
-        playing: !hookedVideo.paused,
-      };
-      // Only send state/bar updates when synced — unsynced clients at wrong
-      // positions would make the sync bar flicker between correct and wrong pos.
-      if (synced && port) {
-        port.postMessage(msg);
-        port.postMessage({ type: "byob:bar-update", position: msg.position, duration: msg.duration, playing: msg.playing });
-
-        // Position-based ended detection — more reliable than browser "ended"
-        // event which many third-party sites don't fire.
-        const dur = hookedVideo.duration;
-        if (!_endedReported && !hookedVideo.paused && isFinite(dur) && dur > 60 && msg.position >= dur - 3) {
-          _endedReported = true;
-          port.postMessage({ type: "video:ended" });
-        }
+      if (synced && !_endedReported && playing && isFinite(dur) && dur > 60 && pos >= dur - 3) {
+        _endedReported = true;
+        if (port) port.postMessage({ type: "video:ended" });
       }
     }, 500);
   }
 
   function unhookVideo() {
     if (!hookedVideo) return;
-    drmCommandSequencer?.clearQueuedPlay();
-    outboundPlayCoordinator?.cancel();
+    stopReconcile();
     hookedVideo.removeEventListener("play", onVideoPlay);
     hookedVideo.removeEventListener("pause", onVideoPause);
-    hookedVideo.removeEventListener("seeking", onVideoSeeking);
     hookedVideo.removeEventListener("seeked", onVideoSeeked);
+    hookedVideo.removeEventListener("waiting", onVideoWaiting);
+    hookedVideo.removeEventListener("canplay", onVideoCanPlay);
     if (_nativePlayListener) {
       hookedVideo.removeEventListener("play", _nativePlayListener);
       _nativePlayListener = null;
     }
     hookedVideo = null;
-    if (timeReportInterval) {
-      clearInterval(timeReportInterval);
-      timeReportInterval = null;
-    }
+    isBuffering = false;
+    hideBufferingOverlay();
+    if (timeReportInterval) { clearInterval(timeReportInterval); timeReportInterval = null; }
   }
 
-  // Event handlers — with suppression
-  // The reference impl style: forward play/pause/seek naturally as they fire. No debounce,
-  // no postSeek suppression. User-initiated seeks on a playing video produce
-  // a natural pause→seek→play event sequence from the browser — we forward
-  // all three to the server, which lets receivers seek while paused (safe
-  // for MSE) then resume. That's how another sync extension.tv does it.
+  // ── Event handlers (send-on-change, debounced) ────────────────────────────
   function onVideoPlay() {
-    if (!synced) {
-      _log("onVideoPlay SKIP synced=", synced, "follower=", followerMode);
-      return;
-    }
-    if (shouldSuppress("playing")) {
-      _log("onVideoPlay SUPPRESSED (gen)", "pos=", hookedVideo?.currentTime);
-      return;
-    }
-    if (followerMode) {
-      _log("onVideoPlay follower override", "pos=", hookedVideo?.currentTime);
-      followerMode = false;
-      followerStableTicks = 0;
-    }
-    if (port && hookedVideo) {
-      const sendPlay = (position) => {
-        _log("onVideoPlay SEND pos=", position);
-        port.postMessage({
-          type: "video:play",
-          position,
-        });
-      };
-
-      if (_isDrmSite && outboundPlayCoordinator?.queue(hookedVideo.currentTime, sendPlay)) {
-        // A real user-triggered play/scrub should cancel any stale
-        // programmatic-seek window left behind by a prior synced command.
-        _programmaticSeek = false;
-        _programmaticSeekUntil = 0;
-        _log("onVideoPlay DEFER pos=", hookedVideo.currentTime);
-        return;
-      }
-
-      sendPlay(hookedVideo.currentTime);
-    }
+    if (!synced || isBuffering || isSettling()) return;
+    if (expectedPlayState === State.PLAYING) return;
+    if (_pendingPlayPause) clearTimeout(_pendingPlayPause);
+    _pendingPlayPause = setTimeout(() => {
+      _pendingPlayPause = null;
+      if (!hookedVideo || hookedVideo.paused || isSettling()) return;
+      expectedPlayState = State.PLAYING;
+      updateServerRef(hookedVideo.currentTime, State.PLAYING);
+      if (port) port.postMessage({ type: "video:play", position: hookedVideo.currentTime });
+      _log("play →server", hookedVideo.currentTime.toFixed(2));
+    }, 500);
   }
 
   function onVideoPause() {
-    if (!synced) {
-      _log("onVideoPause SKIP synced=", synced, "follower=", followerMode);
-      return;
-    }
-    if (shouldSuppress("paused")) {
-      _log("onVideoPause SUPPRESSED (gen)", "pos=", hookedVideo?.currentTime);
-      return;
-    }
-    if (followerMode) {
-      _log("onVideoPause follower override", "pos=", hookedVideo?.currentTime);
-      followerMode = false;
-      followerStableTicks = 0;
-    }
-    outboundPlayCoordinator?.cancel();
-    if (!port || !hookedVideo) return;
-    _log("onVideoPause SEND pos=", hookedVideo.currentTime);
-    port.postMessage({ type: "video:pause", position: hookedVideo.currentTime });
-  }
-
-  let _programmaticSeek = false; // true while we're doing a seek from a command
-  // Time-based window during which any seeking/seeked event is treated as
-  // programmatic (not user-initiated) and suppressed. More robust than the
-  // single-gen suppress() for cases like CMD:play's double seek (target + kick)
-  // where the single suppression gets consumed by the play event first.
-  let _programmaticSeekUntil = 0;
-  let _recentDrmSeekTarget = null;
-  let _recentDrmSeekAt = 0;
-  const _isDrmSite = /crunchyroll\.com|funimation\.com|hulu\.com|netflix\.com|disneyplus\.com|peacocktv\.com|paramountplus\.com|hbomax\.com|max\.com/i.test(window.location.hostname);
-  const drmCommandSequencer = runtime.createDrmCommandSequencer
-    ? runtime.createDrmCommandSequencer({
-        isDrmSite: _isDrmSite,
-        log: (...args) => _log(...args)
-      })
-    : null;
-  const outboundPlayCoordinator = runtime.createOutboundPlayCoordinator
-    ? runtime.createOutboundPlayCoordinator({
-        isDrmSite: _isDrmSite,
-        log: (...args) => _log(...args)
-      })
-    : null;
-  const applyPauseAtPosition = runtime.applyPauseAtPosition
-    ? runtime.applyPauseAtPosition
-    : null;
-
-  function markProgrammaticSeek(windowMs = (_isDrmSite ? 6500 : 1500)) {
-    const until = Date.now() + windowMs;
-    if (until > _programmaticSeekUntil) _programmaticSeekUntil = until;
-  }
-  function isProgrammaticSeekActive() {
-    return Date.now() < _programmaticSeekUntil;
-  }
-
-  function onVideoSeeking() {
-    if (!synced || followerMode) {
-      _log("onVideoSeeking SKIP synced=", synced, "follower=", followerMode);
-      return;
-    }
-    if (_programmaticSeek || isProgrammaticSeekActive()) {
-      _log("onVideoSeeking SKIP (programmatic) pos=", hookedVideo?.currentTime);
-      return;
-    }
-    if (_isDrmSite) {
-      outboundPlayCoordinator?.noteSeeking(hookedVideo?.currentTime);
-    }
-    _log("onVideoSeeking pos=", hookedVideo?.currentTime);
+    if (!synced || isBuffering || isSettling()) return;
+    if (expectedPlayState === State.PAUSED) return;
+    if (_pendingPlayPause) clearTimeout(_pendingPlayPause);
+    _pendingPlayPause = setTimeout(() => {
+      _pendingPlayPause = null;
+      if (!hookedVideo || !hookedVideo.paused || isSettling()) return;
+      expectedPlayState = State.PAUSED;
+      updateServerRef(hookedVideo.currentTime, State.PAUSED);
+      if (port) port.postMessage({ type: "video:pause", position: hookedVideo.currentTime });
+      _log("pause →server", hookedVideo.currentTime.toFixed(2));
+    }, 500);
   }
 
   function onVideoSeeked() {
-    if (!synced || followerMode) {
-      _log("onVideoSeeked SKIP synced=", synced, "follower=", followerMode);
-      return;
+    if (!synced || commandGuard || isSettling()) return;
+    lastSeekAt = Date.now();
+    _hardSeekFailures = 0;
+    updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
+    if (port) port.postMessage({ type: "video:seek", position: hookedVideo.currentTime });
+    if (commandGuard) clearTimeout(commandGuard);
+    commandGuard = setTimeout(() => { commandGuard = null; }, 500);
+    _log("seek →server", hookedVideo.currentTime.toFixed(2));
+  }
+
+  let isBuffering = false;
+  function onVideoWaiting() {
+    if (!synced || isSettling()) return;
+    isBuffering = true;
+    showBufferingOverlay();
+    updateSyncBarStatus("loading");
+  }
+  function onVideoCanPlay() {
+    if (!isBuffering) return;
+    isBuffering = false;
+    hideBufferingOverlay();
+    if (synced && hookedVideo) {
+      updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
     }
-    if (isProgrammaticSeekActive()) {
-      _log("onVideoSeeked SUPPRESSED (programmatic) pos=", hookedVideo?.currentTime);
-      return;
-    }
-    if (shouldSuppress(null)) {
-      _log("onVideoSeeked SUPPRESSED (gen) pos=", hookedVideo?.currentTime);
-      return;
-    }
-    _pendingSeekPos = hookedVideo.currentTime;
-    _log("onVideoSeeked SEND pos=", hookedVideo.currentTime);
-    if (port && hookedVideo) {
-      port.postMessage({
-        type: "video:seek",
-        position: hookedVideo.currentTime,
-      });
-      if (_isDrmSite && !hookedVideo.paused) {
-        outboundPlayCoordinator?.flush("seeked", hookedVideo.currentTime);
+  }
+
+  // ── Reconcile loop ────────────────────────────────────────────────────────
+  // Runs every 500ms once synced. Compares local pos to expected pos derived
+  // from serverRef + clockOffset; adjusts playbackRate for small drift,
+  // hard-seeks for large drift. Gives up on hard seek after 2 failures and
+  // accepts the site's position (for sites that fight programmatic seeks).
+  function startReconcile() {
+    if (reconcileInterval) return;
+
+    reconcileInterval = setInterval(() => {
+      if (!hookedVideo || !synced || !serverRef || commandGuard || needsGesture) return;
+
+      const now = Date.now();
+      const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
+      if (isSettling()) return;
+
+      // Don't drift-correct while play state doesn't match — a state
+      // transition is in flight (site is pausing/resuming). The debounced
+      // event handlers will update the server if the state change persists.
+      if (actual !== expectedPlayState && expectedPlayState) return;
+
+      const recentSeek = (now - lastSeekAt) < 5000;
+      if (!clockSynced) return;
+
+      // Paused: don't auto-correct position. User seeks handle position,
+      // and tweaking a paused site's currentTime often kicks it back.
+      if (serverRef.playState === State.PAUSED || actual === State.PAUSED) return;
+      if (serverRef.playState !== State.PLAYING || actual !== State.PLAYING) return;
+
+      const localPos = hookedVideo.currentTime;
+      const serverNow = now + clockOffset;
+      const elapsed = (serverNow - serverRef.serverTime) / 1000;
+      const expectedPos = serverRef.position + elapsed;
+      const drift = localPos - expectedPos;
+      const absDrift = Math.abs(drift);
+      const deadZone = recentSeek ? 2.0 : (syncToleranceMs / 1000);
+
+      if (absDrift < deadZone) {
+        if (hookedVideo.playbackRate !== 1.0) hookedVideo.playbackRate = 1.0;
+        _hardSeekFailures = 0;
+      } else if (absDrift > 5.0 && !recentSeek && _hardSeekFailures < 2) {
+        _log(`reconcile HARD SEEK drift=${drift.toFixed(1)}s expected=${expectedPos.toFixed(1)} local=${localPos.toFixed(1)} attempt=${_hardSeekFailures + 1}`);
+        _hardSeekFailures++;
+        lastSeekAt = now;
+        if (commandGuard) clearTimeout(commandGuard);
+        commandGuard = setTimeout(() => { commandGuard = null; }, 2000);
+        seekTo(expectedPos);
+        hookedVideo.playbackRate = 1.0;
+      } else if (absDrift > 5.0 && _hardSeekFailures >= 2) {
+        _log(`reconcile: giving up on hard seek, accepting site pos=${localPos.toFixed(1)}`);
+        _hardSeekFailures = 0;
+        updateServerRef(localPos, expectedPlayState);
+        if (synced && port) port.postMessage({ type: "video:seek", position: localPos });
+        lastSeekAt = now;
+      } else if (absDrift > deadZone) {
+        // Proportional rate adjustment 0.9–1.1x. Negative drift (behind) →
+        // speed up; positive (ahead) → slow down.
+        const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
+        hookedVideo.playbackRate = rate;
       }
-    }
+    }, 500);
   }
 
-  function onVideoEnded() {
-    if (!synced) return;
-    // Position-based ended detection: only send if valid duration >60s and
-    // position is past 90%. This prevents spurious ended events from short
-    // clips, ads, or when the site fires ended on element replacement.
-    const dur = hookedVideo?.duration;
-    const pos = hookedVideo?.currentTime || 0;
-    if (!dur || !isFinite(dur) || dur < 60 || pos < dur * 0.9) return;
-    if (port) {
-      port.postMessage({ type: "video:ended" });
-    }
+  function stopReconcile() {
+    if (reconcileInterval) { clearInterval(reconcileInterval); reconcileInterval = null; }
+    if (hookedVideo && hookedVideo.playbackRate !== 1.0) hookedVideo.playbackRate = 1.0;
   }
 
-  // After a DRM stall recovery click: resume from current position without
-  // re-seeking to server's position (which would just stall again). Send our
-  // current pos to server and let drift correction handle divergence.
-  function exitStallRecovery() {
-    _stallRecovery = false;
-    synced = true;
-    needsGesture = false;
-    followerMode = false;
-    hideJoinToast();
-    updateSyncBarStatus(hookedVideo && !hookedVideo.paused ? "playing" : "paused");
-    _lastTickPosition = null;
-    _stallTickCount = 0;
-    _stallRecoveryAttempts = 0;
-    if (port && hookedVideo && !hookedVideo.paused) {
-      port.postMessage({ type: "video:play", position: hookedVideo.currentTime });
-    }
+  function updateServerRef(position, playState, serverTime) {
+    serverRef = {
+      position,
+      playState,
+      serverTime: serverTime ?? serverRef?.serverTime ?? 0,
+    };
   }
 
-  // Stall recovery. On DRM sites, programmatic pause→seek→play doesn't un-wedge
-  // a frozen MSE pipeline; only a user gesture does. So we skip straight to
-  // needsGesture. On non-DRM sites, try the pause→seek→play sequence first.
-  function tryStallRecovery() {
-    if (!hookedVideo || _recoveryInProgress) return;
+  // ── Command guard ─────────────────────────────────────────────────────────
+  // After executing a server command, suppress outgoing events until the
+  // video state matches what we commanded. 300ms min, 5s max. Prevents
+  // third-party sites' internal transitions (DRM, buffering, player init)
+  // from echoing back to the server.
+  function startCommandGuard() {
+    if (commandGuard) clearTimeout(commandGuard);
+    _guardStartedAt = Date.now();
+    commandGuard = setTimeout(checkGuard, 300);
+  }
 
-    const now = Date.now();
-    _lastStallRecoveryAt = now;
-    _stallTickCount = 0;
-    clearQueuedPlayRecoveryTimer();
-
-    if (_isDrmSite) {
-      // Silent kick recovery: nudge the playhead forward to force MSE to
-      // refetch. Progressively larger kicks — small ones (0.2s) stay inside
-      // the already-buffered wedged range and don't cross segment boundaries,
-      // so MSE doesn't refetch and the wedge persists. User manual seeks work
-      // because they're typically 1s+.
-      _stallRecoveryAttempts++;
-      if (_stallRecoveryAttempts > 3) {
-        _log("STALL: DRM silent recovery exhausted, giving up");
-        _stallRecoveryAttempts = 0;
-        return;
-      }
-      const kickDelta =
-        _stallRecoveryAttempts === 1 ? 0.5 :
-        _stallRecoveryAttempts === 2 ? 1.5 :
-        3.0;
-      _log("STALL: DRM silent kick recovery attempt", _stallRecoveryAttempts, "delta=", kickDelta);
-      markProgrammaticSeek();
-      _programmaticSeek = true;
-      try { hookedVideo.currentTime = hookedVideo.currentTime + kickDelta; } catch (_) {}
-      _programmaticSeek = false;
+  function checkGuard() {
+    const elapsed = Date.now() - _guardStartedAt;
+    if (elapsed > 5000 || !hookedVideo || !expectedPlayState) {
+      commandGuard = null;
       return;
     }
-
-    _stallRecoveryAttempts++;
-    if (_stallRecoveryAttempts > 3) {
-      _log("STALL: escalating to needsGesture after", _stallRecoveryAttempts - 1, "failed attempts");
-      _stallRecoveryAttempts = 0;
-      synced = false;
-      needsGesture = true;
-      followerMode = false;
-      updateSyncBarStatus("clickjoin");
-      showJoinToast("Playback stuck — click play to resume sync");
-      waitForNativePlay();
-      return;
+    const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
+    if (actual === expectedPlayState) {
+      commandGuard = null;
+    } else {
+      commandGuard = setTimeout(checkGuard, 200);
     }
-
-    const pos = hookedVideo.currentTime;
-    let target = pos;
-    if (_lastExpectedPos != null && _lastExpectedAt > 0) {
-      target = _lastExpectedPos + (now - _lastExpectedAt) / 1000;
-    }
-
-    _log("STALL: recovery attempt", _stallRecoveryAttempts, "pos=", pos.toFixed(2), "target=", target.toFixed(2));
-
-    _recoveryInProgress = true;
-    if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-
-    suppress("paused");
-    markProgrammaticSeek();
-    _programmaticSeek = true;
-    try { hookedVideo.pause(); } catch (_) {}
-    try { hookedVideo.currentTime = target; } catch (_) {}
-    _programmaticSeek = false;
-
-    setTimeout(() => {
-      if (!hookedVideo || !synced) { _recoveryInProgress = false; return; }
-      suppress("playing");
-      markProgrammaticSeek();
-      _programmaticSeek = true;
-      const p = hookedVideo.play();
-      _programmaticSeek = false;
-      if (p && p.catch) {
-        p.then(() => {
-          _log("STALL: recovery play() resolved, paused=", hookedVideo?.paused);
-          _recoveryInProgress = false;
-        }).catch((e) => {
-          _log("STALL: recovery play() REJECTED:", e?.message, "— escalating");
-          _recoveryInProgress = false;
-          _stallRecoveryAttempts = 0;
-          synced = false;
-          needsGesture = true;
-          followerMode = false;
-          updateSyncBarStatus("clickjoin");
-          showJoinToast("Click play to resume sync");
-          waitForNativePlay();
-        });
-      } else {
-        _recoveryInProgress = false;
-      }
-      _lastTickPosition = null;
-    }, 200);
   }
 
-  // Suppression — time-window for HTML5 <video> elements.
-  // Suppresses ALL matching events for the duration (1.5s) instead of just
-  // the first one. Sites with DRM/buffering fire multiple play/pause events
-  // during transitions — all need to be absorbed.
-  function suppress(state) {
-    suppressGen++;
-    suppressUntilGen = suppressGen;
-    expectedState = state;
-    if (safetyTimeout) clearTimeout(safetyTimeout);
-    safetyTimeout = setTimeout(() => {
-      suppressUntilGen = 0;
-      expectedState = null;
-    }, 1500);
-  }
-
-  function shouldSuppress(currentState) {
-    if (suppressUntilGen === 0) return false;
-    if (currentState === expectedState || expectedState === null) {
-      // Seeked events (null): single-shot — consume one and clear so
-      // the next user seek goes through immediately.
-      // Play/pause events: time-window — absorb all matching events for
-      // the safety timeout duration (DRM fires multiple transitions).
-      if (expectedState === null) {
-        suppressUntilGen = 0;
-        expectedState = null;
-        if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
-      }
-      return true;
-    }
-    // Non-matching event (e.g. user quickly paused while we expected "playing")
-    // Clear suppression and let it through — it's a real user action
-    suppressUntilGen = 0;
-    expectedState = null;
-    if (safetyTimeout) { clearTimeout(safetyTimeout); safetyTimeout = null; }
-    return false;
-  }
-
-  // Handle commands from service worker
+  // ── SW message handling ───────────────────────────────────────────────────
   function handleSWMessage(msg) {
     if (msg.type === "byob:channel-ready" && window === window.top) {
       if (!synced && needsGesture) {
@@ -808,57 +534,20 @@
       return;
     }
     if (msg.type === "byob:video-hooked" && window === window.top) {
-      // Only inject the sync bar if not already present — don't update
-      // status here since it would overwrite per-client states like
-      // "Click play to sync" across all tabs. Status is managed by
-      // tryAutoSync/tryPlay/command:synced for each client individually.
-      if (!window.location.hostname.includes("youtube.com")) {
-        injectSyncBar();
-      }
+      if (!window.location.hostname.includes("youtube.com")) injectSyncBar();
       return;
     }
+
+    if (msg.type === "byob:clock-sync") {
+      clockOffset = msg.offset;
+      clockRtt = msg.rtt;
+      clockSynced = true;
+      _log("clock synced offset=", clockOffset, "ms rtt=", clockRtt, "ms");
+      return;
+    }
+
     if (msg.type === "byob:bar-update" && window === window.top && synced) {
-      const fmt = (s) => Math.floor(s / 60) + ":" + Math.floor(s % 60).toString().padStart(2, "0");
-      const timeEl = document.getElementById("byob-time");
-      const statusEl = document.getElementById("byob-status");
-      const dotEl = document.getElementById("byob-dot");
-      const playPauseBtn = document.getElementById("byob-playpause");
-      const progressWrap = document.getElementById("byob-progress-wrap");
-      const progressFill = document.getElementById("byob-progress-fill");
-
-      if (timeEl && msg.duration > 0) timeEl.textContent = fmt(msg.position) + " / " + fmt(msg.duration);
-      else if (timeEl) timeEl.textContent = fmt(msg.position);
-
-      // Debounced status — don't flicker between Playing/Paused on brief
-      // DRM transitions. Only show "Paused" after 2 consecutive paused updates.
-      if (statusEl && dotEl && !_countdownInterval) {
-        if (msg.playing) {
-          _barPausedCount = 0;
-          statusEl.textContent = "Playing"; statusEl.style.color = "#00d400"; dotEl.style.background = "#00d400";
-          statusEl.title = "Video is playing in sync with the room";
-        } else {
-          _barPausedCount = (_barPausedCount || 0) + 1;
-          if (_barPausedCount >= 2) {
-            statusEl.textContent = "Paused"; statusEl.style.color = "#ff9900"; dotEl.style.background = "#ff9900";
-            statusEl.title = "Video is paused — synced with room";
-          }
-        }
-      }
-
-      // Show and update play/pause button + progress bar (no debounce — button state should be responsive)
-      if (playPauseBtn) {
-        playPauseBtn.style.display = "";
-        playPauseBtn.textContent = msg.playing ? "⏸" : "▶";
-        playPauseBtn.dataset.playing = msg.playing;
-        playPauseBtn.dataset.position = msg.position;
-      }
-      if (progressWrap && progressFill) {
-        progressWrap.style.display = "";
-        progressWrap.dataset.duration = msg.duration;
-        if (msg.duration > 0) {
-          progressFill.style.width = ((msg.position / msg.duration) * 100) + "%";
-        }
-      }
+      renderBarUpdate(msg);
       return;
     }
 
@@ -871,80 +560,48 @@
       return;
     }
 
-    // Server correction — proportional rate correction for tight sync.
-    if (msg.type === "sync:correction" && hookedVideo && synced) {
-      if (msg.expected_time != null) {
-        _lastExpectedPos = msg.expected_time;
-        _lastExpectedAt = Date.now();
-      }
-      // DRM sites: accept drift. Any programmatic action here (rate change,
-      // seek) risks wedging the MSE pipeline. Only explicit user commands
-      // (play/pause/seek from another client) touch the player.
-      if (_isDrmSite) {
-        return;
-      }
-      if (msg.expected_time != null && !hookedVideo.paused) {
-        // If we have a pending user seek, check if server caught up
-        if (_pendingSeekPos != null) {
-          if (Math.abs(msg.expected_time - _pendingSeekPos) < 3) {
-            _log("correction: pendingSeek cleared, server caught up");
-            _pendingSeekPos = null;
-          } else {
-            _log("correction: SKIP stale, pending=", _pendingSeekPos, "expected=", msg.expected_time);
-            return;
-          }
-        }
-
-        const drift = hookedVideo.currentTime - msg.expected_time;
-        const absDrift = Math.abs(drift);
-        const threshold = followerMode ? 0.5 : 0.25;
-
-        if (absDrift < threshold) {
-          if (hookedVideo.playbackRate !== 1.0) {
-            _log("correction: drift ok, reset rate to 1.0, drift=", drift.toFixed(3));
-            hookedVideo.playbackRate = 1.0;
-          }
-        } else if (absDrift < 3.0) {
-          const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift / 5));
-          _log("correction: rate adjust to", rate.toFixed(3), "drift=", drift.toFixed(3));
-          hookedVideo.playbackRate = rate;
-        } else if (Date.now() - _lastCorrectionSeek > 5000) {
-          _log("correction: HARD SEEK drift=", drift.toFixed(1), "from=", hookedVideo.currentTime.toFixed(1), "to=", msg.expected_time.toFixed(1));
-          _lastCorrectionSeek = Date.now();
-          markProgrammaticSeek();
-          _programmaticSeek = true;
-          hookedVideo.currentTime = msg.expected_time;
-          _programmaticSeek = false;
-          hookedVideo.playbackRate = 1.0;
-        }
-
-      }
-      return;
-    }
-
     if (msg.type === "command:initial-state") {
       tryAutoSync();
       return;
     }
 
-    // Handle synced before hookedVideo/needsGesture guards — the top frame
-    // may not have a hooked video (it's in an iframe) but still needs to
-    // hide the toast and update the sync bar.
     if (msg.type === "command:synced") {
-      if (_syncingTimeoutId) { clearTimeout(_syncingTimeoutId); _syncingTimeoutId = null; }
+      const wasSynced = synced;
       synced = true;
       needsGesture = false;
-      // Enter follower mode — read-only until video proves stability.
-      // video:ready is sent when follower mode exits (not here — the
-      // client hasn't proven it can keep up yet).
-      followerMode = true;
-      followerStableTicks = 0;
+      settlingUntil = Date.now() + 5000;
+
+      if (msg.play_state && !expectedPlayState) {
+        expectedPlayState = msg.play_state === "playing" ? State.PLAYING : State.PAUSED;
+        updateServerRef(msg.current_time ?? 0, expectedPlayState, msg.server_time);
+      }
+
       hideJoinToast();
-      // Unconditional status update — top frame may not have hookedVideo
-      // (video is in an iframe) but still needs to transition out of
-      // "Syncing...". Assume playing if unknown; byob:bar-update will correct.
-      const paused = hookedVideo ? hookedVideo.paused : false;
-      updateSyncBarStatus(paused ? "paused" : "playing");
+      _log("synced! settling 5s expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
+
+      if (hookedVideo) {
+        // Jump to server position immediately — don't wait for clock sync.
+        if (msg.current_time != null) {
+          seekTo(msg.current_time);
+          lastSeekAt = Date.now();
+        }
+        // Apply server play/pause state.
+        if (expectedPlayState === State.PAUSED && !hookedVideo.paused) {
+          if (bitmovinAdapter.isReady()) bitmovinAdapter.pause();
+          else hookedVideo.pause();
+        } else if (expectedPlayState === State.PLAYING && hookedVideo.paused) {
+          if (bitmovinAdapter.isReady()) bitmovinAdapter.play();
+          else hookedVideo.play().catch(() => {});
+        }
+        updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+        if (!wasSynced && port) port.postMessage({ type: "video:ready" });
+        startReconcile();
+      } else if (window === window.top) {
+        // No local <video> (e.g. top frame — player is in an iframe). Just
+        // update the bar to reflect the room state; the iframe's content
+        // script handles the real playback.
+        updateSyncBarStatus(expectedPlayState === State.PAUSED ? "paused" : "playing");
+      }
       return;
     }
 
@@ -958,186 +615,92 @@
     // If waiting for gesture and a play command arrives, try playing —
     // the browser may allow it if the user interacted with the page.
     if (needsGesture && msg.type === "command:play") {
-      suppress("playing"); // prevent play event from sending stale position to server
-      if (_stallRecovery) {
-        // Don't re-seek — would just re-wedge the DRM pipeline. Play from
-        // current position and let the server reconcile from our new state.
-        hookedVideo.play().then(() => { exitStallRecovery(); }).catch(() => {});
+      _log("cmd:play while needsGesture — attempting play()");
+      if (msg.position != null) seekTo(msg.position);
+      const p = bitmovinAdapter.isReady() ? null : hookedVideo.play();
+      const onStart = () => {
+        needsGesture = false;
+        hideJoinToast();
+        requestSync();
+      };
+      if (p && p.then) {
+        p.then(onStart).catch(() => _log("play() failed — still need gesture"));
       } else {
-        if (msg.position != null) hookedVideo.currentTime = msg.position;
-        hookedVideo.play().then(() => {
-          needsGesture = false;
-          hideJoinToast();
-          requestSync(); // gets computed position from server and seeks there
-        }).catch(() => {});
+        if (bitmovinAdapter.isReady()) bitmovinAdapter.play(msg.position);
+        onStart();
       }
       return;
     }
 
-    // If we're waiting for a user gesture, ignore other commands.
     if (needsGesture) return;
 
-    // The reference impl-style command handlers. Minimal ops — just map the command to a
-    // single player action (play/pause/currentTime). Don't combine them.
-    // The sender's natural pause→seek→play event sequence produces three
-    // separate server broadcasts, so the receiver gets CMD:pause first,
-    // then CMD:seek on a paused video (safe for MSE), then CMD:play.
-    switch (msg.type) {
-      case "command:play": {
-        _log("CMD:play pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
-        if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
-        clearQueuedPlayRecoveryTimer();
-        _pendingSeekPos = null;
-        deferStall();
-        // Bitmovin fast path: let the player's own API manage the seek +
-        // playback transition. Absorb the DOM echoes (Bitmovin internally
-        // fires pause/seek/seeked/play on the <video>) via the existing
-        // suppression windows.
-        if (bitmovinAdapter.isReady()) {
-          _log("CMD:play → bitmovin pos=", msg.position);
-          suppress("playing");
-          markProgrammaticSeek(6500);
-          bitmovinAdapter.play(msg.position);
-          break;
-        }
-        if (!hookedVideo.paused) {
-          _log("CMD:play no-op (already playing)");
-          break;
-        }
-        const shouldWaitAfterRecentSeek =
-          _isDrmSite &&
-          msg.position != null &&
-          _recentDrmSeekTarget != null &&
-          Math.abs(_recentDrmSeekTarget - msg.position) <= 0.5 &&
-          Date.now() - _recentDrmSeekAt <= 3000;
-        const queuedDrmPlay = shouldWaitAfterRecentSeek
-          ? drmCommandSequencer?.queuePlayUntilReady(hookedVideo, msg.position, (releaseReason) => {
-              if (!hookedVideo) return;
-              _log("CMD:play queued release .play()", "pos=", hookedVideo.currentTime);
-              suppress("playing");
-              armQueuedPlayRecovery(msg.position, releaseReason);
-              hookedVideo.play().catch((e) => {
-                _log("CMD:play play() REJECTED:", e?.message);
-              });
-            })
-          : drmCommandSequencer?.queuePlayIfNeeded(hookedVideo, msg.position, () => {
-              if (!hookedVideo) return;
-              _log("CMD:play queued release .play()", "pos=", hookedVideo.currentTime);
-              suppress("playing");
-              hookedVideo.play().catch((e) => {
-                _log("CMD:play play() REJECTED:", e?.message);
-              });
-            });
-        if (queuedDrmPlay) {
-          if (shouldWaitAfterRecentSeek) {
-            _log("CMD:play queued after recent seek", "pos=", msg.position);
-          }
-          break;
-        }
-        if (msg.position == null || Math.abs(hookedVideo.currentTime - msg.position) <= 0.5) {
-          suppress("playing");
-          hookedVideo.play().catch((e) => {
-            _log("CMD:play play() REJECTED:", e?.message);
-          });
-          break;
-        }
-        _log("CMD:play immediate pre-seek from", hookedVideo.currentTime, "to", msg.position);
-        markProgrammaticSeek();
-        _programmaticSeek = true;
-        hookedVideo.currentTime = msg.position;
-        _programmaticSeek = false;
-        suppress("playing");
-        hookedVideo.play().catch((e) => {
-          _log("CMD:play play() REJECTED:", e?.message);
-        });
-        break;
+    // Ignore stale commands — server_time must be newer than what we have.
+    if (msg.server_time != null && serverRef && msg.server_time <= serverRef.serverTime) {
+      if (msg.type !== "sync:correction") {
+        _log(`ignoring stale ${msg.type}: server_time=${msg.server_time} <= ${serverRef.serverTime}`);
+        return;
       }
+    }
+
+    // Cancel any pending debounced play/pause — server command wins.
+    if (_pendingPlayPause) { clearTimeout(_pendingPlayPause); _pendingPlayPause = null; }
+
+    switch (msg.type) {
+      case "command:play":
+        _log("cmd:play pos=", msg.position, "server_time=", msg.server_time);
+        expectedPlayState = State.PLAYING;
+        updateServerRef(msg.position ?? hookedVideo.currentTime, State.PLAYING, msg.server_time);
+        startCommandGuard();
+        if (bitmovinAdapter.isReady()) {
+          bitmovinAdapter.play(msg.position);
+        } else {
+          if (msg.position != null) seekTo(msg.position);
+          if (hookedVideo.paused) hookedVideo.play().catch(() => {});
+        }
+        startReconcile();
+        break;
 
       case "command:pause":
-        _log("CMD:pause pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
-        drmCommandSequencer?.clearQueuedPlay();
-        clearQueuedPlayRecoveryTimer();
-        _pendingSeekPos = null;
-        deferStall();
-        suppress("paused");
+        _log("cmd:pause pos=", msg.position, "server_time=", msg.server_time);
+        expectedPlayState = State.PAUSED;
+        updateServerRef(msg.position ?? hookedVideo.currentTime, State.PAUSED, msg.server_time);
+        startCommandGuard();
         if (bitmovinAdapter.isReady()) {
-          _log("CMD:pause → bitmovin pos=", msg.position);
-          markProgrammaticSeek(3000);
           bitmovinAdapter.pause(msg.position);
-          break;
-        }
-        if (applyPauseAtPosition) {
-          applyPauseAtPosition(hookedVideo, msg.position, {
-            pause: () => {
-              if (!hookedVideo.paused) hookedVideo.pause();
-            },
-            applySeek: (target) => {
-              markProgrammaticSeek();
-              _programmaticSeek = true;
-              hookedVideo.currentTime = target;
-              _programmaticSeek = false;
-            }
-          });
         } else {
+          if (msg.position != null) seekTo(msg.position);
           if (!hookedVideo.paused) hookedVideo.pause();
-          if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) >= 0.1) {
-            markProgrammaticSeek();
-            _programmaticSeek = true;
-            hookedVideo.currentTime = msg.position;
-            _programmaticSeek = false;
-          }
         }
+        startReconcile();
         break;
 
       case "command:seek":
-        _log("CMD:seek pos=", msg.position, "videoPaused=", hookedVideo.paused, "videoPos=", hookedVideo.currentTime);
-        clearQueuedPlayRecoveryTimer();
-        _pendingSeekPos = null;
-        deferStall();
-        if (msg.position == null) break;
-        if (_isDrmSite) {
-          _recentDrmSeekTarget = msg.position;
-          _recentDrmSeekAt = Date.now();
-        }
-        if (bitmovinAdapter.isReady()) {
-          _log("CMD:seek → bitmovin pos=", msg.position);
-          markProgrammaticSeek(3000);
-          bitmovinAdapter.seek(msg.position);
-          break;
-        }
-        if (drmCommandSequencer?.consumeMatchingSeek(hookedVideo, msg.position, () => {
-          markProgrammaticSeek();
-          _programmaticSeek = true;
-          hookedVideo.currentTime = msg.position;
-          _programmaticSeek = false;
-        })) {
-          break;
-        }
-        if (Math.abs(hookedVideo.currentTime - msg.position) < 0.1) {
-          _log("CMD:seek no-op (already at pos)");
-          break;
-        }
-        markProgrammaticSeek();
-        _programmaticSeek = true;
-        hookedVideo.currentTime = msg.position;
-        _programmaticSeek = false;
+        _log("cmd:seek pos=", msg.position, "server_time=", msg.server_time);
+        lastSeekAt = Date.now();
+        updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time);
+        if (commandGuard) clearTimeout(commandGuard);
+        commandGuard = setTimeout(() => { commandGuard = null; }, 1000);
+        seekTo(msg.position);
         break;
 
+      case "sync:correction":
+        // Server periodic refresh (every few seconds). Updates reference so
+        // reconcile can drift-correct. No direct player action here.
+        if (msg.expected_time != null) {
+          updateServerRef(msg.expected_time, serverRef?.playState ?? expectedPlayState, msg.server_time);
+        }
+        break;
     }
   }
 
+  // ── Gesture / sync bootstrap ──────────────────────────────────────────────
   function tryAutoSync() {
     if (!hookedVideo) return;
-
-    // If the user already provided a gesture (needsGesture=false), go
-    // straight to sync — don't re-enter the waiting state even if the
-    // video is momentarily paused (e.g. site replaced the video element).
     if (!needsGesture || !hookedVideo.paused) {
       needsGesture = false;
       hideJoinToast();
       requestSync();
     } else {
-      // First time, video is paused — wait for user to click play
       needsGesture = true;
       updateSyncBarStatus("clickjoin");
       showJoinToast("Click play on the video to start syncing");
@@ -1145,65 +708,35 @@
     }
   }
 
-  let _syncingTimeoutId = null;
-
   function requestSync() {
     hideJoinToast();
     updateSyncBarStatus("syncing");
-    if (port) {
-      port.postMessage({ type: "video:request-sync" });
-    }
-    // Fallback: if command:synced doesn't arrive within 5s (SW sleep, lost
-    // message, tabId mismatch), force-transition so UI doesn't stick on
-    // "Syncing..." forever.
-    if (_syncingTimeoutId) clearTimeout(_syncingTimeoutId);
-    _syncingTimeoutId = setTimeout(() => {
-      _syncingTimeoutId = null;
-      if (!synced) {
-        _log("requestSync timeout — forcing synced=true (command:synced never arrived)");
-        synced = true;
-        needsGesture = false;
-        followerMode = true;
-        followerStableTicks = 0;
-        const paused = hookedVideo ? hookedVideo.paused : false;
-        updateSyncBarStatus(paused ? "paused" : "playing");
-      }
-    }, 5000);
+    if (port) port.postMessage({ type: "video:request-sync" });
   }
 
   let _nativePlayListener = null;
-
   function waitForNativePlay() {
     if (!hookedVideo) return;
-
-    // If video is already playing (race: site autoplayed during SW round-trip),
-    // sync immediately instead of waiting for a click that already happened.
     if (!hookedVideo.paused) {
       needsGesture = false;
       requestSync();
       return;
     }
-
-    // Remove any existing listener to prevent stacking
     if (_nativePlayListener) {
       hookedVideo.removeEventListener("play", _nativePlayListener);
     }
-
     _nativePlayListener = () => {
       if (_nativePlayListener) {
         hookedVideo?.removeEventListener("play", _nativePlayListener);
         _nativePlayListener = null;
       }
-      if (_stallRecovery) {
-        exitStallRecovery();
-      } else {
-        needsGesture = false;
-        requestSync();
-      }
+      needsGesture = false;
+      requestSync();
     };
     hookedVideo.addEventListener("play", _nativePlayListener);
   }
 
+  // ── Sync bar UI ───────────────────────────────────────────────────────────
   function showJoinToast(text) {
     if (window !== window.top) return;
     hideJoinToast();
@@ -1220,8 +753,6 @@
       animation: byob-toast-pulse 2s ease-in-out infinite;
     `;
     toast.textContent = text;
-
-    // Add pulse animation
     const style = document.createElement("style");
     style.id = "byob-toast-style";
     style.textContent = `
@@ -1244,11 +775,8 @@
   function injectSyncBar() {
     if (document.getElementById("byob-sync-bar")) return;
 
-    // Try to insert after the video player area, not fixed to viewport
-    // This avoids covering video controls
     const bar = document.createElement("div");
     bar.id = "byob-sync-bar";
-
     bar.style.cssText = `
       position: fixed; bottom: 0; left: 0; right: 0; z-index: 999999;
       background: rgba(0,0,0,0.92); color: white;
@@ -1274,22 +802,19 @@
     status.style.cssText = "color:#888;font-size:12px;flex-shrink:0;cursor:default";
     status.textContent = "Loading...";
 
-    // Play/pause button — hidden until synced
     const playPauseBtn = document.createElement("button");
     playPauseBtn.id = "byob-playpause";
     playPauseBtn.style.cssText = "display:none;background:none;border:none;color:white;cursor:pointer;font-size:14px;padding:0;margin:0;line-height:1;opacity:0.8;flex-shrink:0;outline:none;-webkit-user-select:none;user-select:none;vertical-align:middle;";
     playPauseBtn.textContent = "▶";
     playPauseBtn.addEventListener("click", () => {
-      if (port) {
-        if (playPauseBtn.dataset.playing === "true") {
-          port.postMessage({ type: "video:pause", position: parseFloat(playPauseBtn.dataset.position || 0) });
-        } else {
-          port.postMessage({ type: "video:play", position: parseFloat(playPauseBtn.dataset.position || 0) });
-        }
+      if (!port) return;
+      if (playPauseBtn.dataset.playing === "true") {
+        port.postMessage({ type: "video:pause", position: parseFloat(playPauseBtn.dataset.position || 0) });
+      } else {
+        port.postMessage({ type: "video:play", position: parseFloat(playPauseBtn.dataset.position || 0) });
       }
     });
 
-    // Progress bar — hidden until synced
     const progressWrap = document.createElement("div");
     progressWrap.id = "byob-progress-wrap";
     progressWrap.style.cssText = "display:none;flex:1;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;cursor:pointer;position:relative;min-width:60px;";
@@ -1301,16 +826,13 @@
       const rect = progressWrap.getBoundingClientRect();
       const frac = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
       const dur = parseFloat(progressWrap.dataset.duration || 0);
-      if (dur > 0 && port) {
-        port.postMessage({ type: "video:seek", position: frac * dur });
-      }
+      if (dur > 0 && port) port.postMessage({ type: "video:seek", position: frac * dur });
     });
 
     const time = document.createElement("span");
     time.id = "byob-time";
     time.style.cssText = "font-variant-numeric:tabular-nums;opacity:0.6;font-size:12px;flex-shrink:0";
 
-    // Users ready indicator
     const usersEl = document.createElement("span");
     usersEl.id = "byob-users";
     usersEl.style.cssText = "display:none;font-size:12px;flex-shrink:0;gap:4px;align-items:center;font-variant-numeric:tabular-nums;cursor:default";
@@ -1334,45 +856,69 @@
     const collapse = document.createElement("button");
     collapse.id = "byob-collapse";
     collapse.style.cssText = "background:none;color:white;border:none;cursor:pointer;font-size:14px;opacity:0.5;padding:0 4px;line-height:1;outline:none;-webkit-user-select:none;user-select:none;flex-shrink:0;";
-    collapse.textContent = "\u25BC";
+    collapse.textContent = "▼";
 
     content.append(logo, dot, status, usersEl, playPauseBtn, progressWrap, time, collapse);
     bar.appendChild(content);
 
-    // Collapse/expand toggle
     let collapsed = false;
-    bar.querySelector("#byob-collapse").addEventListener("click", () => {
+    collapse.addEventListener("click", () => {
       collapsed = !collapsed;
       if (collapsed) {
-        // Shrink to small pill on the right
-        bar.style.left = "auto";
-        bar.style.right = "16px";
-        bar.style.bottom = "8px";
+        bar.style.left = "auto"; bar.style.right = "16px"; bar.style.bottom = "8px";
         bar.style.borderRadius = "6px";
         bar.style.border = "1px solid rgba(255,255,255,0.15)";
-        bar.style.borderTop = "1px solid rgba(255,255,255,0.15)";
-        bar.querySelector("#byob-bar-content").style.cssText = "display:flex;align-items:center;gap:6px;padding:4px 10px;";
-        bar.querySelectorAll("#byob-dot, #byob-status, #byob-time, #byob-playpause, #byob-progress-wrap").forEach(el => el.style.display = "none");
-        bar.querySelector("#byob-collapse").textContent = "▲";
+        content.style.cssText = "display:flex;align-items:center;gap:6px;padding:4px 10px;";
+        [dot, status, time, playPauseBtn, progressWrap].forEach(el => el.style.display = "none");
+        collapse.textContent = "▲";
       } else {
-        // Expand to full bar
-        bar.style.left = "0";
-        bar.style.right = "0";
-        bar.style.bottom = "0";
+        bar.style.left = "0"; bar.style.right = "0"; bar.style.bottom = "0";
         bar.style.borderRadius = "0";
         bar.style.border = "none";
         bar.style.borderTop = "1px solid rgba(255,255,255,0.15)";
-        bar.querySelector("#byob-bar-content").style.cssText = "display:flex;align-items:center;gap:10px;padding:6px 16px;";
-        bar.querySelectorAll("#byob-dot, #byob-status, #byob-time").forEach(el => el.style.display = "");
-        // Only show controls if synced
-        if (synced) {
-          bar.querySelectorAll("#byob-playpause, #byob-progress-wrap").forEach(el => el.style.display = "");
-        }
-        bar.querySelector("#byob-collapse").textContent = "▼";
+        content.style.cssText = "display:flex;align-items:center;gap:10px;padding:6px 16px;";
+        [dot, status, time].forEach(el => el.style.display = "");
+        if (synced) [playPauseBtn, progressWrap].forEach(el => el.style.display = "");
+        collapse.textContent = "▼";
       }
     });
 
     document.body.appendChild(bar);
+  }
+
+  function renderBarUpdate(msg) {
+    const fmt = (s) => Math.floor(s / 60) + ":" + Math.floor(s % 60).toString().padStart(2, "0");
+    const timeEl = document.getElementById("byob-time");
+    const statusEl = document.getElementById("byob-status");
+    const dotEl = document.getElementById("byob-dot");
+    const playPauseBtn = document.getElementById("byob-playpause");
+    const progressWrap = document.getElementById("byob-progress-wrap");
+    const progressFill = document.getElementById("byob-progress-fill");
+
+    if (timeEl && msg.duration > 0) timeEl.textContent = fmt(msg.position) + " / " + fmt(msg.duration);
+    else if (timeEl) timeEl.textContent = fmt(msg.position);
+
+    if (statusEl && dotEl && !_countdownInterval) {
+      if (msg.playing) {
+        statusEl.textContent = "Playing"; statusEl.style.color = "#00d400"; dotEl.style.background = "#00d400";
+        statusEl.title = "Video is playing in sync with the room";
+      } else {
+        statusEl.textContent = "Paused"; statusEl.style.color = "#ff9900"; dotEl.style.background = "#ff9900";
+        statusEl.title = "Video is paused — synced with room";
+      }
+    }
+
+    if (playPauseBtn) {
+      playPauseBtn.style.display = "";
+      playPauseBtn.textContent = msg.playing ? "⏸" : "▶";
+      playPauseBtn.dataset.playing = msg.playing;
+      playPauseBtn.dataset.position = msg.position;
+    }
+    if (progressWrap && progressFill) {
+      progressWrap.style.display = "";
+      progressWrap.dataset.duration = msg.duration;
+      if (msg.duration > 0) progressFill.style.width = ((msg.position / msg.duration) * 100) + "%";
+    }
   }
 
   function updateReadyCount(ready, hasTab, total) {
@@ -1381,24 +927,15 @@
     const count = document.getElementById("byob-users-count");
     if (!el || !icon || !count) return;
 
-    // No non-extension users — nothing meaningful to display.
-    if (!total || total <= 0) {
-      el.style.display = "none";
-      return;
-    }
+    if (!total || total <= 0) { el.style.display = "none"; return; }
 
     el.style.display = "flex";
-
     const allReady = ready >= total && total > 0;
-    const allHaveTab = hasTab >= total;
-
     count.textContent = `${ready}/${total}`;
-
     icon.setAttribute("fill", allReady ? "#00d400" : "rgba(255,255,255,0.5)");
     count.style.opacity = allReady ? "1" : "0.5";
     count.style.color = allReady ? "#00d400" : "white";
 
-    // Tooltip — detailed breakdown
     const parts = [];
     if (allReady) {
       parts.push(`All ${total} users synced and ready to play`);
@@ -1413,12 +950,10 @@
   }
 
   let _countdownInterval = null;
-
   function startCountdown(durationMs) {
     clearCountdown();
     const endTime = Date.now() + durationMs;
     updateSyncBarStatus("finished");
-
     const statusEl = document.getElementById("byob-status");
     const update = () => {
       const remaining = Math.max(0, Math.ceil((endTime - Date.now()) / 1000));
@@ -1431,27 +966,22 @@
     update();
     _countdownInterval = setInterval(update, 500);
   }
-
   function clearCountdown() {
-    if (_countdownInterval) {
-      clearInterval(_countdownInterval);
-      _countdownInterval = null;
-    }
+    if (_countdownInterval) { clearInterval(_countdownInterval); _countdownInterval = null; }
   }
 
   function updateSyncBarStatus(state) {
     const dot = document.getElementById("byob-dot");
     const status = document.getElementById("byob-status");
     if (!dot || !status) return;
-
     const states = {
-      loading:   { color: "#888",    text: "Connecting...", tip: "Connecting to the byob room server" },
-      searching: { color: "#ff9900", text: "Play the video to start syncing", tip: "Waiting for a video element on this page" },
-      syncing:   { color: "#ff9900", text: "Syncing...", tip: "Applying room state to this player" },
-      clickjoin: { color: "#ff9900", text: "Click play to sync", tip: "Click play on the video player above to start syncing with the room" },
-      playing:   { color: "#00d400", text: "Playing", tip: "Video is playing in sync with the room" },
-      paused:    { color: "#ff9900", text: "Paused", tip: "Video is paused — synced with room" },
-      finished:  { color: "#7c3aed", text: "Finished", tip: "Video ended — next video loading" },
+      loading:   { color: "#888",    text: "Connecting...",                      tip: "Connecting to the byob room server" },
+      searching: { color: "#ff9900", text: "Play the video to start syncing",    tip: "Waiting for a video element on this page" },
+      syncing:   { color: "#ff9900", text: "Syncing...",                         tip: "Applying room state to this player" },
+      clickjoin: { color: "#ff9900", text: "Click play to sync",                 tip: "Click play on the video player above to start syncing with the room" },
+      playing:   { color: "#00d400", text: "Playing",                            tip: "Video is playing in sync with the room" },
+      paused:    { color: "#ff9900", text: "Paused",                             tip: "Video is paused — synced with room" },
+      finished:  { color: "#7c3aed", text: "Finished",                           tip: "Video ended — next video loading" },
     };
     const s = states[state];
     if (!s) return;
@@ -1461,41 +991,48 @@
     status.title = s.tip;
   }
 
-  // Update time display on the sync bar
-  setInterval(() => {
-    if (!hookedVideo) return;
-    const timeEl = document.getElementById("byob-time");
-    if (!timeEl) return;
-
-    const t = hookedVideo.currentTime || 0;
-    const d = hookedVideo.duration || 0;
-    const fmt = (s) => Math.floor(s / 60) + ":" + Math.floor(s % 60).toString().padStart(2, "0");
-    timeEl.textContent = d > 0 ? `${fmt(t)} / ${fmt(d)}` : fmt(t);
-
-    // Only update status when synced — before that, status is managed by
-    // tryAutoSync/tryPlay/waitForNativePlay
-    if (synced && !_countdownInterval) {
-      if (hookedVideo.paused) {
-        _statusPausedCount++;
-        if (_statusPausedCount >= 2) updateSyncBarStatus("paused");
-      } else {
-        _statusPausedCount = 0;
-        updateSyncBarStatus("playing");
-      }
+  // Buffering overlay
+  function showBufferingOverlay() {
+    if (window !== window.top || document.getElementById("byob-buffering-overlay")) return;
+    const overlay = document.createElement("div");
+    overlay.id = "byob-buffering-overlay";
+    overlay.style.cssText = `
+      position: fixed; top: 0; left: 0; right: 0; bottom: 40px; z-index: 999997;
+      background: rgba(0,0,0,0.4); display: flex; align-items: center;
+      justify-content: center; pointer-events: none;
+    `;
+    const inner = document.createElement("div");
+    inner.style.cssText = "text-align:center;color:white;font-family:system-ui,sans-serif;";
+    const spinner = document.createElement("div");
+    spinner.style.cssText = "width:48px;height:48px;border:3px solid rgba(255,255,255,0.3);border-top-color:#7c3aed;border-radius:50%;animation:byob-spin 0.8s linear infinite;margin:0 auto 12px;";
+    const label = document.createElement("div");
+    label.style.cssText = "font-size:14px;font-weight:500;";
+    label.textContent = "Buffering...";
+    inner.append(spinner, label);
+    overlay.appendChild(inner);
+    let styleEl = document.getElementById("byob-buffering-style");
+    if (!styleEl) {
+      styleEl = document.createElement("style");
+      styleEl.id = "byob-buffering-style";
+      styleEl.textContent = "@keyframes byob-spin { to { transform: rotate(360deg); } }";
+      document.head.appendChild(styleEl);
     }
-  }, 250);
+    document.body.appendChild(overlay);
+  }
+  function hideBufferingOverlay() {
+    const el = document.getElementById("byob-buffering-overlay");
+    if (el) el.remove();
+  }
 
   function cleanup() {
-    activateArgs = null; // prevent reconnection
+    activateArgs = null;
     synced = false;
     unhookVideo();
     const bar = document.getElementById("byob-sync-bar");
     if (bar) bar.remove();
   }
 
-  // === YouTube Embed Seek Bar Injection ===
-  // If we're inside a YouTube embed iframe, listen for sponsor segments
-  // from the parent page and inject colored bars into YouTube's seek bar.
+  // ── YouTube embed sponsor segments ────────────────────────────────────────
   function initYouTubeEmbed() {
     if (!window.location.hostname.includes("youtube.com")) return;
     if (!window.location.pathname.startsWith("/embed/")) return;
@@ -1505,7 +1042,6 @@
       const { segments, duration } = e.data;
       if (!segments || !duration) return;
 
-      // Wait for YouTube's seek bar to appear
       const tryInject = (attempt) => {
         if (attempt > 20) return;
         const progressBar =
@@ -1522,71 +1058,42 @@
       tryInject(0);
     });
 
-    // Tell parent we're ready
-    window.parent.postMessage({ type: "byob:embed-ready" }, "*");
+    try { window.parent.postMessage({ type: "byob:embed-ready" }, "*"); } catch (_) {}
   }
 
   function injectSegments(progressBar, segments, duration) {
-    // Remove any existing segments (shouldn't be any since iframe is fresh)
     progressBar.querySelectorAll(".byob-sponsor-segment").forEach((el) => el.remove());
-
     const colors = {
-      sponsor: "#00d400",
-      selfpromo: "#ffff00",
-      interaction: "#cc00ff",
-      intro: "#00ffff",
-      outro: "#0202ed",
-      preview: "#008fd6",
-      music_offtopic: "#ff9900",
-      filler: "#7300FF",
+      sponsor: "#00d400", selfpromo: "#ffff00", interaction: "#cc00ff",
+      intro: "#00ffff", outro: "#0202ed", preview: "#008fd6",
+      music_offtopic: "#ff9900", filler: "#7300FF",
     };
-
     const labels = {
-      sponsor: "Sponsor",
-      selfpromo: "Self Promotion",
-      interaction: "Interaction",
-      intro: "Intro",
-      outro: "Outro",
-      preview: "Preview",
-      music_offtopic: "Non-Music",
-      filler: "Filler",
+      sponsor: "Sponsor", selfpromo: "Self Promotion", interaction: "Interaction",
+      intro: "Intro", outro: "Outro", preview: "Preview",
+      music_offtopic: "Non-Music", filler: "Filler",
     };
-
-    // Make sure the progress bar is positioned for absolute children
     if (getComputedStyle(progressBar).position === "static") {
       progressBar.style.position = "relative";
     }
-
-    // Ensure YouTube's playhead renders above our segments
     const playhead = document.querySelector("yt-progress-bar-playhead, .ytp-scrubber-container");
     if (playhead) playhead.style.zIndex = "50";
-
     for (const seg of segments) {
       const left = (seg.segment[0] / duration) * 100;
-      const width = Math.max(
-        0.3,
-        ((seg.segment[1] - seg.segment[0]) / duration) * 100
-      );
+      const width = Math.max(0.3, ((seg.segment[1] - seg.segment[0]) / duration) * 100);
       const el = document.createElement("div");
       el.className = "byob-sponsor-segment";
       el.title = labels[seg.category] || seg.category;
       el.style.cssText = `
-        position: absolute;
-        bottom: 0;
-        left: ${left}%;
-        width: ${width}%;
-        height: 3px;
-        background: ${colors[seg.category] || "#00d400"};
-        opacity: 0.8;
-        z-index: 0;
-        pointer-events: none;
-        border-radius: 1px;
+        position: absolute; bottom: 0; left: ${left}%; width: ${width}%;
+        height: 3px; background: ${colors[seg.category] || "#00d400"};
+        opacity: 0.8; z-index: 0; pointer-events: none; border-radius: 1px;
       `;
       progressBar.appendChild(el);
     }
   }
 
-  // Run
+  // ── Boot ──────────────────────────────────────────────────────────────────
   init();
   initYouTubeEmbed();
 })();

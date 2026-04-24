@@ -51,7 +51,7 @@
           '';
           installPhase = ''
             mkdir -p $out/unpacked
-            cp -r background.js content.js content_runtime.js manifest.json lib sites icon-*.png $out/unpacked/
+            cp -r background.js content.js manifest.json lib sites icon-*.png $out/unpacked/
             cp $TMPDIR/byob-chrome.zip $out/
             if [ -f $TMPDIR/ext/src.crx ]; then
               cp $TMPDIR/ext/src.crx $out/byob-chrome.crx
@@ -81,7 +81,7 @@
           installPhase = ''
             mkdir -p $out/unpacked
             cp byob-firefox.xpi $out/
-            cp -r background.js content.js content_runtime.js manifest.json lib sites icon-*.png $out/unpacked/
+            cp -r background.js content.js manifest.json lib sites icon-*.png $out/unpacked/
           '';
         };
 
