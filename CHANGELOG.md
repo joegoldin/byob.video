@@ -2,6 +2,18 @@
 
 ---
 
+# v5.0.10
+
+### Fix DRM wedge after large initial-sync seek
+
+When a user joins a Crunchyroll room and their tab was at a different position (e.g. Crunchyroll resumed at 327s from last watch, but room is at 4s), `drmSafeSeek` pauses → seeks → resumes → but MSE can end up with `playing=true` and frames stuck at the target position. Old CMD:play had a "kick seek" (`currentTime = target + 0.01`) right after `play()` that forced MSE to refetch; v5.0.8 dropped it. This restores it inside `drmSafeSeek`.
+
+- **Kick seek in `drmSafeSeek` resume path** — immediately after `play()`, set `currentTime = targetPos + 0.01` to restart MSE frame rendering. Applied to both the paused-then-play and playing-then-pause-seek-play branches.
+- **DRM stall detection re-enabled with silent kick recovery.** If a wedge still happens (frames don't advance despite `playing=true`), silently seek `currentTime + 0.2` — no user prompt, no toast. Up to 3 attempts then gives up. Replaces the old annoying "click play to resync" gesture prompt that users reported as broken UX.
+- **Re-mark programmatic-seek window** after the kick to ensure the kick's own `seeked` event doesn't echo out as a `video:seek`.
+
+---
+
 # v5.0.9
 
 ### Fix echo cascade: play/pause/seek no longer bounces between clients

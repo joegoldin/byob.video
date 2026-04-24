@@ -305,11 +305,10 @@
       }
 
       // Stall detection: video reports !paused but frames aren't advancing.
-      // Disabled on DRM sites — we no longer auto-seek on drift there, so the
-      // MSE pipeline shouldn't wedge from our actions. Natural rebuffering can
-      // false-positive here, and the recovery path prompts a user click that
-      // users find annoying.
-      if (synced && !followerMode && !_recoveryInProgress && !_isDrmSite) {
+      // On DRM, the recovery path is a silent kick seek (no user prompt) —
+      // handles the rare wedge where drmSafeSeek's pre-emptive kick wasn't
+      // enough. Still skipped while a recovery is in progress.
+      if (synced && !followerMode && !_recoveryInProgress) {
         if (!hookedVideo.paused) {
           const pos = hookedVideo.currentTime;
           if (_lastTickPosition != null && Math.abs(pos - _lastTickPosition) < 0.05) {
@@ -530,23 +529,21 @@
     _stallTickCount = 0;
 
     if (_isDrmSite) {
-      _log("STALL: DRM site, going straight to needsGesture");
-      _stallRecoveryAttempts = 0;
-      synced = false;
-      needsGesture = true;
-      _stallRecovery = true;
-      followerMode = false;
-      // Stalled video reports paused=false, which would make waitForNativePlay
-      // bypass the gesture wait. Force an actual pause so we genuinely wait
-      // for the user to click play. Event handlers skip while synced=false.
-      if (_drmPauseTimer) { clearTimeout(_drmPauseTimer); _drmPauseTimer = null; }
-      if (pauseEnforcer) { clearInterval(pauseEnforcer); pauseEnforcer = null; }
+      // Silent kick recovery: nudge the playhead forward a fraction to force
+      // MSE to refetch segments. No user prompt — most users won't even
+      // notice. Up to 3 attempts before giving up silently (user can seek
+      // manually to recover if kicks don't work).
+      _stallRecoveryAttempts++;
+      if (_stallRecoveryAttempts > 3) {
+        _log("STALL: DRM silent recovery exhausted, giving up");
+        _stallRecoveryAttempts = 0;
+        return;
+      }
+      _log("STALL: DRM silent kick recovery attempt", _stallRecoveryAttempts);
+      markProgrammaticSeek();
       _programmaticSeek = true;
-      try { hookedVideo.pause(); } catch (_) {}
+      try { hookedVideo.currentTime = hookedVideo.currentTime + 0.2; } catch (_) {}
       _programmaticSeek = false;
-      updateSyncBarStatus("clickjoin");
-      showJoinToast("Playback stuck — click play to resync");
-      waitForNativePlay();
       return;
     }
 
@@ -634,7 +631,13 @@
       markProgrammaticSeek();
       _programmaticSeek = true;
       hookedVideo.currentTime = targetPos;
-      if (shouldPlay) hookedVideo.play().catch(() => {});
+      if (shouldPlay) {
+        hookedVideo.play().catch(() => {});
+        // Kick seek: large backward seeks on Crunchyroll often leave MSE in
+        // a state where playing=true but frames don't advance. A tiny
+        // follow-up seek forces the pipeline to refetch from the new target.
+        hookedVideo.currentTime = targetPos + 0.01;
+      }
       _programmaticSeek = false;
       return;
     }
@@ -655,10 +658,14 @@
       if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
       if (shouldPlay && hookedVideo) {
         suppress("playing");
+        markProgrammaticSeek();
         _programmaticSeek = true;
         hookedVideo.play().catch((e) => {
           _log("drmSafeSeek: resume play() rejected:", e?.message);
         });
+        // Kick seek for MSE — forces the pipeline to restart frame rendering
+        // after a large seek. Without this, playing=true with stuck frames.
+        hookedVideo.currentTime = targetPos + 0.01;
         _programmaticSeek = false;
       }
     };
