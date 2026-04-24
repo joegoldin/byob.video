@@ -863,7 +863,7 @@
     // may not have a hooked video (it's in an iframe) but still needs to
     // hide the toast and update the sync bar.
     if (msg.type === "command:synced") {
-      const wasAlreadySynced = synced;
+      if (_syncingTimeoutId) { clearTimeout(_syncingTimeoutId); _syncingTimeoutId = null; }
       synced = true;
       needsGesture = false;
       // Enter follower mode — read-only until video proves stability.
@@ -872,9 +872,11 @@
       followerMode = true;
       followerStableTicks = 0;
       hideJoinToast();
-      if (hookedVideo) {
-        updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
-      }
+      // Unconditional status update — top frame may not have hookedVideo
+      // (video is in an iframe) but still needs to transition out of
+      // "Syncing...". Assume playing if unknown; byob:bar-update will correct.
+      const paused = hookedVideo ? hookedVideo.paused : false;
+      updateSyncBarStatus(paused ? "paused" : "playing");
       return;
     }
 
@@ -1026,12 +1028,30 @@
     }
   }
 
+  let _syncingTimeoutId = null;
+
   function requestSync() {
     hideJoinToast();
     updateSyncBarStatus("syncing");
     if (port) {
       port.postMessage({ type: "video:request-sync" });
     }
+    // Fallback: if command:synced doesn't arrive within 5s (SW sleep, lost
+    // message, tabId mismatch), force-transition so UI doesn't stick on
+    // "Syncing..." forever.
+    if (_syncingTimeoutId) clearTimeout(_syncingTimeoutId);
+    _syncingTimeoutId = setTimeout(() => {
+      _syncingTimeoutId = null;
+      if (!synced) {
+        _log("requestSync timeout — forcing synced=true (command:synced never arrived)");
+        synced = true;
+        needsGesture = false;
+        followerMode = true;
+        followerStableTicks = 0;
+        const paused = hookedVideo ? hookedVideo.paused : false;
+        updateSyncBarStatus(paused ? "paused" : "playing");
+      }
+    }, 5000);
   }
 
   let _nativePlayListener = null;

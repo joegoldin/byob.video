@@ -2,6 +2,18 @@
 
 ---
 
+# v5.0.12
+
+### Fix sync bar stuck on "Syncing..." forever
+
+`command:synced` is sent by the service worker 500ms after the server replies to `sync:request_state`. If that message is lost (MV3 SW goes to sleep before the timeout, `tabId` mismatch between port and `broadcastToTab`, or a missing handler), the sync bar stays on "Syncing..." with no recovery. Additionally, the previous `command:synced` handler only updated the status when `hookedVideo` was set, so a top frame whose video lives in an iframe silently stayed stuck.
+
+- **5-second fallback in `requestSync()`:** if `command:synced` hasn't arrived, force `synced = true`, enter follower mode, and transition the sync bar out of "Syncing...". Logs "command:synced never arrived" so the root cause is still visible in the debug stream.
+- **`command:synced` updates status unconditionally** — defaults to "playing" if `hookedVideo` is null (video in iframe). The subsequent `byob:bar-update` from the iframe corrects to the real state.
+- Cleared the fallback timer when `command:synced` does arrive.
+
+---
+
 # v5.0.11
 
 ### Fix kick seek aborting `play()` — "UI says playing but video is paused"
