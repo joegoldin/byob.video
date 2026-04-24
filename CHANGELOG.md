@@ -2,6 +2,25 @@
 
 ---
 
+# v5.0.18
+
+### Remove kick seeks — minimal-intervention sync
+
+The minimal Crunchyroll handler is literally one line:
+```js
+if (msg.play && player.paused === true) player.play();
+```
+No `currentTime=` pre-assignment, no kick seek, no pause-seek-play dance. And it works 100% of the time.
+
+Every kick seek I'd added was fighting MSE. Empirical proof from the last test: after `CMD:play` + `.then()` kick to `274.76`, the video position stayed at `274.75` **forever**. The kick went through but MSE refused to advance frames.
+
+- **`CMD:play`: removed the post-play kick seek.** Also no longer re-assigns `currentTime` when already at target (within 0.1s) — matches "just call `play()`" approach.
+- **`drmSafeSeek` paused-path: removed kick seek after `play()`.**
+- **`drmSafeSeek` playing-path (pause-seek-resume): removed kick seek after resume's `play()`.**
+- Kept stall detection + progressive-kick recovery as a safety net for natural wedges, but we no longer provoke MSE with kicks during normal flow.
+
+---
+
 # v5.0.17
 
 ### Fix stall detector racing against MSE's natural buffering

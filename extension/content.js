@@ -658,24 +658,13 @@
     }
 
     if (!wasPlaying) {
-      // Paused → seek is safe. Optionally play.
+      // Paused → seek is safe. Optionally play. No kick — just play().
       if (shouldPlay) suppress("playing");
       markProgrammaticSeek();
       _programmaticSeek = true;
       hookedVideo.currentTime = targetPos;
       if (shouldPlay) {
-        hookedVideo.play().then(() => {
-          // Kick seek AFTER play resolves — synchronously assigning
-          // currentTime during a pending play() aborts the play promise
-          // with "fetching process aborted", which leaves the video paused
-          // while the server thinks it's playing.
-          if (hookedVideo && !hookedVideo.paused) {
-            markProgrammaticSeek();
-            _programmaticSeek = true;
-            hookedVideo.currentTime = targetPos + 0.01;
-            _programmaticSeek = false;
-          }
-        }).catch((e) => {
+        hookedVideo.play().catch((e) => {
           _log("drmSafeSeek: paused-path play() rejected:", e?.message);
         });
       }
@@ -702,18 +691,7 @@
         markProgrammaticSeek();
         deferStall();
         _programmaticSeek = true;
-        hookedVideo.play().then(() => {
-          // Kick seek AFTER play resolves. Doing it synchronously after
-          // play() (before resolution) aborts the play promise and leaves
-          // the video paused despite shouldPlay=true.
-          if (hookedVideo && !hookedVideo.paused) {
-            markProgrammaticSeek();
-            deferStall();
-            _programmaticSeek = true;
-            hookedVideo.currentTime = targetPos + 0.01;
-            _programmaticSeek = false;
-          }
-        }).catch((e) => {
+        hookedVideo.play().catch((e) => {
           _log("drmSafeSeek: resume play() rejected:", e?.message);
         });
         _programmaticSeek = false;
@@ -966,29 +944,20 @@
           drmSafeSeek(msg.position, true);
           break;
         }
+        // The reference impl-style: if already at the right position, just call play().
+        // No pre-seek, no kick seek. Every currentTime= we add fights MSE.
         suppress("playing");
-        markProgrammaticSeek();
-        _programmaticSeek = true;
-        if (msg.position != null) hookedVideo.currentTime = msg.position;
-        const kickTarget = (msg.position ?? hookedVideo.currentTime) + 0.01;
+        if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) > 0.1) {
+          markProgrammaticSeek();
+          _programmaticSeek = true;
+          hookedVideo.currentTime = msg.position;
+          _programmaticSeek = false;
+        }
         hookedVideo.play().then(() => {
           _log("CMD:play play() resolved, paused=", hookedVideo?.paused, "pos=", hookedVideo?.currentTime);
-          if (_isDrmSite && hookedVideo && !hookedVideo.paused) {
-            // Kick seek AFTER play resolves, not synchronously. A sync
-            // currentTime= during a pending play() aborts the play promise
-            // with "fetching process aborted", leaving video paused while
-            // server thinks it's playing.
-            markProgrammaticSeek();
-            deferStall();
-            _programmaticSeek = true;
-            hookedVideo.currentTime = kickTarget;
-            _programmaticSeek = false;
-            _log("CMD:play DRM kick seek to", kickTarget);
-          }
         }).catch((e) => {
           _log("CMD:play play() REJECTED:", e?.message);
         });
-        _programmaticSeek = false;
         break;
 
       case "command:pause":
