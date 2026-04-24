@@ -5,6 +5,9 @@
   "description": "Syncs video playback with byob.video rooms",
   "permissions": ["storage"],
   "host_permissions": ["<all_urls>"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws: wss: http: https:;"
+  },
   "background": {
     "scripts": ["background.js"],
     "type": "module"
