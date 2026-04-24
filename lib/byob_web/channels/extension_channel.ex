@@ -117,7 +117,12 @@ defmodule ByobWeb.ExtensionChannel do
         state.current_time
       end
 
-    drift_ms = round((client_pos - server_pos) * 1000)
+    # Client reports its learned structural offset (render/decode latency).
+    # Subtract it so reported drift reflects residual drift from baseline,
+    # which is the signal that actually matters for mutual client sync.
+    offset_ms = payload["offset_ms"] || 0
+    raw_drift_ms = round((client_pos - server_pos) * 1000)
+    drift_ms = raw_drift_ms - offset_ms
 
     Phoenix.PubSub.broadcast(
       Byob.PubSub,
@@ -127,6 +132,8 @@ defmodule ByobWeb.ExtensionChannel do
          user_id: socket.assigns.user_id,
          tab_id: tab_id,
          drift_ms: drift_ms,
+         raw_drift_ms: raw_drift_ms,
+         offset_ms: offset_ms,
          server_position: Float.round(server_pos * 1.0, 1),
          play_state: if(is_playing, do: "playing", else: "paused")
        }}

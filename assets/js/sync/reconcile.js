@@ -11,6 +11,13 @@
 //   * Post-seek quiet window (widened dead-zone for 5 s) prevents re-trigger on bounce
 //   * Before hard seek, we request a mini-burst resync. If drift is still huge after
 //     the fresh offset lands, we seek. Otherwise the rate-correction path handles it.
+//
+// Adaptive offset:
+//   Each client has a structural latency (decode + render + measurement bias).
+//   We learn it as an EMA of raw drift during stable conditions, then use
+//   `drift - offsetEma` as the correction signal. Two clients with different
+//   structural latencies converge on the same wall-clock moment instead of
+//   each sitting at their own drift within tolerance.
 
 const TICK_MS = 100;
 const HISTORY_SIZE = 5;
@@ -23,6 +30,9 @@ const RATE_MAX = 1.1;
 const HARD_SEEK_THRESHOLD_MS = 2000;
 const HARD_SEEK_THRESHOLD_WHILE_CORRECTING_MS = 3000;
 const DIRECTION_STABILITY_SAMPLES = 3;
+const OFFSET_EMA_ALPHA = 0.02;       // ~50 samples (5s @ 100ms) to track
+const OFFSET_CAP_MS = 500;           // refuse to learn beyond this (transient protection)
+const OFFSET_WARMUP_SAMPLES = 10;    // ignore EMA until this many stable samples
 
 export class Reconcile {
   constructor(playerAdapter) {
@@ -39,14 +49,30 @@ export class Reconcile {
     this.resyncInFlight = false;
     this.lastResyncAt = 0;
     this.driftHistory = []; // rolling list of most-recent drifts (ms)
+    this.offsetEmaMs = 0;   // learned structural latency (ms)
+    this.offsetSamples = 0; // count of stable samples contributing to EMA
+    this.lastDriftMs = 0;   // most recent adjusted drift (for UI reporting)
+    this.lastRawDriftMs = 0;
   }
 
   setServerState(position, serverTime, clockSync) {
     this.serverPosition = position;
     this.serverTime = serverTime;
     this.clockSync = clockSync;
-    // State moved; drift history is stale
+    // State moved; drift history is stale. Keep offsetEma — it's a property of
+    // the player pipeline, not of any particular server reference.
     this.driftHistory = [];
+  }
+
+  // Current learned offset (for UI / reporting).
+  getOffsetMs() {
+    return this.offsetSamples >= OFFSET_WARMUP_SAMPLES ? this.offsetEmaMs : 0;
+  }
+
+  // Forget the learned offset (call on source/video change).
+  resetOffset() {
+    this.offsetEmaMs = 0;
+    this.offsetSamples = 0;
   }
 
   // Temporarily pause reconcile (e.g., during local seek)
@@ -67,6 +93,8 @@ export class Reconcile {
     this.isRateCorrecting = false;
     this.currentRateSign = 0;
     this.driftHistory = [];
+    this.offsetEmaMs = 0;
+    this.offsetSamples = 0;
     try {
       this.player.setPlaybackRate(1.0);
     } catch (_) {}
@@ -81,20 +109,47 @@ export class Reconcile {
     const elapsed = (now - this.serverTime) / 1000;
     const expectedPosition = this.serverPosition + elapsed;
     const localPosition = this.player.getCurrentTime();
-    const driftMs = (localPosition - expectedPosition) * 1000;
-
-    // Rolling median filter to smooth out per-tick noise
-    this.driftHistory.push(driftMs);
-    if (this.driftHistory.length > HISTORY_SIZE) this.driftHistory.shift();
-
-    const medianDriftMs = median(this.driftHistory);
-    const absMedian = Math.abs(medianDriftMs);
+    const rawDriftMs = (localPosition - expectedPosition) * 1000;
 
     const postSeek = Date.now() - this.lastHardSeekAt < POST_SEEK_QUIET_MS;
     const deadZone = postSeek ? POST_SEEK_DEAD_ZONE_MS : DEAD_ZONE_MS;
     const hardSeekThreshold = this.isRateCorrecting
       ? HARD_SEEK_THRESHOLD_WHILE_CORRECTING_MS
       : HARD_SEEK_THRESHOLD_MS;
+
+    // Update EMA only during stable conditions (not mid-seek, mid-correction,
+    // mid-resync). Cap prevents a transient from poisoning the learned value.
+    const stableForLearning =
+      !postSeek &&
+      !this.isRateCorrecting &&
+      Math.abs(rawDriftMs) < OFFSET_CAP_MS * 2;
+    if (stableForLearning) {
+      if (this.offsetSamples === 0) {
+        this.offsetEmaMs = rawDriftMs;
+      } else {
+        this.offsetEmaMs =
+          OFFSET_EMA_ALPHA * rawDriftMs + (1 - OFFSET_EMA_ALPHA) * this.offsetEmaMs;
+      }
+      this.offsetEmaMs = clamp(this.offsetEmaMs, -OFFSET_CAP_MS, OFFSET_CAP_MS);
+      this.offsetSamples++;
+    }
+
+    // Subtract learned offset so reconcile acts on drift from baseline, not
+    // from the abstract server projection. Uniform -200ms across clients →
+    // all learn -200 → all adjusted-drifts → 0 → no corrections fire.
+    const effectiveOffsetMs =
+      this.offsetSamples >= OFFSET_WARMUP_SAMPLES ? this.offsetEmaMs : 0;
+    const driftMs = rawDriftMs - effectiveOffsetMs;
+
+    // Rolling median filter to smooth out per-tick noise (on adjusted drift)
+    this.driftHistory.push(driftMs);
+    if (this.driftHistory.length > HISTORY_SIZE) this.driftHistory.shift();
+
+    const medianDriftMs = median(this.driftHistory);
+    const absMedian = Math.abs(medianDriftMs);
+
+    this.lastDriftMs = driftMs;
+    this.lastRawDriftMs = rawDriftMs;
 
     // -----------------------------------------------------------------
     // Hard-seek path: confirm with a fresh clock sync before snapping, but

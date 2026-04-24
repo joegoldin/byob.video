@@ -83,6 +83,20 @@ const VideoPlayer = {
     this._sizePlayer();
     this._resizeHandler = () => this._sizePlayer();
     window.addEventListener("resize", this._resizeHandler);
+
+    // Report drift + learned offset so the "Details for nerds" panel can show
+    // this browser's local player alongside extension clients. 1s cadence is
+    // plenty (panel prunes > 5s stale).
+    this._driftReportInterval = setInterval(() => {
+      if (!this.player || !this.isReady) return;
+      if (!this.clockSync?.isReady?.()) return;
+      const state = this.player.getState?.();
+      this.pushEvent("video:drift_report", {
+        drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
+        offset_ms: Math.round(this.reconcile.getOffsetMs?.() || 0),
+        playing: state === "playing",
+      });
+    }, 1000);
   },
 
   reconnected() {
@@ -122,6 +136,7 @@ const VideoPlayer = {
     if (this.seekDetectorInterval) clearInterval(this.seekDetectorInterval);
     if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
     if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
+    if (this._driftReportInterval) clearInterval(this._driftReportInterval);
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
     if (this._unloadHandler) window.removeEventListener("beforeunload", this._unloadHandler);
     if (this._resizeHandler) window.removeEventListener("resize", this._resizeHandler);
@@ -228,6 +243,9 @@ const VideoPlayer = {
       (sourceType === "youtube" && sourceId ? `https://img.youtube.com/vi/${sourceId}/hqdefault.jpg` : null);
     this._embedBlocked = false;
     if (this._extPollInterval) { clearInterval(this._extPollInterval); this._extPollInterval = null; }
+    // Structural offset is a property of the current player pipeline. A new
+    // source can mean different latency; let it re-learn from scratch.
+    this.reconcile.resetOffset();
 
     const pending = this._pendingState;
     const shouldPlay = pending?.play_state === "playing";

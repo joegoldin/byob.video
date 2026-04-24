@@ -147,7 +147,7 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case "video:state":
-      if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing, tab_id: String(tabId) });
+      if (channel) channel.push("video:state", { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing, offset_ms: msg.offset_ms || 0, tab_id: String(tabId) });
       break;
 
     case "video:ready":

@@ -35,6 +35,14 @@
   let _pendingPlayPause = null;    // debounced send
   let _hardSeekFailures = 0;
   let _mismatchSince = 0;          // Date.now() when actual≠expected started
+  // Adaptive drift offset: EMA of raw drift during stable playback. Applied
+  // to reconcile decisions and reported to server so panel drift converges
+  // to ~0 after learning structural latency.
+  let _offsetEmaMs = 0;
+  let _offsetSamples = 0;
+  const _OFFSET_ALPHA = 0.02;
+  const _OFFSET_CAP_MS = 500;
+  const _OFFSET_WARMUP = 10;
   // Echo suppression is handled entirely by commandGuard:
   //   - After any server command (play/pause/seek/synced), commandGuard is
   //     armed and auto-releases once the video's actual state matches what
@@ -375,7 +383,13 @@
       }
       _lastPolledPaused = paused;
 
-      const msg = { type: "video:state", position: pos, duration: dur, playing };
+      const msg = {
+        type: "video:state",
+        position: pos,
+        duration: dur,
+        playing,
+        offset_ms: _offsetSamples >= _OFFSET_WARMUP ? Math.round(_offsetEmaMs) : 0,
+      };
       if (synced && port) port.postMessage(msg);
       if (port) {
         port.postMessage({
@@ -406,6 +420,8 @@
     hookedVideo = null;
     isBuffering = false;
     hideBufferingOverlay();
+    _offsetEmaMs = 0;
+    _offsetSamples = 0;
     if (timeReportInterval) { clearInterval(timeReportInterval); timeReportInterval = null; }
   }
 
@@ -568,7 +584,27 @@
       const serverNow = now + clockOffset;
       const elapsed = (serverNow - serverRef.serverTime) / 1000;
       const expectedPos = serverRef.position + elapsed;
-      const drift = localPos - expectedPos;
+      const rawDrift = localPos - expectedPos;
+      const rawDriftMs = rawDrift * 1000;
+
+      // Learn EMA only during stable playback (not during/after a recent seek,
+      // and not on absurd values that would poison the estimate).
+      if (!recentSeek && Math.abs(rawDriftMs) < _OFFSET_CAP_MS * 2) {
+        if (_offsetSamples === 0) {
+          _offsetEmaMs = rawDriftMs;
+        } else {
+          _offsetEmaMs = _OFFSET_ALPHA * rawDriftMs + (1 - _OFFSET_ALPHA) * _offsetEmaMs;
+        }
+        if (_offsetEmaMs > _OFFSET_CAP_MS) _offsetEmaMs = _OFFSET_CAP_MS;
+        else if (_offsetEmaMs < -_OFFSET_CAP_MS) _offsetEmaMs = -_OFFSET_CAP_MS;
+        _offsetSamples++;
+      }
+
+      // Apply learned offset: treat rawDrift == offsetEma as "baseline" (no
+      // correction needed). Uniform structural latency across clients → each
+      // learns its own offset → all converge to the same wall-clock moment.
+      const effectiveOffsetMs = _offsetSamples >= _OFFSET_WARMUP ? _offsetEmaMs : 0;
+      const drift = rawDrift - effectiveOffsetMs / 1000;
       const absDrift = Math.abs(drift);
       const deadZone = recentSeek ? 2.0 : (syncToleranceMs / 1000);
 

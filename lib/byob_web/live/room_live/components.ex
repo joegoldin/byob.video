@@ -362,17 +362,15 @@ defmodule ByobWeb.RoomLive.Components do
               <span>Drift tolerance</span>
               <span>250ms</span>
             </div>
-            <%
-              # Filter out stale clients: extensions send a video:state every
-              # 500ms, so anything not updated in the last 5s has almost
-              # certainly disconnected and shouldn't be in the count.
-              now_s = System.system_time(:second)
+            <% # Filter out stale clients: extensions send a video:state every
+            # 500ms, so anything not updated in the last 5s has almost
+            # certainly disconnected and shouldn't be in the count.
+            now_s = System.system_time(:second)
 
-              active_clients =
-                (@sync_stats[:clients] || %{})
-                |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
-                |> Map.new()
-            %>
+            active_clients =
+              (@sync_stats[:clients] || %{})
+              |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
+              |> Map.new() %>
             <%= if map_size(active_clients) > 0 do %>
               <% drifts = active_clients |> Map.values() |> Enum.map(& &1.drift_ms) %>
               <% avg = div(Enum.sum(drifts), length(drifts)) %>
@@ -408,6 +406,14 @@ defmodule ByobWeb.RoomLive.Components do
                         {if info.drift_ms > 0, do: "+", else: ""}{info.drift_ms}ms
                       </span>
                     </div>
+                    <%= if Map.get(info, :offset_ms, 0) != 0 do %>
+                      <div class="flex justify-between">
+                        <span>Offset</span>
+                        <span class="text-base-content/40">
+                          {if info.offset_ms > 0, do: "+", else: ""}{info.offset_ms}ms
+                        </span>
+                      </div>
+                    <% end %>
                     <div class="flex justify-between">
                       <span>Server pos</span>
                       <span>{info.server_position}s</span>
@@ -433,12 +439,16 @@ defmodule ByobWeb.RoomLive.Components do
           <button
             type="button"
             class="btn btn-sm btn-ghost w-full"
-            onclick={~s|["byob_autoplay_help_dismissed"].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} }); this.textContent = "Popups will show again"; this.disabled = true;|}
+            onclick={
+              ~s|["byob_autoplay_help_dismissed"].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} }); this.textContent = "Popups will show again"; this.disabled = true;|
+            }
           >
             Forget cleared popups
           </button>
           <p class="text-xs text-base-content/50 mt-1 text-center">
-            Re-enables any "don't show again" dialogs (e.g. the autoplay-blocked help).
+            <span>Re-enables any "don't show again" dialogs</span>
+            <br />
+            <span>(e.g. the autoplay-blocked help).</span>
           </p>
         </div>
         <%!-- Attribution --%>
@@ -532,7 +542,6 @@ defmodule ByobWeb.RoomLive.Components do
               type="checkbox"
               id="byob-autoplay-help-dont-show"
               class="checkbox checkbox-xs"
-              checked
             /> Don't show this again
           </label>
           <form method="dialog">

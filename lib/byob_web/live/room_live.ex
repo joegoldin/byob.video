@@ -193,6 +193,48 @@ defmodule ByobWeb.RoomLive do
   def handle_event("video:pause", params, socket), do: Playback.handle_pause(params, socket)
   def handle_event("video:seek", params, socket), do: Playback.handle_seek(params, socket)
 
+  def handle_event("video:drift_report", params, socket) do
+    # Local (browser) player reports its adjusted drift and learned offset so
+    # the "Details for nerds" panel can show it next to extension clients.
+    user_id = socket.assigns[:user_id]
+    room_id = socket.assigns[:room_id]
+    room_pid = socket.assigns[:room_pid]
+
+    if user_id && room_id && room_pid do
+      drift_ms = trunc(params["drift_ms"] || 0)
+      offset_ms = trunc(params["offset_ms"] || 0)
+      playing = params["playing"] || false
+
+      state = Byob.RoomServer.get_state(room_pid)
+      now = System.monotonic_time(:millisecond)
+
+      server_pos =
+        if state.play_state == :playing do
+          elapsed = (now - Map.get(state, :last_sync_at, now)) / 1000
+          state.current_time + elapsed
+        else
+          state.current_time
+        end
+
+      Phoenix.PubSub.broadcast(
+        Byob.PubSub,
+        "room:#{room_id}",
+        {:sync_client_stats,
+         %{
+           user_id: user_id,
+           tab_id: "browser",
+           drift_ms: drift_ms,
+           raw_drift_ms: drift_ms + offset_ms,
+           offset_ms: offset_ms,
+           server_position: Float.round(server_pos * 1.0, 1),
+           play_state: if(playing, do: "playing", else: "paused")
+         }}
+      )
+    end
+
+    {:noreply, socket}
+  end
+
   def handle_event("video:embed_blocked", params, socket),
     do: Playback.handle_embed_blocked(params, socket)
 
@@ -310,6 +352,8 @@ defmodule ByobWeb.RoomLive do
     clients =
       Map.put(clients, key, %{
         drift_ms: data.drift_ms,
+        raw_drift_ms: Map.get(data, :raw_drift_ms, data.drift_ms),
+        offset_ms: Map.get(data, :offset_ms, 0),
         server_position: data.server_position,
         play_state: data.play_state,
         updated_at: System.system_time(:second)

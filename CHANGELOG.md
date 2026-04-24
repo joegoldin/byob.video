@@ -2,6 +2,25 @@
 
 ---
 
+# v6.3.0
+
+### Adaptive drift offset — learn structural latency, converge reported drift to zero
+
+The sync-stats panel often showed a stable -200ms (or similar) per client, stably within the 250ms tolerance. That's render-pipeline lag — decode + buffer + display latency — not a clock-sync bug. It's structural. Before this release, we just lived within ±tolerance of the server projection; clients with different structural offsets sat at different wall-clock positions, eating into the hard-seek headroom.
+
+Now each client learns its own offset via an EMA over raw drift during stable playback, then treats `rawDrift == offsetEma` as the neutral baseline. Rate corrections only fire for deviations from baseline. Applied in both reconcile paths:
+
+- `assets/js/sync/reconcile.js` — browser-side (YouTube / Vimeo / direct video)
+- `extension/content.js` — extension-side (Crunchyroll / arbitrary `<video>` sites)
+
+Guardrails: alpha = 0.02 (~5s to converge at 100ms tick), cap at ±500ms, 10-sample warmup before applying, freeze learning during recent hard seeks / rate correction, reset on source change. The hard-seek path still uses the raw `expectedPosition` so catastrophic drift recovery still lands on the correct server position.
+
+The extension now reports its learned `offset_ms` in `video:state`; the server subtracts it from computed drift before broadcasting to the LV panel. The browser-side `VideoPlayer` hook reports its own drift + offset every 1s via a new `video:drift_report` LV event, so the local player appears in the panel alongside extension clients. The panel now shows an "Offset" line per client when non-zero, and "Drift" reflects the residual after compensation — the signal that actually matters for mutual client sync.
+
+Clock-sync logic, correction thresholds, generation-counter suppression, and the reconcile/hysteresis loop all remain untouched — the learned offset only shifts where the player *aims*. Uniform -200ms across clients → each learns -200 → all adjusted-drifts → 0 → no corrections fire. Mixed offsets (-50 vs -300) → each learns its own → all converge to the same wall-clock moment.
+
+---
+
 # v6.2.16
 
 ### "Forget cleared popups" button in settings
