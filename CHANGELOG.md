@@ -2,6 +2,34 @@
 
 ---
 
+# v5.0.19
+
+### Strip DRM pause debounce + postSeek suppression — forward events directly
+
+Observed failure in v5.0.18: seek-while-playing on Crunchyroll sent only `video:seek` to the server. Event trace:
+
+```
+onVideoPause DEBOUNCE pos=763.52
+onVideoSeeking DRM suppress set, cancelledPause=true pos=571.75
+onVideoPlay SUPPRESSED (postSeek) pos=571.75
+onVideoSeeked SEND pos=571.75
+```
+
+The browser emits a natural `pause → seek → play` sequence when the user scrubs. Our pause was 300ms-debounced, `onVideoSeeking` cancelled the debounce, and `_postSeekSuppressUntil` ate the subsequent `play`. Receivers got `CMD:seek` on a playing video and wedged MSE.
+
+The simpler model: none of this. It listens to `play`, `pause`, `timeupdate`, `durationchange`, `ended` — and forwards each `play`/`pause` immediately. Commands map 1:1 to player ops: `play → .play()`, `pause → .pause()`, `seek → currentTime=`. No pause-seek-play dances, no kick seeks, no debounces.
+
+- **`onVideoPause`**: removed 300ms DRM debounce and `_postSeekSuppressUntil` gate. Fires immediately.
+- **`onVideoPlay`**: removed `_postSeekSuppressUntil` gate.
+- **`onVideoSeeking`**: removed `_postSeekSuppressUntil` set and pause-timer cancel. Now a pure log.
+- **`CMD:play`**: if paused, `.play()`. If already playing, no-op. No `currentTime=`, no kick.
+- **`CMD:pause`**: if playing, `.pause()`. If already paused, no-op. No `currentTime=`, no enforcer loop.
+- **`CMD:seek`**: `currentTime = pos`. No pause-seek-play.
+- **Removed `drmSafeSeek`** entirely. The natural event sequence from the sender already produces the pause-seek-play pattern on receivers.
+- Kept: generation-counter `suppress()` for echo prevention on programmatic play/pause, `markProgrammaticSeek()` time-window for seeking/seeked echo, `deferStall()` to skip stall recovery during legitimate buffering.
+
+---
+
 # v5.0.18
 
 ### Remove kick seeks — minimal-intervention sync
