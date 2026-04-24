@@ -321,6 +321,9 @@ defmodule ByobWeb.RoomLive do
 
   def handle_info({:users_updated, users}, socket), do: PubSub.handle_users_updated(users, socket)
 
+  def handle_info({:room_presence, data}, socket),
+    do: PubSub.handle_room_presence(data, socket)
+
   def handle_info({:activity_log_updated, log}, socket),
     do: PubSub.handle_activity_log_updated(log, socket)
 

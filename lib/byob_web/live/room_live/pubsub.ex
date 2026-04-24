@@ -36,6 +36,11 @@ defmodule ByobWeb.RoomLive.PubSub do
     {:noreply, push_event(socket, "sync:autoplay_cancelled", %{})}
   end
 
+  def handle_room_presence(%{event: event, username: username}, socket) do
+    verb = if event == "joined", do: "joined", else: "left"
+    {:noreply, push_event(socket, "toast", %{text: "#{username} #{verb} the room"})}
+  end
+
   def handle_queue_updated(%{queue: queue, current_index: current_index}, socket) do
     current_media = if current_index, do: Enum.at(queue, current_index), else: nil
 

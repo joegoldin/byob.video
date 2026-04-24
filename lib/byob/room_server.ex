@@ -407,10 +407,7 @@ defmodule Byob.RoomServer do
         cleaned_open =
           open_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
 
-        state
-        |> Map.put(:ready_tabs, cleaned_ready)
-        |> Map.put(:open_tabs, cleaned_open)
-        |> maybe_pause_if_no_active_playback()
+        state |> Map.put(:ready_tabs, cleaned_ready) |> Map.put(:open_tabs, cleaned_open)
       else
         state
       end
@@ -424,23 +421,30 @@ defmodule Byob.RoomServer do
 
     connected_count = Enum.count(state.users, fn {_, u} -> u.connected end)
 
+    # Pause when the room is down to ≤1 connected user — there's nobody
+    # left to watch in sync, so leaving state=:playing just lets the
+    # server-side clock drift. This also covers the empty-room case.
+    # 2 → 1 pauses; 3 → 2 doesn't. The remaining user can hit play again
+    # whenever they want to watch solo.
+    state =
+      if connected_count <= 1 and state.play_state == :playing do
+        %{
+          state
+          | play_state: :paused,
+            current_time: current_position(state),
+            last_sync_at: System.monotonic_time(:millisecond)
+        }
+        |> cancel_sync_correction()
+        |> tap(fn s ->
+          now = System.monotonic_time(:millisecond)
+          broadcast(s, {:sync_pause, %{time: s.current_time, server_time: now, user_id: nil}})
+        end)
+      else
+        state
+      end
+
     state =
       if connected_count == 0 do
-        # Auto-pause when everyone leaves so video doesn't keep "playing"
-        # in the background. When someone reconnects, they'll see it paused.
-        state =
-          if state.play_state == :playing do
-            %{
-              state
-              | play_state: :paused,
-                current_time: current_position(state),
-                last_sync_at: System.monotonic_time(:millisecond)
-            }
-            |> cancel_sync_correction()
-          else
-            state
-          end
-
         schedule_cleanup(state)
       else
         broadcast(state, {:users_updated, state.users})
@@ -1045,14 +1049,7 @@ defmodule Byob.RoomServer do
   # Periodic state heartbeat: re-broadcasts play_state + current_time so
   # clients that missed an earlier broadcast (reconnect, transient drop) can
   # reconcile without waiting for the next natural state change.
-  #
-  # Also defends against the pathological "room stays :playing with nobody
-  # actually playing" state — if the current media requires an extension
-  # player and zero tabs are open, force a pause before the broadcast so
-  # the heartbeat itself carries the corrected state.
   def handle_info(:state_heartbeat, state) do
-    state = maybe_pause_if_no_active_playback(state)
-
     now = System.monotonic_time(:millisecond)
     position = current_position(state)
     SyncLog.heartbeat(state.room_id, state.play_state, position)
@@ -1141,39 +1138,6 @@ defmodule Byob.RoomServer do
       %{duration: d} when is_number(d) and d > 0 -> d * 1.0
       _ -> nil
     end
-  end
-
-  # Auto-pause when the room's currently-playing media requires an extension
-  # player window and every open tab has closed. Without this hook, a room
-  # sits in play_state=:playing with nobody actually rendering the video;
-  # current_position/1 keeps advancing by wall-clock and the next joiner
-  # drags everyone to a bogus "authoritative" position via reconcile.
-  defp maybe_pause_if_no_active_playback(state) do
-    cond do
-      state.play_state != :playing -> state
-      not extension_required_media?(state) -> state
-      map_size(Map.get(state, :open_tabs, %{})) > 0 -> state
-      true -> force_pause(state)
-    end
-  end
-
-  defp extension_required_media?(%{current_index: nil}), do: false
-
-  defp extension_required_media?(%{current_index: idx, queue: queue}) do
-    case Enum.at(queue, idx) do
-      %{source_type: :extension_required} -> true
-      _ -> false
-    end
-  end
-
-  defp force_pause(state) do
-    now = System.monotonic_time(:millisecond)
-    pos = current_position(state)
-
-    state = %{state | play_state: :paused, current_time: pos, last_sync_at: now}
-    state = cancel_sync_correction(state)
-    broadcast(state, {:sync_pause, %{time: pos, server_time: now, user_id: nil}})
-    state
   end
 
   # Fetch YouTube metadata. Prefer the Data API (duration + published_at);

@@ -2,19 +2,26 @@
 
 ---
 
-# v6.2.3
+# v6.2.4
 
-### Auto-pause extension-required rooms when nobody has a player window open
+### Presence toasts in webapp + pause when ≤1 users remain (reverts v6.2.3 approach)
 
-Addresses the root cause behind the "server-side clock runaway past duration" that v6.2.2 band-aided with a clamp. If the current media requires an extension player window (anything but YouTube / Vimeo / direct `<video>`), the room can't actually be playing when `open_tabs` is empty. The server now forces a pause in that state, on three paths:
+The v6.2.3 approach (auto-pause when `open_tabs` empty) didn't fire in practice because stale entries and multi-tab port connections kept `open_tabs` non-empty even when no one was actually watching. Replaced with a much simpler rule: **after a user leaves, if the room is down to ≤1 connected user and state=:playing, pause.** Sync is pointless when there's nobody to sync with, and the lone remaining user can hit play whenever they want to watch solo.
 
-- The `:state_heartbeat` tick (every 5s) checks and corrects — defends against stale `state=:playing` regardless of how it got there.
-- A user's `leave` handler, after cleaning up their ready/open tabs, runs the check so a crashed SW doesn't leave the room in a zombie playing state.
-- The existing `video:all_closed` → explicit `RoomServer.pause` still covers the clean "user closed the last tab" path.
+- `2 → 1` pauses (the "one person just dropped, leaving you alone" case).
+- `3 → 2` does not pause (other user still there to sync with).
+- `1 → 0` pauses (original behavior, still triggers cleanup timer).
+- Broadcasts `sync:pause` so the remaining client's UI updates.
 
-Deliberately NOT hooked into `clear_tab_opened` — SPA navigations within e.g. Crunchyroll fire `tab_closed` then `tab_opened` in quick succession (old port disconnects on page unload, new one reconnects when the next page loads). Pausing in between would yank the room on every URL change.
+Also wired the presence event to the webapp: LiveView now handles `{:room_presence, ...}` and pushes a `toast` event through the existing toast mechanism, so web-app users see "alice joined/left the room" the same way extension users do. Previously only the extension was wired up.
 
-The v6.2.2 duration clamp stays as defense-in-depth for scenarios this doesn't cover (e.g. stale persisted state after a long outage).
+### Reverts from v6.2.3
+
+- Removed the `state_heartbeat` `maybe_pause_if_no_active_playback` check.
+- Removed the `leave`-time `open_tabs`-based pause hook (the new ≤1 rule covers it cleanly).
+- Removed the `last_active_playback_at` field / the unused helpers.
+
+The v6.2.2 duration clamp stays as defense-in-depth.
 
 ---
 
