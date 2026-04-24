@@ -2,6 +2,16 @@
 
 ---
 
+# v6.2.8
+
+### Don't cancel pending pause on sync:correction
+
+CR pause via the native player was intermittent again. The server broadcasts `sync:correction` every 1 second during playing state (reference refresh for drift reconcile). Content.js had an unconditional "cancel pending play/pause on any incoming message" at the top of its message handler — which clobbered the 500ms pause debounce every time a correction landed. Result: the debounce timer got cleared before it could send `video:pause` to the server, and ~2s later reconcile force-played the tab back.
+
+Moved the cancel logic inside the `command:play` / `command:pause` case branches only, where a genuine play/pause command from the server really does override local intent. `command:seek` and `sync:correction` no longer disturb pending local transitions.
+
+---
+
 # v6.2.7
 
 ### Presence updates fire when a player tab closes (not only on full disconnect)

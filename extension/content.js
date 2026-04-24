@@ -789,12 +789,12 @@
       }
     }
 
-    // Cancel any pending debounced play/pause — server command wins.
-    if (_pendingPlayPause) { clearTimeout(_pendingPlayPause); _pendingPlayPause = null; }
-
     switch (msg.type) {
       case "command:play":
         _log("cmd:play pos=", msg.position, "server_time=", msg.server_time);
+        // Genuine play command from server — any locally-pending pause is
+        // stale and would echo back incorrectly.
+        if (_pendingPlayPause) { clearTimeout(_pendingPlayPause); _pendingPlayPause = null; }
         expectedPlayState = State.PLAYING;
         updateServerRef(msg.position ?? hookedVideo.currentTime, State.PLAYING, msg.server_time);
         startCommandGuard();
@@ -809,6 +809,7 @@
 
       case "command:pause":
         _log("cmd:pause pos=", msg.position, "server_time=", msg.server_time);
+        if (_pendingPlayPause) { clearTimeout(_pendingPlayPause); _pendingPlayPause = null; }
         expectedPlayState = State.PAUSED;
         updateServerRef(msg.position ?? hookedVideo.currentTime, State.PAUSED, msg.server_time);
         startCommandGuard();
