@@ -428,6 +428,19 @@ defmodule ByobWeb.RoomLive.Components do
             <% end %>
           </div>
         </details>
+        <%!-- Reset dismissed popups --%>
+        <div class="mt-4 pt-4 border-t border-base-300">
+          <button
+            type="button"
+            class="btn btn-sm btn-ghost w-full"
+            onclick={~s|["byob_autoplay_help_dismissed"].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} }); this.textContent = "Popups will show again"; this.disabled = true;|}
+          >
+            Forget cleared popups
+          </button>
+          <p class="text-xs text-base-content/50 mt-1 text-center">
+            Re-enables any "don't show again" dialogs (e.g. the autoplay-blocked help).
+          </p>
+        </div>
         <%!-- Attribution --%>
         <div class="mt-4 pt-4 border-t border-base-300 text-xs text-base-content/40 space-y-1">
           <p>

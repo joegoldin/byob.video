@@ -2,6 +2,14 @@
 
 ---
 
+# v6.2.16
+
+### "Forget cleared popups" button in settings
+
+Settings modal gains a ghost button above the attributions/acknowledgements. One click clears every `byob_*_dismissed` localStorage key so "don't show this again" dialogs (currently just the autoplay-blocked help) show up again. The button disables itself after use and flips its label to "Popups will show again" for confirmation.
+
+---
+
 # v6.2.15
 
 ### Click-to-play overlays never sit on top of a playing video
