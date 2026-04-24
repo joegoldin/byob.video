@@ -362,8 +362,19 @@ defmodule ByobWeb.RoomLive.Components do
               <span>Drift tolerance</span>
               <span>250ms</span>
             </div>
-            <%= if Map.has_key?(@sync_stats, :clients) and map_size(@sync_stats.clients) > 0 do %>
-              <% drifts = @sync_stats.clients |> Map.values() |> Enum.map(& &1.drift_ms) %>
+            <%
+              # Filter out stale clients: extensions send a video:state every
+              # 500ms, so anything not updated in the last 5s has almost
+              # certainly disconnected and shouldn't be in the count.
+              now_s = System.system_time(:second)
+
+              active_clients =
+                (@sync_stats[:clients] || %{})
+                |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
+                |> Map.new()
+            %>
+            <%= if map_size(active_clients) > 0 do %>
+              <% drifts = active_clients |> Map.values() |> Enum.map(& &1.drift_ms) %>
               <% avg = div(Enum.sum(drifts), length(drifts)) %>
               <% {mn, mx} = Enum.min_max(drifts) %>
               <div class="flex justify-between">
@@ -379,10 +390,10 @@ defmodule ByobWeb.RoomLive.Components do
                 </span>
               </div>
             <% end %>
-            <%= if Map.has_key?(@sync_stats, :clients) and map_size(@sync_stats.clients) > 0 do %>
+            <%= if map_size(active_clients) > 0 do %>
               <div class="mt-2 pt-2 border-t border-base-300/50">
                 <div class="text-base-content/40 mb-1">Extension clients</div>
-                <%= for {client_id, info} <- @sync_stats.clients do %>
+                <%= for {client_id, info} <- active_clients do %>
                   <div class="mb-2 p-1.5 rounded bg-base-200/50">
                     <div class="text-base-content/30 text-[10px] truncate mb-0.5">{client_id}</div>
                     <div class="flex justify-between">

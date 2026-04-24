@@ -663,6 +663,12 @@
       return;
     }
 
+    if (msg.type === "byob:presence" && window === window.top) {
+      const verb = msg.event === "joined" ? "joined" : "left";
+      showPresenceToast(`${msg.username} ${verb} the room`);
+      return;
+    }
+
     if (msg.type === "byob:bar-update" && window === window.top && synced) {
       renderBarUpdate(msg);
       return;
@@ -715,7 +721,7 @@
     }
 
     if (msg.type === "byob:ready-count" && window === window.top) {
-      updateReadyCount(msg.ready, msg.has_tab, msg.total);
+      updateReadyCount(msg.ready, msg.has_tab, msg.total, msg.needs_open || [], msg.needs_play || []);
       return;
     }
 
@@ -881,6 +887,41 @@
     if (style) style.remove();
   }
 
+  // Brief, non-blocking toast for room presence changes ("X joined" / "X left").
+  // Styled like showJoinToast but self-dismisses after 2.5s and stacks if
+  // multiple events land close together.
+  let _presenceToastHideTimer = null;
+  function showPresenceToast(text) {
+    if (window !== window.top) return;
+    const existing = document.getElementById("byob-presence-toast");
+    if (existing) existing.remove();
+    if (_presenceToastHideTimer) { clearTimeout(_presenceToastHideTimer); _presenceToastHideTimer = null; }
+
+    const toast = document.createElement("div");
+    toast.id = "byob-presence-toast";
+    toast.style.cssText = `
+      position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%) translateY(10px);
+      z-index: 999998; background: #7c3aed; color: white;
+      font-family: system-ui, sans-serif; font-size: 15px; font-weight: 600;
+      padding: 12px 24px; border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15);
+      pointer-events: none; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
+    `;
+    toast.textContent = text;
+    document.body.appendChild(toast);
+    // Next frame: fade in
+    requestAnimationFrame(() => {
+      toast.style.opacity = "1";
+      toast.style.transform = "translateX(-50%) translateY(0)";
+    });
+    _presenceToastHideTimer = setTimeout(() => {
+      _presenceToastHideTimer = null;
+      toast.style.opacity = "0";
+      toast.style.transform = "translateX(-50%) translateY(10px)";
+      setTimeout(() => { if (toast.parentNode) toast.remove(); }, 250);
+    }, 2500);
+  }
+
   function injectSyncBar() {
     if (document.getElementById("byob-sync-bar")) return;
 
@@ -1030,7 +1071,7 @@
     }
   }
 
-  function updateReadyCount(ready, hasTab, total) {
+  function updateReadyCount(ready, hasTab, total, needsOpen, needsPlay) {
     const el = document.getElementById("byob-users");
     const icon = document.getElementById("byob-users-icon");
     const count = document.getElementById("byob-users-count");
@@ -1050,10 +1091,18 @@
       parts.push(`All ${total} users synced and ready to play`);
     } else {
       parts.push(`${ready} of ${total} ready`);
-      const needTab = total - hasTab;
-      const needClick = hasTab - ready;
-      if (needTab > 0) parts.push(`${needTab} need${needTab === 1 ? "s" : ""} to open external player`);
-      if (needClick > 0) parts.push(`${needClick} need${needClick === 1 ? "s" : ""} to click play`);
+      const openList = Array.isArray(needsOpen) ? needsOpen : [];
+      const playList = Array.isArray(needsPlay) ? needsPlay : [];
+      const needTab = openList.length || (total - hasTab);
+      const needClick = playList.length || (hasTab - ready);
+      if (needTab > 0) {
+        const names = openList.length ? ` (${openList.join(", ")})` : "";
+        parts.push(`${needTab} need${needTab === 1 ? "s" : ""} to open player window${names}`);
+      }
+      if (needClick > 0) {
+        const names = playList.length ? ` (${playList.join(", ")})` : "";
+        parts.push(`${needClick} need${needClick === 1 ? "s" : ""} to hit play${names}`);
+      }
     }
     el.title = parts.join(" · ");
   }

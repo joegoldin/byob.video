@@ -285,6 +285,11 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
+  def handle_info({:room_presence, data}, socket) do
+    push(socket, "room:presence", data)
+    {:noreply, socket}
+  end
+
   def handle_info({:queue_updated, %{queue: queue} = data}, socket) do
     serialized = %{data | queue: Enum.map(queue, &serialize_item/1)}
     push(socket, "queue:updated", serialized)
@@ -357,7 +362,23 @@ defmodule ByobWeb.ExtensionChannel do
         has_tab = min(length(open_users), total)
         ready = min(length(ready_users), has_tab)
 
-        %{ready: ready, has_tab: has_tab, total: total}
+        open_set = MapSet.new(open_users)
+        ready_set = MapSet.new(ready_users)
+
+        needs_open = Enum.reject(non_ext_usernames, &MapSet.member?(open_set, &1))
+
+        needs_play =
+          non_ext_usernames
+          |> Enum.filter(&MapSet.member?(open_set, &1))
+          |> Enum.reject(&MapSet.member?(ready_set, &1))
+
+        %{
+          ready: ready,
+          has_tab: has_tab,
+          total: total,
+          needs_open: needs_open,
+          needs_play: needs_play
+        }
       else
         nil
       end

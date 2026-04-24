@@ -151,7 +151,29 @@ defmodule ByobWeb.RoomLive.PubSub do
   end
 
   def handle_users_updated(users, socket) do
-    {:noreply, assign(socket, users: users)}
+    # Also prune sync_stats entries whose owner disappeared or is marked
+    # disconnected — otherwise the "Extension clients" panel keeps showing
+    # stale rows after an extension user closes their player tab.
+    stats = Map.get(socket.assigns, :sync_stats, %{})
+    clients = Map.get(stats, :clients, %{})
+    connected_ids = users |> Enum.filter(fn {_, u} -> u.connected end) |> Enum.map(fn {id, _} -> id end) |> MapSet.new()
+
+    pruned =
+      clients
+      |> Enum.filter(fn {key, _} ->
+        [owner | _] = String.split(key, ":", parts: 2)
+        MapSet.member?(connected_ids, owner)
+      end)
+      |> Map.new()
+
+    socket =
+      if map_size(pruned) == map_size(clients) do
+        assign(socket, users: users)
+      else
+        assign(socket, users: users, sync_stats: Map.put(stats, :clients, pruned))
+      end
+
+    {:noreply, socket}
   end
 
   def handle_activity_log_updated(log, socket) do

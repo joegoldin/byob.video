@@ -289,8 +289,23 @@ function connectToRoom(roomId, serverUrl, token, username) {
   });
 
   channel.on("ready:count", (data) => {
-    lastReadyCount = { type: "byob:ready-count", ready: data.ready, has_tab: data.has_tab, total: data.total };
+    lastReadyCount = {
+      type: "byob:ready-count",
+      ready: data.ready,
+      has_tab: data.has_tab,
+      total: data.total,
+      needs_open: data.needs_open || [],
+      needs_play: data.needs_play || [],
+    };
     broadcastToContentScripts(lastReadyCount);
+  });
+
+  channel.on("room:presence", (data) => {
+    broadcastToContentScripts({
+      type: "byob:presence",
+      event: data.event,
+      username: data.username,
+    });
   });
 
   channel.on("video:change", (data) => {
@@ -341,7 +356,14 @@ function connectToRoom(roomId, serverUrl, token, username) {
       console.log("[byob] Joined room", roomId, resp);
       initialRoomState = resp;
       if (resp.ready_count) {
-        lastReadyCount = { type: "byob:ready-count", ready: resp.ready_count.ready, has_tab: resp.ready_count.has_tab, total: resp.ready_count.total };
+        lastReadyCount = {
+          type: "byob:ready-count",
+          ready: resp.ready_count.ready,
+          has_tab: resp.ready_count.has_tab,
+          total: resp.ready_count.total,
+          needs_open: resp.ready_count.needs_open || [],
+          needs_play: resp.ready_count.needs_play || [],
+        };
       }
       broadcastToContentScripts({ type: "byob:channel-ready" });
       if (lastReadyCount) broadcastToContentScripts(lastReadyCount);

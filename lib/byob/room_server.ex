@@ -235,6 +235,7 @@ defmodule Byob.RoomServer do
   @impl true
   def handle_call({:join, user_id, username, opts}, _from, state) do
     is_extension = Keyword.get(opts, :is_extension, false)
+    was_present = username_connected?(state, username)
 
     # Clean up stale disconnected users — reconnections create new user IDs
     # (extension) or re-use existing ones (LiveView). Remove disconnected
@@ -288,6 +289,11 @@ defmodule Byob.RoomServer do
     SyncLog.snapshot(state.room_id, user_id, state.play_state, current_position(state))
     broadcast(state, {:users_updated, state.users})
     broadcast_ready_count(state)
+    # Only toast when a username transitions from "not present" to "present".
+    # Re-connects (same user on a different device) stay quiet.
+    if not was_present do
+      broadcast(state, {:room_presence, %{event: "joined", username: username}})
+    end
     {:reply, {:ok, snapshot(state)}, state}
   end
 
@@ -367,6 +373,7 @@ defmodule Byob.RoomServer do
 
   def handle_call({:leave, user_id}, _from, state) do
     state = log_activity(state, :left, user_id)
+    leaving_username = get_in(state, [Access.key(:users), user_id, Access.key(:username)])
 
     # If this is an extension user leaving, clear only their ready tabs.
     # When the SW dies, it can't send video:unready — this is the fallback.
@@ -420,6 +427,12 @@ defmodule Byob.RoomServer do
         broadcast_ready_count(state)
         state
       end
+
+    # Toast "username left" only if no other connection with the same
+    # username is still present.
+    if leaving_username && not username_connected?(state, leaving_username) do
+      broadcast(state, {:room_presence, %{event: "left", username: leaving_username}})
+    end
 
     {:reply, :ok, state}
   end
@@ -1147,6 +1160,11 @@ defmodule Byob.RoomServer do
     Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{state.room_id}", message)
   end
 
+  defp username_connected?(state, username) do
+    state.users
+    |> Enum.any?(fn {_, u} -> u.connected && u.username == username end)
+  end
+
   defp broadcast_ready_count(state) do
     connected = state.users |> Enum.filter(fn {_, u} -> u.connected end)
 
@@ -1161,20 +1179,30 @@ defmodule Byob.RoomServer do
       non_ext_usernames = non_ext |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq()
       total_users = length(non_ext_usernames)
 
-      %{has_tab: has_tab, ready: ready} = count_tab_owners(state, open_tabs, ready_tabs, total_users)
+      %{has_tab: has_tab, ready: ready, needs_open: needs_open, needs_play: needs_play} =
+        count_tab_owners(state, open_tabs, ready_tabs, non_ext_usernames)
 
-      broadcast(state, {:ready_count, %{ready: ready, has_tab: has_tab, total: total_users}})
+      broadcast(
+        state,
+        {:ready_count,
+         %{
+           ready: ready,
+           has_tab: has_tab,
+           total: total_users,
+           needs_open: needs_open,
+           needs_play: needs_play
+         }}
+      )
     end
   end
 
-  # Count unique usernames that have at least one open tab / ready tab.
-  # open_tabs / ready_tabs are keyed by tab_id with the ext_user_id as the
-  # value; a single user can have multiple tabs (e.g. top frame + player
-  # iframe), and multiple ext_user_ids can share a username (same person
-  # reconnecting). Also filters out owners that aren't currently connected
-  # so stale entries (disconnect cleanup hasn't caught up yet) don't
-  # inflate the count.
-  defp count_tab_owners(state, open_tabs, ready_tabs, total_users) do
+  # Count unique usernames that have at least one open tab / ready tab,
+  # and compute which non-ext usernames still need to open a player window
+  # or hit play. open_tabs / ready_tabs are keyed by tab_id with the
+  # ext_user_id as value; a single user can have multiple tabs and
+  # multiple ext_user_ids can share a username. Filters out owners that
+  # aren't currently connected so stale entries don't inflate counts.
+  defp count_tab_owners(state, open_tabs, ready_tabs, non_ext_usernames) do
     connected_ids =
       state.users
       |> Enum.filter(fn {_, u} -> u.connected end)
@@ -1203,9 +1231,21 @@ defmodule Byob.RoomServer do
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
 
+    total_users = length(non_ext_usernames)
     has_tab = min(length(open_users), total_users)
     ready = min(length(ready_users), has_tab)
-    %{has_tab: has_tab, ready: ready}
+
+    open_set = MapSet.new(open_users)
+    ready_set = MapSet.new(ready_users)
+
+    needs_open = Enum.reject(non_ext_usernames, &MapSet.member?(open_set, &1))
+
+    needs_play =
+      non_ext_usernames
+      |> Enum.filter(&MapSet.member?(open_set, &1))
+      |> Enum.reject(&MapSet.member?(ready_set, &1))
+
+    %{has_tab: has_tab, ready: ready, needs_open: needs_open, needs_play: needs_play}
   end
 
   @max_history 99

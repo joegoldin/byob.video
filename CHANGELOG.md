@@ -2,6 +2,18 @@
 
 ---
 
+# v6.2.0
+
+### Presence toasts, username tooltip, and pruned Extension clients panel
+
+Three UX improvements to make sync state self-explanatory:
+
+- **Presence toasts** — when a user joins or leaves the room, a brief "alice joined the room" / "alice left the room" toast fades in at the bottom of the extension sync bar. Makes it obvious why the video paused (the "2/2" count drops, now you see which user disconnected). Server broadcasts `{:room_presence, ...}` on username transitions only — reconnects and additional-tab joins don't fire. Relayed through the channel to `background.js`, which forwards to the top-frame content script.
+- **Ready-count tooltip shows usernames** — instead of `1 needs to open external player · 2 need to click play`, the tooltip now reads `1 needs to open player window (vm) · 2 need to hit play (host, alice)`. Server computes `needs_open` and `needs_play` username lists alongside the counts and threads them through to the extension.
+- **Extension clients panel prunes stale rows** — the admin panel was showing stale client entries after users disconnected. Now filtered both in the LiveView template (5s freshness window) and when processing presence updates (entries whose owner disconnected get dropped from `sync_stats.clients`).
+
+---
+
 # v6.1.8
 
 ### `userInitiated()` only strict within 3s of sync; otherwise trust all events
