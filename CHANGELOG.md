@@ -2,6 +2,18 @@
 
 ---
 
+# v6.2.6
+
+### Fix ≤1 pause rule; stale ready-count entries after tab close
+
+Two bug fixes from last round's regressions.
+
+**Pause-at-≤1 was counting raw user_ids, not distinct usernames.** Per-tab user IDs plus the extension SW user mean a single real person contributes 2–3 entries to `state.users`. "3 humans → 2" was computed as "6 user_ids → 4" → no pause. Changed `connected_count` to count `state.users |> Enum.filter(connected) |> Enum.map(username) |> Enum.uniq() |> length`.
+
+**Ready-count tooltip stuck on "needs to click play" after close.** `clear_ready_tab` only ran when `video:unready` arrived. If the SW tore down fast enough that only `video:tab_closed` landed (dropped push, abnormal teardown), the entry in `ready_tabs` lingered — broadcasts after that point kept the user out of `needs_open` and showed nothing useful. `clear_tab_opened` now also deletes the corresponding `ready_tabs` entry as a belt-and-suspenders cleanup.
+
+---
+
 # v6.2.5
 
 ### Polling-based pause detector + "closed external window" presence event

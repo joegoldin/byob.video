@@ -319,7 +319,18 @@ defmodule Byob.RoomServer do
 
   def handle_call({:clear_tab_opened, tab_id}, _from, state) when is_binary(tab_id) do
     open_tabs = Map.get(state, :open_tabs, %{})
-    state = Map.put(state, :open_tabs, Map.delete(open_tabs, tab_id))
+    ready_tabs = Map.get(state, :ready_tabs, %{})
+
+    # Also clear the ready_tabs entry for this tab. Normally `video:unready`
+    # arrives alongside `video:tab_closed`, but if it gets dropped (SW
+    # tearing down, port dying before the second push lands), a stale
+    # ready entry sticks around and the tooltip never transitions back to
+    # "needs to open player window" for that user.
+    state =
+      state
+      |> Map.put(:open_tabs, Map.delete(open_tabs, tab_id))
+      |> Map.put(:ready_tabs, Map.delete(ready_tabs, tab_id))
+
     # Note: we don't auto-pause here. SPA navigations fire tab_closed then
     # tab_opened in quick succession (port disconnect on page unload, then
     # reconnect once the new page loads) — pausing in between would yank
@@ -419,13 +430,21 @@ defmodule Byob.RoomServer do
         user -> put_in(state.users[user_id], %{user | connected: false})
       end
 
-    connected_count = Enum.count(state.users, fn {_, u} -> u.connected end)
+    # Count distinct USERNAMES, not raw user_ids. Per-tab user IDs
+    # (session_id:tab_id + one extra for the extension SW) mean a single
+    # real person can contribute 2–3 connected entries to state.users.
+    # We want "2 actual humans → 1 human" to pause, not "4 user_ids → 3".
+    connected_usernames =
+      state.users
+      |> Enum.filter(fn {_, u} -> u.connected end)
+      |> Enum.map(fn {_, u} -> u.username end)
+      |> Enum.uniq()
 
-    # Pause when the room is down to ≤1 connected user — there's nobody
+    connected_count = length(connected_usernames)
+
+    # Pause when the room is down to ≤1 distinct user — there's nobody
     # left to watch in sync, so leaving state=:playing just lets the
-    # server-side clock drift. This also covers the empty-room case.
-    # 2 → 1 pauses; 3 → 2 doesn't. The remaining user can hit play again
-    # whenever they want to watch solo.
+    # server-side clock drift. 2 → 1 pauses; 3 → 2 doesn't.
     state =
       if connected_count <= 1 and state.play_state == :playing do
         %{
