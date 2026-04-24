@@ -2,6 +2,22 @@
 
 ---
 
+# v6.2.3
+
+### Auto-pause extension-required rooms when nobody has a player window open
+
+Addresses the root cause behind the "server-side clock runaway past duration" that v6.2.2 band-aided with a clamp. If the current media requires an extension player window (anything but YouTube / Vimeo / direct `<video>`), the room can't actually be playing when `open_tabs` is empty. The server now forces a pause in that state, on three paths:
+
+- The `:state_heartbeat` tick (every 5s) checks and corrects — defends against stale `state=:playing` regardless of how it got there.
+- A user's `leave` handler, after cleaning up their ready/open tabs, runs the check so a crashed SW doesn't leave the room in a zombie playing state.
+- The existing `video:all_closed` → explicit `RoomServer.pause` still covers the clean "user closed the last tab" path.
+
+Deliberately NOT hooked into `clear_tab_opened` — SPA navigations within e.g. Crunchyroll fire `tab_closed` then `tab_opened` in quick succession (old port disconnects on page unload, new one reconnects when the next page loads). Pausing in between would yank the room on every URL change.
+
+The v6.2.2 duration clamp stays as defense-in-depth for scenarios this doesn't cover (e.g. stale persisted state after a long outage).
+
+---
+
 # v6.2.2
 
 ### Clamp server-side position projection to current media duration

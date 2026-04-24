@@ -320,6 +320,13 @@ defmodule Byob.RoomServer do
   def handle_call({:clear_tab_opened, tab_id}, _from, state) when is_binary(tab_id) do
     open_tabs = Map.get(state, :open_tabs, %{})
     state = Map.put(state, :open_tabs, Map.delete(open_tabs, tab_id))
+    # Note: we don't auto-pause here. SPA navigations fire tab_closed then
+    # tab_opened in quick succession (port disconnect on page unload, then
+    # reconnect once the new page loads) — pausing in between would yank
+    # the room whenever a user navigates within e.g. Crunchyroll. The
+    # clean "user closed the last tab" path is covered by
+    # `video:all_closed` pushing RoomServer.pause directly, and the
+    # abnormal "SW died" case is caught in `leave` below.
     broadcast_ready_count(state)
     {:reply, :ok, state}
   end
@@ -400,7 +407,10 @@ defmodule Byob.RoomServer do
         cleaned_open =
           open_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
 
-        state |> Map.put(:ready_tabs, cleaned_ready) |> Map.put(:open_tabs, cleaned_open)
+        state
+        |> Map.put(:ready_tabs, cleaned_ready)
+        |> Map.put(:open_tabs, cleaned_open)
+        |> maybe_pause_if_no_active_playback()
       else
         state
       end
@@ -1035,7 +1045,14 @@ defmodule Byob.RoomServer do
   # Periodic state heartbeat: re-broadcasts play_state + current_time so
   # clients that missed an earlier broadcast (reconnect, transient drop) can
   # reconcile without waiting for the next natural state change.
+  #
+  # Also defends against the pathological "room stays :playing with nobody
+  # actually playing" state — if the current media requires an extension
+  # player and zero tabs are open, force a pause before the broadcast so
+  # the heartbeat itself carries the corrected state.
   def handle_info(:state_heartbeat, state) do
+    state = maybe_pause_if_no_active_playback(state)
+
     now = System.monotonic_time(:millisecond)
     position = current_position(state)
     SyncLog.heartbeat(state.room_id, state.play_state, position)
@@ -1124,6 +1141,39 @@ defmodule Byob.RoomServer do
       %{duration: d} when is_number(d) and d > 0 -> d * 1.0
       _ -> nil
     end
+  end
+
+  # Auto-pause when the room's currently-playing media requires an extension
+  # player window and every open tab has closed. Without this hook, a room
+  # sits in play_state=:playing with nobody actually rendering the video;
+  # current_position/1 keeps advancing by wall-clock and the next joiner
+  # drags everyone to a bogus "authoritative" position via reconcile.
+  defp maybe_pause_if_no_active_playback(state) do
+    cond do
+      state.play_state != :playing -> state
+      not extension_required_media?(state) -> state
+      map_size(Map.get(state, :open_tabs, %{})) > 0 -> state
+      true -> force_pause(state)
+    end
+  end
+
+  defp extension_required_media?(%{current_index: nil}), do: false
+
+  defp extension_required_media?(%{current_index: idx, queue: queue}) do
+    case Enum.at(queue, idx) do
+      %{source_type: :extension_required} -> true
+      _ -> false
+    end
+  end
+
+  defp force_pause(state) do
+    now = System.monotonic_time(:millisecond)
+    pos = current_position(state)
+
+    state = %{state | play_state: :paused, current_time: pos, last_sync_at: now}
+    state = cancel_sync_correction(state)
+    broadcast(state, {:sync_pause, %{time: pos, server_time: now, user_id: nil}})
+    state
   end
 
   # Fetch YouTube metadata. Prefer the Data API (duration + published_at);
