@@ -632,11 +632,20 @@
       _programmaticSeek = true;
       hookedVideo.currentTime = targetPos;
       if (shouldPlay) {
-        hookedVideo.play().catch(() => {});
-        // Kick seek: large backward seeks on Crunchyroll often leave MSE in
-        // a state where playing=true but frames don't advance. A tiny
-        // follow-up seek forces the pipeline to refetch from the new target.
-        hookedVideo.currentTime = targetPos + 0.01;
+        hookedVideo.play().then(() => {
+          // Kick seek AFTER play resolves — synchronously assigning
+          // currentTime during a pending play() aborts the play promise
+          // with "fetching process aborted", which leaves the video paused
+          // while the server thinks it's playing.
+          if (hookedVideo && !hookedVideo.paused) {
+            markProgrammaticSeek();
+            _programmaticSeek = true;
+            hookedVideo.currentTime = targetPos + 0.01;
+            _programmaticSeek = false;
+          }
+        }).catch((e) => {
+          _log("drmSafeSeek: paused-path play() rejected:", e?.message);
+        });
       }
       _programmaticSeek = false;
       return;
@@ -660,12 +669,19 @@
         suppress("playing");
         markProgrammaticSeek();
         _programmaticSeek = true;
-        hookedVideo.play().catch((e) => {
+        hookedVideo.play().then(() => {
+          // Kick seek AFTER play resolves. Doing it synchronously after
+          // play() (before resolution) aborts the play promise and leaves
+          // the video paused despite shouldPlay=true.
+          if (hookedVideo && !hookedVideo.paused) {
+            markProgrammaticSeek();
+            _programmaticSeek = true;
+            hookedVideo.currentTime = targetPos + 0.01;
+            _programmaticSeek = false;
+          }
+        }).catch((e) => {
           _log("drmSafeSeek: resume play() rejected:", e?.message);
         });
-        // Kick seek for MSE — forces the pipeline to restart frame rendering
-        // after a large seek. Without this, playing=true with stuck frames.
-        hookedVideo.currentTime = targetPos + 0.01;
         _programmaticSeek = false;
       }
     };
@@ -917,18 +933,23 @@
         markProgrammaticSeek();
         _programmaticSeek = true;
         if (msg.position != null) hookedVideo.currentTime = msg.position;
+        const kickTarget = (msg.position ?? hookedVideo.currentTime) + 0.01;
         hookedVideo.play().then(() => {
           _log("CMD:play play() resolved, paused=", hookedVideo?.paused, "pos=", hookedVideo?.currentTime);
+          if (_isDrmSite && hookedVideo && !hookedVideo.paused) {
+            // Kick seek AFTER play resolves, not synchronously. A sync
+            // currentTime= during a pending play() aborts the play promise
+            // with "fetching process aborted", leaving video paused while
+            // server thinks it's playing.
+            markProgrammaticSeek();
+            _programmaticSeek = true;
+            hookedVideo.currentTime = kickTarget;
+            _programmaticSeek = false;
+            _log("CMD:play DRM kick seek to", kickTarget);
+          }
         }).catch((e) => {
           _log("CMD:play play() REJECTED:", e?.message);
         });
-        if (_isDrmSite) {
-          // DRM pipeline needs a real seek to restart frame rendering.
-          // Same-position seeks are no-ops, so offset by 0.01s to force it.
-          const kickPos = (msg.position ?? hookedVideo.currentTime) + 0.01;
-          hookedVideo.currentTime = kickPos;
-          _log("CMD:play DRM kick seek to", kickPos);
-        }
         _programmaticSeek = false;
         break;
 

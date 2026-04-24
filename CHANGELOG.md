@@ -2,6 +2,17 @@
 
 ---
 
+# v5.0.11
+
+### Fix kick seek aborting `play()` — "UI says playing but video is paused"
+
+Setting `currentTime` on a video synchronously after `play()` (but before the play promise resolves) triggers `AbortError: fetching process aborted`. The play promise rejects, video stays paused, but the server already got our `onVideoPlay` event and broadcast `sync:play` — so byob UI says playing while the actual player is paused. Matching symptom: "doesn't ACTUALLY PLAY until I seek" after a pause/play cycle.
+
+- **Kick seek moved inside `play().then()`** for both `CMD:play` and both `drmSafeSeek` branches. Now it only runs after `play()` resolves and only if the video actually started playing. Prevents the AbortError race.
+- Still re-marks `markProgrammaticSeek()` around the kick so its `seeked` event doesn't echo out.
+
+---
+
 # v5.0.10
 
 ### Fix DRM wedge after large initial-sync seek
