@@ -838,7 +838,20 @@
           _log("CMD:play no-op (already playing)");
           break;
         }
+        // Pre-seek if target differs from current. Crunchyroll's scrubber
+        // fires events in pause→play→seek order, so CMD:play arrives before
+        // CMD:seek. Seeking now (while paused) lands the seek safely on a
+        // paused decoder; the trailing CMD:seek then no-ops. Without this,
+        // .play() starts MSE at the stale position and the subsequent
+        // currentTime= assignment from CMD:seek wedges the pipeline.
         suppress("playing");
+        if (msg.position != null && Math.abs(hookedVideo.currentTime - msg.position) > 0.5) {
+          _log("CMD:play pre-seek from", hookedVideo.currentTime, "to", msg.position);
+          markProgrammaticSeek();
+          _programmaticSeek = true;
+          hookedVideo.currentTime = msg.position;
+          _programmaticSeek = false;
+        }
         hookedVideo.play().catch((e) => {
           _log("CMD:play play() REJECTED:", e?.message);
         });

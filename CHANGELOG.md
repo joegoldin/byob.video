@@ -2,6 +2,29 @@
 
 ---
 
+# v5.0.20
+
+### Fix seek-while-playing on Crunchyroll — pre-seek in `CMD:play` for out-of-order events
+
+v5.0.19 handled the standard HTML5 scrubbing sequence (`pause → seek → play`), but Crunchyroll's scrubber fires events in a different order:
+
+```
+onVideoPause SEND pos= 703.997324
+onVideoPlay SEND pos= 257.25      ← play fires before seeked
+onVideoSeeking pos= 257.25
+onVideoSeeked SEND pos= 257.25
+```
+
+CR's UI does something like `video.pause(); video.play(); video.currentTime = X` synchronously, so the events fire in that order. The server broadcasts in that order, and receivers apply `CMD:pause → CMD:play → CMD:seek`. That means `.play()` starts MSE at the stale position (703), then `currentTime = 257.25` hits a **playing** MSE pipeline — classic wedge. The receiver stalls at 257.25 with `playing=true` and no frame advancement.
+
+- **`CMD:play`**: if paused and target position differs by >0.5s, set `currentTime = pos` before calling `.play()`. Seeking on a paused decoder is safe, and the trailing `CMD:seek` becomes a no-op.
+- Still a no-op if already playing — don't touch `currentTime` on a playing MSE stream.
+- Standard HTML5 event order (`pause → seeked → play`) still works identically: by the time `CMD:play` lands, `CMD:seek` has already put us at the right position, so the pre-seek threshold check skips.
+
+Verified against v5.0.19 log showing the wedge pattern and progressive stall-recovery kicks failing to un-wedge a 447-second seek gap.
+
+---
+
 # v5.0.19
 
 ### Strip DRM pause debounce + postSeek suppression — forward events directly
