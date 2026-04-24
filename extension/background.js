@@ -105,6 +105,7 @@ function handleContentMessage(msg, port, tabId) {
             play_state: resp.play_state,
             current_time: resp.current_time,
             server_time: resp.server_time,
+            seq: resp.seq,
           });
         });
       }
@@ -123,6 +124,7 @@ function handleContentMessage(msg, port, tabId) {
             play_state: resp.play_state,
             current_time: resp.current_time,
             server_time: resp.server_time,
+            seq: resp.seq,
           };
           if (tabId != null) broadcastToTab(tabId, synced);
           else broadcastToContentScripts(synced);
@@ -265,18 +267,21 @@ function connectToRoom(roomId, serverUrl, token, username) {
     type: "command:play",
     position: data.time,
     server_time: data.server_time,
+    seq: data.seq,
   }));
 
   channel.on("sync:pause", (data) => broadcastToContentScripts({
     type: "command:pause",
     position: data.time,
     server_time: data.server_time,
+    seq: data.seq,
   }));
 
   channel.on("sync:seek", (data) => broadcastToContentScripts({
     type: "command:seek",
     position: data.time,
     server_time: data.server_time,
+    seq: data.seq,
   }));
 
   channel.on("sync:correction", (data) => {
@@ -284,6 +289,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
       type: "sync:correction",
       expected_time: data.expected_time,
       server_time: data.server_time,
+      seq: data.seq,
     });
   });
 

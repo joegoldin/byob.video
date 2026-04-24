@@ -40,7 +40,12 @@ defmodule Byob.RoomServer do
     round: nil,
     round_expire_ref: nil,
     round_last_broadcast_ms: 0,
-    round_coalesce_ref: nil
+    round_coalesce_ref: nil,
+    # Strictly-monotonic counter attached to every sync_* / heartbeat /
+    # correction broadcast. Clients use this (not server_time alone) to
+    # detect out-of-order or duplicate-timestamp events — monotonic_time
+    # at ms granularity can emit two broadcasts in the same tick.
+    broadcast_seq: 0
   ]
 
   @autoplay_countdown_ms 5_000
@@ -478,17 +483,12 @@ defmodule Byob.RoomServer do
     # server-side clock drift. 2 → 1 pauses; 3 → 2 doesn't.
     state =
       if connected_count <= 1 and state.play_state == :playing do
-        %{
-          state
-          | play_state: :paused,
-            current_time: current_position(state),
-            last_sync_at: System.monotonic_time(:millisecond)
-        }
+        now = System.monotonic_time(:millisecond)
+        pos = current_position(state)
+
+        %{state | play_state: :paused, current_time: pos, last_sync_at: now}
         |> cancel_sync_correction()
-        |> tap(fn s ->
-          now = System.monotonic_time(:millisecond)
-          broadcast(s, {:sync_pause, %{time: s.current_time, server_time: now, user_id: nil}})
-        end)
+        |> bump_seq_and_broadcast(:sync_pause, %{time: pos, server_time: now, user_id: nil})
       else
         state
       end
@@ -562,7 +562,12 @@ defmodule Byob.RoomServer do
         # Always broadcast so all clients sync, even on redundant plays.
         # State only updates on real transitions (above), but the broadcast
         # ensures clients whose local state disagrees get corrected.
-        broadcast(state, {:sync_play, %{time: position, server_time: now, user_id: user_id}})
+        state =
+          bump_seq_and_broadcast(state, :sync_play, %{
+            time: position,
+            server_time: now,
+            user_id: user_id
+          })
 
         if was_paused do
           SyncLog.play(
@@ -605,7 +610,12 @@ defmodule Byob.RoomServer do
             state
           end
 
-        broadcast(state, {:sync_pause, %{time: position, server_time: now, user_id: user_id}})
+        state =
+          bump_seq_and_broadcast(state, :sync_pause, %{
+            time: position,
+            server_time: now,
+            user_id: user_id
+          })
 
         if was_playing do
           SyncLog.pause(
@@ -653,7 +663,14 @@ defmodule Byob.RoomServer do
         end
 
       SyncLog.seek(state.room_id, user_id, current_media_url(state), position)
-      broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
+
+      state =
+        bump_seq_and_broadcast(state, :sync_seek, %{
+          time: position,
+          server_time: now,
+          user_id: user_id
+        })
+
       {:reply, :ok, state}
     end
   end
@@ -1104,15 +1121,12 @@ defmodule Byob.RoomServer do
     position = current_position(state)
     SyncLog.heartbeat(state.room_id, state.play_state, position)
 
-    broadcast(
-      state,
-      {:state_heartbeat,
-       %{
-         play_state: state.play_state,
-         current_time: position,
-         server_time: now
-       }}
-    )
+    state =
+      bump_seq_and_broadcast(state, :state_heartbeat, %{
+        play_state: state.play_state,
+        current_time: position,
+        server_time: now
+      })
 
     Process.send_after(self(), :state_heartbeat, 5_000)
     {:noreply, state}
@@ -1121,7 +1135,13 @@ defmodule Byob.RoomServer do
   def handle_info(:sync_correction, %{play_state: :playing} = state) do
     now = System.monotonic_time(:millisecond)
     position = current_position(state)
-    broadcast(state, {:sync_correction, %{expected_time: position, server_time: now}})
+
+    state =
+      bump_seq_and_broadcast(state, :sync_correction, %{
+        expected_time: position,
+        server_time: now
+      })
+
     state = %{state | sync_correction_ref: Process.send_after(self(), :sync_correction, 1000)}
     {:noreply, state}
   end
@@ -1215,6 +1235,7 @@ defmodule Byob.RoomServer do
       play_state: state.play_state,
       current_time: current_position(state),
       server_time: System.monotonic_time(:millisecond),
+      broadcast_seq: state.broadcast_seq,
       playback_rate: state.playback_rate,
       history: state.history,
       sponsor_segments: state.sponsor_segments,
@@ -1248,6 +1269,17 @@ defmodule Byob.RoomServer do
 
   defp broadcast(state, message) do
     Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{state.room_id}", message)
+  end
+
+  # Increment the per-room broadcast seq, tag the payload with it, and
+  # broadcast. Returns the updated state — callers must thread it through.
+  # Uses Map.get/put so pre-existing GenServer state from an older build
+  # (dev hot-reload) that doesn't yet have :broadcast_seq still works.
+  defp bump_seq_and_broadcast(state, event_type, payload) do
+    seq = Map.get(state, :broadcast_seq, 0) + 1
+    state = Map.put(state, :broadcast_seq, seq)
+    broadcast(state, {event_type, Map.put(payload, :seq, seq)})
+    state
   end
 
   defp username_connected?(state, username) do
