@@ -381,13 +381,28 @@
   }
 
   // ── Event handlers (send-on-change, debounced) ────────────────────────────
-  // A play/pause/seek event is "user-initiated" only if the browser's
-  // transient activation is currently active. CR's autoplay, Bitmovin's
-  // internal DRM/buffering state changes, and anything else not triggered
-  // by a real user gesture all fail this check. Browser support: Chrome
-  // 72+, Firefox 118+.
+  // Track real user gestures across frames. Each frame (top + iframe) listens
+  // for click/keydown/pointerdown/touchstart and broadcasts via the SW so
+  // every frame's content script has a common view of "did the user just
+  // interact somewhere?" — which navigator.userActivation can't provide
+  // reliably cross-frame (iframe doesn't see top-frame activations and
+  // vice-versa).
+  let _lastUserActive = 0;
+  const USER_ACTIVE_WINDOW_MS = 5000;
+
+  function markUserActive() {
+    _lastUserActive = Date.now();
+    try { chrome.runtime.sendMessage({ type: "byob:user-active", t: _lastUserActive }); } catch (_) {}
+  }
+
+  const _userActiveEvents = ["click", "keydown", "pointerdown", "touchstart"];
+  for (const ev of _userActiveEvents) {
+    try { document.addEventListener(ev, markUserActive, { capture: true, passive: true }); } catch (_) {}
+  }
+
   function userInitiated() {
-    return !!(navigator.userActivation && navigator.userActivation.isActive);
+    if (navigator.userActivation && navigator.userActivation.isActive) return true;
+    return Date.now() - _lastUserActive < USER_ACTIVE_WINDOW_MS;
   }
 
   function onVideoPlay() {
@@ -632,6 +647,11 @@
       clockRtt = msg.rtt;
       clockSynced = true;
       _log("clock synced offset=", clockOffset, "ms rtt=", clockRtt, "ms");
+      return;
+    }
+
+    if (msg.type === "byob:user-active") {
+      if (msg.t && msg.t > _lastUserActive) _lastUserActive = msg.t;
       return;
     }
 

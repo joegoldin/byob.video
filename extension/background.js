@@ -370,6 +370,13 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "byob:bar-update") {
     broadcastToContentScripts(msg);
   }
+  if (msg.type === "byob:user-active") {
+    // Broadcast cross-frame so every content script agrees on "user is
+    // interacting right now". Allows the iframe's event handlers to see
+    // activations that happened in the top frame (and vice-versa), which
+    // navigator.userActivation can't do reliably.
+    broadcastToContentScripts({ type: "byob:user-active", t: msg.t });
+  }
 });
 
 function broadcastToContentScripts(msg) {

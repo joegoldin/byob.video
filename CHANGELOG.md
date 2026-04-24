@@ -2,6 +2,21 @@
 
 ---
 
+# v6.1.7
+
+### Cross-frame user-activity tracking (fixes intermittent pause)
+
+`navigator.userActivation.isActive` is per-frame. A user click on CR's player controls registers activation in whichever frame receives the event — but the content script that runs our event handlers lives in the iframe (`static.crunchyroll.com`), while clicks on CR's top-frame overlays register in the top frame. Same for spacebar: if the user's focus is in the top frame, the iframe never sees the activation.
+
+Result: user pause clicks were being silently dropped by the `userInitiated()` check, and worked only intermittently (when the activation happened to land in the iframe).
+
+- Each frame now listens for `click` / `keydown` / `pointerdown` / `touchstart` (capture phase) and broadcasts a `byob:user-active` ping via `chrome.runtime.sendMessage`.
+- SW relays the ping to every content script via `broadcastToContentScripts`.
+- Each frame keeps its own `_lastUserActive` timestamp, updated from local events and from cross-frame broadcasts.
+- `userInitiated()` now returns true if either `navigator.userActivation.isActive` OR the last user-activity timestamp is within the 5s window. Catches activations happening in any frame of the tab.
+
+---
+
 # v6.1.6
 
 ### Use `navigator.userActivation.isActive` to distinguish user clicks from autoplay
