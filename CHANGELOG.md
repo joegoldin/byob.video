@@ -2,6 +2,16 @@
 
 ---
 
+# v6.2.13
+
+### Show click-to-play overlay when another user starts playback into a blocked tab
+
+Black-player / no-overlay bug when joining a room where another user later starts playback: if the joiner's tab hadn't been interacted with yet, the browser's autoplay policy silently blocked our `_play()` call and there was no signal for the user to do anything — just a dead black embed. The retry-and-show-overlay flow only existed on the initial `_onSyncState` path (room was already playing at join time), not on the `_onSyncPlay` path (room went from paused → playing after join).
+
+Extracted the retry-then-show-click-to-play logic into `_retryPlayOrShowOverlay/1` and call it from both `_onSyncState` (state=playing) and `_onSyncPlay`. Pressing spacebar / clicking somewhere else on the page also gets autoplay working — but now there's an explicit visible overlay instead of an inscrutable black square.
+
+---
+
 # v6.2.12
 
 ### Revert v6.2.11 monotonic counter

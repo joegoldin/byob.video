@@ -180,33 +180,7 @@ const VideoPlayer = {
       this.reconcile.pauseFor(2000);
       this.reconcile.start();
 
-      // Retry play if autoplay was blocked, then show click-to-play overlay.
-      // Stop retrying once the player has settled (already playing successfully)
-      // to avoid re-arming suppression and blocking user events.
-      const checkAndRetry = (attempt) => {
-        setTimeout(() => {
-          if (this._embedBlocked || this._playerSettled) return;
-          let isPlaying = false;
-          if (this.sourceType === "youtube") {
-            isPlaying = this.player?.getState?.() === "playing" ||
-                        this.player?.getState?.() === "buffering";
-          } else if (this.sourceType === "direct_url") {
-            isPlaying = this.player?.getState?.() === "playing";
-          }
-
-          if (!isPlaying) {
-            if (attempt < 3) {
-              this.suppression.suppress("playing");
-              this._play();
-              checkAndRetry(attempt + 1);
-            } else if (!this._embedBlocked) {
-              // Autoplay blocked — show click-to-play overlay
-              this._showClickToPlay(position);
-            }
-          }
-        }, attempt * 500);
-      };
-      checkAndRetry(1);
+      this._retryPlayOrShowOverlay(position);
     } else if (state.play_state === "paused") {
       this.expectedPlayState = "paused";
       this.suppression.suppress("paused");
@@ -523,6 +497,40 @@ const VideoPlayer = {
       this.clockSync
     );
     this.reconcile.start();
+    // Another user started playback. If autoplay is blocked in THIS tab
+    // (e.g. user just arrived and hasn't interacted yet), the _play()
+    // call above silently fails and we get a black player with no way
+    // to recover. Same retry-then-show-overlay dance as initial sync.
+    this._retryPlayOrShowOverlay(data.time);
+  },
+
+  // Check every 500ms up to 3× whether playback actually started after
+  // _play(). If not — autoplay was blocked — show the click-to-play
+  // overlay so the user has an obvious way to bypass it.
+  _retryPlayOrShowOverlay(position) {
+    const checkAndRetry = (attempt) => {
+      setTimeout(() => {
+        if (this._embedBlocked || this._playerSettled) return;
+        let isPlaying = false;
+        if (this.sourceType === "youtube") {
+          isPlaying = this.player?.getState?.() === "playing" ||
+                      this.player?.getState?.() === "buffering";
+        } else if (this.sourceType === "direct_url") {
+          isPlaying = this.player?.getState?.() === "playing";
+        }
+
+        if (!isPlaying) {
+          if (attempt < 3) {
+            this.suppression.suppress("playing");
+            this._play();
+            checkAndRetry(attempt + 1);
+          } else if (!this._embedBlocked) {
+            this._showClickToPlay(position);
+          }
+        }
+      }, attempt * 500);
+    };
+    checkAndRetry(1);
   },
 
   _onSyncPause(data) {
