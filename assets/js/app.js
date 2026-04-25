@@ -376,6 +376,8 @@ const liveSocket = new LiveSocket("/live", Socket, {
     Nicknames: {
       mounted() {
         this._read();
+        this._scheduled = false;
+        this._refreshing = false;
         this._refresh();
         this._onClick = (e) => {
           const btn = e.target.closest("[data-byob-nickname-btn]");
@@ -383,10 +385,14 @@ const liveSocket = new LiveSocket("/live", Socket, {
           this._editFor(btn.dataset.byobNicknameBtn);
         };
         this.el.addEventListener("click", this._onClick);
-        this._observer = new MutationObserver(() => this._refresh());
+        // Observer watches for LV-driven DOM changes; coalesce + skip our
+        // own mutations (the suffix add/remove inside _refresh would
+        // otherwise re-trigger the callback synchronously and lock the
+        // page in a tight loop).
+        this._observer = new MutationObserver(() => this._scheduleRefresh());
         this._observer.observe(this.el, { childList: true, subtree: true });
       },
-      updated() { this._refresh(); },
+      updated() { this._scheduleRefresh(); },
       destroyed() {
         if (this._onClick) this.el.removeEventListener("click", this._onClick);
         if (this._observer) this._observer.disconnect();
@@ -399,24 +405,47 @@ const liveSocket = new LiveSocket("/live", Socket, {
       _save() {
         try { localStorage.setItem("byob_nicknames", JSON.stringify(this._map || {})); } catch (_) {}
       },
+      _scheduleRefresh() {
+        if (this._refreshing) return; // we are the source of this mutation
+        if (this._scheduled) return;
+        this._scheduled = true;
+        // Coalesce bursts of mutations from a single LV diff into one pass.
+        Promise.resolve().then(() => {
+          this._scheduled = false;
+          this._refresh();
+        });
+      },
       _refresh() {
         if (!this._map) this._read();
-        this.el.querySelectorAll("[data-byob-username]").forEach((el) => {
-          const username = el.dataset.byobUsername;
-          const nickname = (username && this._map[username]) || null;
-          let suffix = el.nextElementSibling;
-          if (suffix && !suffix.classList.contains("byob-nickname-suffix")) suffix = null;
-          if (nickname) {
-            if (!suffix) {
-              suffix = document.createElement("span");
-              suffix.className = "byob-nickname-suffix text-base-content/40 text-xs";
-              el.after(suffix);
+        // Detach the observer for the duration of our own mutations so
+        // adding/removing suffix spans doesn't fire the observer back at
+        // us. (Reconnecting after handles any further LV diffs.)
+        this._refreshing = true;
+        if (this._observer) this._observer.disconnect();
+        try {
+          this.el.querySelectorAll("[data-byob-username]").forEach((el) => {
+            const username = el.dataset.byobUsername;
+            const nickname = (username && this._map[username]) || null;
+            let suffix = el.nextElementSibling;
+            if (suffix && !suffix.classList.contains("byob-nickname-suffix")) suffix = null;
+            if (nickname) {
+              if (!suffix) {
+                suffix = document.createElement("span");
+                suffix.className = "byob-nickname-suffix text-base-content/40 text-xs";
+                el.after(suffix);
+              }
+              const want = ` (${nickname})`;
+              if (suffix.textContent !== want) suffix.textContent = want;
+            } else if (suffix) {
+              suffix.remove();
             }
-            suffix.textContent = ` (${nickname})`;
-          } else if (suffix) {
-            suffix.remove();
+          });
+        } finally {
+          if (this._observer) {
+            this._observer.observe(this.el, { childList: true, subtree: true });
           }
-        });
+          this._refreshing = false;
+        }
       },
       _editFor(username) {
         if (!username) return;

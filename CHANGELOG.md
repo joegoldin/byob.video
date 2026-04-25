@@ -3,6 +3,28 @@
 
 ---
 
+# v6.5.27
+
+### Fix Nicknames hook locking the page
+
+The Nicknames hook attached a `MutationObserver` to its element to
+catch LV-driven DOM changes — but `_refresh()` itself adds/removes
+sibling suffix spans inside that subtree, which re-fired the
+observer synchronously, calling `_refresh()` again, and so on until
+the page froze.
+
+Two guards added:
+1. `_refreshing` flag wrapping the mutation pass — observer
+   disconnects before we mutate and reconnects after, so our own
+   add/remove operations don't echo back into the observer.
+2. `_scheduleRefresh()` coalesces a burst of LV mutations into a
+   single microtask so even multi-element diffs settle in one pass.
+
+Setting a nickname (or just rendering the page after this lands)
+no longer hangs.
+
+---
+
 # v6.5.26
 
 ### Reset external-player progress bar on third-party → third-party transition
