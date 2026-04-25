@@ -31,28 +31,30 @@ export function create(el, callbacks, opts) {
       </svg>`;
 
   el.innerHTML = `
-    <div class="absolute inset-0 flex flex-col items-center justify-center gap-3 text-base-content/60 px-4" id="ext-placeholder">
-      ${thumbHtml}
-      <p class="text-sm font-medium text-base-content/70 max-w-md text-center line-clamp-2" title="${title}">${title}</p>
-      <p class="text-xs" id="ext-status">Waiting for external player...</p>
-      <div id="ext-progress-container" class="w-3/4 max-w-md" style="display:none">
-        <div class="relative h-1 rounded bg-base-content/10 overflow-hidden">
-          <div id="ext-progress-fill" class="absolute left-0 top-0 h-full bg-primary rounded transition-all" style="width:0%"></div>
-        </div>
-        <div class="flex justify-between mt-1">
-          <span id="ext-time-current" class="text-xs text-base-content/40 tabular-nums">0:00</span>
-          <span id="ext-time-duration" class="text-xs text-base-content/40 tabular-nums">0:00</span>
+    <div class="absolute inset-0 flex flex-col items-center text-base-content/60 px-4 py-6" id="ext-placeholder">
+      <div class="flex-1 flex flex-col items-center justify-center gap-3 min-h-0">
+        ${thumbHtml}
+        <p class="text-sm font-medium text-base-content/70 max-w-md text-center line-clamp-2" title="${title}">${title}</p>
+        <p class="text-xs" id="ext-status">Waiting for external player...</p>
+        <div id="ext-progress-container" class="w-3/4 max-w-md" style="display:none">
+          <div class="relative h-1 rounded bg-base-content/10 overflow-hidden">
+            <div id="ext-progress-fill" class="absolute left-0 top-0 h-full bg-primary rounded transition-all" style="width:0%"></div>
+          </div>
+          <div class="flex justify-between mt-1">
+            <span id="ext-time-current" class="text-xs text-base-content/40 tabular-nums">0:00</span>
+            <span id="ext-time-duration" class="text-xs text-base-content/40 tabular-nums">0:00</span>
+          </div>
         </div>
       </div>
-      <div class="alert mt-1 w-auto max-w-md py-2 px-4 flex flex-col items-center gap-2 text-center">
+      <div class="alert mt-6 w-full max-w-md px-5 py-3 flex flex-row items-center gap-4">
         <button
           type="button"
           id="ext-open-btn-inline"
-          class="btn btn-primary btn-sm gap-1"
+          class="btn btn-primary btn-sm gap-1 flex-shrink-0"
         >
           <span data-byob-ext-btn-label>Open Player Window</span>
         </button>
-        <p class="text-xs text-base-content/60 leading-snug">
+        <p class="text-xs text-base-content/60 leading-snug flex-1 text-left">
           Extension required for this site.<br/>
           Click play on the video for the extension to hook it.
         </p>

@@ -316,6 +316,8 @@ const VideoPlayer = {
         this.isReady = false;
         this._endedFired = false;
         this._endedAt = null;
+        this._endStallTicks = 0;
+        this._endStallLastPos = 0;
       },
       onStateChange: (stateName) => {
         this._onPlayerStateChange(stateName);
@@ -962,17 +964,39 @@ const VideoPlayer = {
 
       // Detect video ended — YouTube embeds may not fire YT_ENDED reliably
       const dur = this.player?.getDuration?.() || 0;
-      if (dur > 0 && pos >= dur - 1) {
-        if (!this._endedFired) {
-          this._endedFired = true;
-          this._endedAt = Date.now();
-          this.expectedPlayState = null;
-          this.reconcile.stop();
-          const currentIndex = this.el.dataset.currentIndex;
-          if (currentIndex != null) {
-            this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { index: parseInt(currentIndex) });
-          }
+      // Track position-stall ticks: some YT videos sit at the final frame
+      // a couple seconds short of `getDuration()` and never advance. The
+      // dur-1 threshold below misses them; the stall counter catches the
+      // case as a fallback.
+      const stalledNow = Math.abs(pos - this._endStallLastPos) < 0.05;
+      if (stalledNow) this._endStallTicks = (this._endStallTicks || 0) + 1;
+      else this._endStallTicks = 0;
+      this._endStallLastPos = pos;
+
+      const fireEnded = () => {
+        this._endedFired = true;
+        this._endedAt = Date.now();
+        this.expectedPlayState = null;
+        this.reconcile.stop();
+        const currentIndex = this.el.dataset.currentIndex;
+        if (currentIndex != null) {
+          this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { index: parseInt(currentIndex) });
         }
+      };
+
+      if (dur > 0 && pos >= dur - 1) {
+        if (!this._endedFired) fireEnded();
+      } else if (
+        // Stall fallback: position hasn't moved for ~3s while expected to
+        // be playing AND we're within the last 30s of the video — treat
+        // as ended even though `getCurrentTime` is reporting < dur - 1.
+        !this._endedFired &&
+        dur > 0 &&
+        pos > Math.max(dur - 30, dur * 0.95) &&
+        playerState === "playing" &&
+        this._endStallTicks >= 6
+      ) {
+        fireEnded();
       } else if (pos < dur - 2) {
         this._endedFired = false;
         this._endedAt = null;

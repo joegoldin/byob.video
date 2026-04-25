@@ -3,6 +3,32 @@
 
 ---
 
+# v6.5.33
+
+### Two-column placeholder card + stall-fallback for YT ended detection
+
+**Layout.** The "Open Player Window" card moved off the centered
+column so the button sits on the **left** and the explanatory copy
+on the **right**, both inside the alert box. The card now sits near
+the bottom of the player (its column flexes to fill, with the card
+nailed below it) instead of crowding the title/status. Padding
+inside the alert is bumped slightly.
+
+**Stall-fallback for ended.** Some YouTube videos park at a final
+position a couple seconds short of `getDuration()` and never advance
+— the existing `pos >= dur - 1` backstop missed them, leaving the
+queue stuck without ever firing `video:ended`. The seek detector
+now also fires ended if all of:
+- position hasn't moved for ~3 s (6 consecutive 500 ms ticks),
+- player state is `playing`,
+- we're within the last 30 s (or last 5 %) of `getDuration()`.
+
+Real buffering near the start / mid-video doesn't qualify (we gate
+on the near-end window). Stall counter resets on `onLoadStart` so a
+new video never inherits the previous one's tick count.
+
+---
+
 # v6.5.32
 
 ### Roulette / vote winners get duration overlay on the queue thumbnail
