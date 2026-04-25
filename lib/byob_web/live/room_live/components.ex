@@ -372,15 +372,28 @@ defmodule ByobWeb.RoomLive.Components do
               <span>Drift tolerance</span>
               <span>250ms</span>
             </div>
-            <% # Filter out stale clients: extensions send a video:state every
-            # 500ms, so anything not updated in the last 5s has almost
-            # certainly disconnected and shouldn't be in the count.
+            <% # Recent = drift report within the last 5s. Stale rows still
+            # surface their owner via the @users walk below — we just don't
+            # show stale numbers.
             now_s = System.system_time(:second)
 
             active_clients =
               (@sync_stats[:clients] || %{})
               |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
-              |> Map.new() %>
+              |> Map.new()
+
+            # Group recent drift rows by owner (everything before the LAST
+            # `:`, because LV per-tab user_ids are themselves `session:tab`).
+            clients_by_owner =
+              active_clients
+              |> Enum.group_by(fn {client_id, _} ->
+                parts = String.split(client_id, ":")
+                parts |> Enum.drop(-1) |> Enum.join(":")
+              end)
+
+            connected_users =
+              (@users || %{})
+              |> Enum.filter(fn {_, u} -> Map.get(u, :connected, false) end) %>
             <%= if map_size(active_clients) > 0 do %>
               <% drifts = active_clients |> Map.values() |> Enum.map(& &1.drift_ms) %>
               <% avg = div(Enum.sum(drifts), length(drifts)) %>
@@ -398,79 +411,83 @@ defmodule ByobWeb.RoomLive.Components do
                 </span>
               </div>
             <% end %>
-            <%= if map_size(active_clients) > 0 do %>
+            <%= if connected_users != [] do %>
               <div class="mt-2 pt-2 border-t border-base-300/50">
                 <div class="text-base-content/40 mb-1">Connected clients</div>
-                <%= for {client_id, info} <- active_clients do %>
-                  <% # Prefer the username broadcast alongside the stats payload
-                     # (works for both extension clients and the LV browser
-                     # drift-report path, where user_id has its own internal
-                     # `:` and naive String.split would mis-key the @users
-                     # lookup). Fall back to the legacy @users-by-owner-id
-                     # lookup for any older entries that didn't carry it.
-                     parts = String.split(client_id, ":")
-                     {owner_parts, [tab_id]} = Enum.split(parts, length(parts) - 1)
-                     owner_id = Enum.join(owner_parts, ":")
-
-                     username =
-                       Map.get(info, :username) ||
-                         get_in(@users || %{}, [owner_id, :username]) ||
-                         "(unknown)"
-
-                     ext_short = String.slice(owner_id, 0..7)
-
-                     tab_short =
-                       if is_binary(tab_id) and tab_id != "",
-                         do: String.slice(tab_id, 0..7),
-                         else: nil
-
-                     id_label =
-                       if tab_short, do: "#{ext_short}:#{tab_short}", else: ext_short %>
-                  <div class="mb-2 p-1.5 rounded bg-base-200/50">
-                    <div class="text-[10px] truncate mb-0.5" title={client_id}>
-                      <span
-                        class="text-base-content/70 font-semibold"
-                        data-byob-username={username}
-                      >{username}</span>
-                      <span class="text-base-content/30">({id_label})</span>
+                <%= for {user_id, user} <- connected_users do %>
+                  <% user_clients = Map.get(clients_by_owner, user_id, []) %>
+                  <%= if user_clients == [] do %>
+                    <% owner_short = String.slice(user_id, 0..7) %>
+                    <div class="mb-2 p-1.5 rounded bg-base-200/50">
+                      <div class="text-[10px] truncate mb-0.5" title={user_id}>
+                        <span
+                          class="text-base-content/70 font-semibold"
+                          data-byob-username={user.username}
+                        >{user.username}</span>
+                        <span class="text-base-content/30">({owner_short})</span>
+                      </div>
+                      <div class="text-base-content/30 italic">no drift data</div>
                     </div>
-                    <div class="flex justify-between">
-                      <span>Drift</span>
-                      <span class={
-                        cond do
-                          abs(info.drift_ms) > 1000 -> "text-error"
-                          abs(info.drift_ms) > 250 -> "text-warning"
-                          true -> "text-success"
-                        end
-                      }>
-                        {if info.drift_ms > 0, do: "+", else: ""}{info.drift_ms}ms
-                      </span>
-                    </div>
-                    <%= if Map.get(info, :offset_ms, 0) != 0 do %>
-                      <div class="flex justify-between">
-                        <span>Offset</span>
-                        <span class="text-base-content/40">
-                          {if info.offset_ms > 0, do: "+", else: ""}{info.offset_ms}ms
-                        </span>
+                  <% else %>
+                    <%= for {client_id, info} <- user_clients do %>
+                      <% parts = String.split(client_id, ":")
+                         {_owner_parts, [tab_id]} = Enum.split(parts, length(parts) - 1)
+                         username =
+                           Map.get(info, :username) || user.username || "(unknown)"
+                         owner_short = String.slice(user_id, 0..7)
+                         tab_short =
+                           if is_binary(tab_id) and tab_id != "",
+                             do: String.slice(tab_id, 0..7),
+                             else: nil
+                         id_label =
+                           if tab_short, do: "#{owner_short}:#{tab_short}", else: owner_short %>
+                      <div class="mb-2 p-1.5 rounded bg-base-200/50">
+                        <div class="text-[10px] truncate mb-0.5" title={client_id}>
+                          <span
+                            class="text-base-content/70 font-semibold"
+                            data-byob-username={username}
+                          >{username}</span>
+                          <span class="text-base-content/30">({id_label})</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>Drift</span>
+                          <span class={
+                            cond do
+                              abs(info.drift_ms) > 1000 -> "text-error"
+                              abs(info.drift_ms) > 250 -> "text-warning"
+                              true -> "text-success"
+                            end
+                          }>
+                            {if info.drift_ms > 0, do: "+", else: ""}{info.drift_ms}ms
+                          </span>
+                        </div>
+                        <%= if Map.get(info, :offset_ms, 0) != 0 do %>
+                          <div class="flex justify-between">
+                            <span>Offset</span>
+                            <span class="text-base-content/40">
+                              {if info.offset_ms > 0, do: "+", else: ""}{info.offset_ms}ms
+                            </span>
+                          </div>
+                        <% end %>
+                        <div class="flex justify-between">
+                          <span>Server pos</span>
+                          <span>{info.server_position}s</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>State</span>
+                          <span class={
+                            if info.play_state == "playing", do: "text-success", else: "text-warning"
+                          }>
+                            {info.play_state}
+                          </span>
+                        </div>
                       </div>
                     <% end %>
-                    <div class="flex justify-between">
-                      <span>Server pos</span>
-                      <span>{info.server_position}s</span>
-                    </div>
-                    <div class="flex justify-between">
-                      <span>State</span>
-                      <span class={
-                        if info.play_state == "playing", do: "text-success", else: "text-warning"
-                      }>
-                        {info.play_state}
-                      </span>
-                    </div>
-                  </div>
+                  <% end %>
                 <% end %>
               </div>
             <% else %>
-              <div class="text-base-content/30 mt-1">No clients reporting</div>
+              <div class="text-base-content/30 mt-1">No connected users</div>
             <% end %>
           </div>
         </details>

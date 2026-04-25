@@ -3,6 +3,30 @@
 
 ---
 
+# v6.5.38
+
+### Stats-for-nerds: render Connected clients from the user list
+
+The "Connected clients" section in Stats for nerds was rendering
+from the recent-drift-report map filtered to the last 5 s. After
+a deploy, both LVs disconnect for several seconds and every
+client's last drift report ages past 5 s. When reports resume,
+they update the row only for clients whose `clockSync` warmed
+back up promptly — a tab that's slow to re-warm (background
+throttling, slow reconnect, paused player not driving the
+interval) effectively disappears from the panel even though
+they're plainly online.
+
+Now the panel iterates the connected-users list instead and
+overlays drift data per row. Users with a recent drift report
+get the full numbers; users without get a "no drift data"
+placeholder under their name. The post-deploy blackout becomes
+visible as the placeholder, not silence.
+
+Server-only / settings-modal-template-only.
+
+---
+
 # v6.5.37
 
 ### Reset `_endedFired` on any detected seek
