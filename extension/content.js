@@ -1117,74 +1117,88 @@
     hookedVideo.addEventListener("play", _nativePlayListener);
   }
 
-  // ── Sync bar UI ───────────────────────────────────────────────────────────
+  // ── Toast stack ───────────────────────────────────────────────────────────
+  // Single fixed-position container at bottom-center. All toasts append here
+  // so multiple messages stack (newest at bottom) instead of overlapping.
+  // column-reverse means appendChild puts the latest at the visual bottom
+  // and existing ones rise above it.
+  function ensureToastStack() {
+    if (window !== window.top) return null;
+    let stack = document.getElementById("byob-toast-stack");
+    if (!stack) {
+      const style = document.createElement("style");
+      style.id = "byob-toast-style";
+      style.textContent = `
+        @keyframes byob-toast-pulse {
+          0%, 100% { opacity: 1; box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15); }
+          50% { opacity: 0.85; box-shadow: 0 4px 32px rgba(124, 58, 237, 0.7), 0 0 0 1px rgba(255,255,255,0.25); }
+        }
+        @keyframes byob-toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes byob-toast-out { from { opacity: 1; } to { opacity: 0; } }
+      `;
+      if (!document.getElementById("byob-toast-style")) document.head.appendChild(style);
+
+      stack = document.createElement("div");
+      stack.id = "byob-toast-stack";
+      stack.style.cssText = `
+        position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%);
+        z-index: 2147483647;
+        display: flex; flex-direction: column-reverse; align-items: center; gap: 8px;
+        max-width: calc(100vw - 32px);
+        pointer-events: none;
+      `;
+      document.body.appendChild(stack);
+    }
+    return stack;
+  }
+
+  // Common purple toast styling — used by every notification on third-party
+  // pages. `pulse` is the breathing-glow animation used by the persistent
+  // join toast; auto-dismiss toasts use a fade-in instead.
+  function _styleToast(toast, { pulse } = {}) {
+    toast.style.cssText = `
+      background: #7c3aed; color: white;
+      font-family: system-ui, sans-serif; font-size: 15px; font-weight: 600;
+      padding: 14px 28px; border-radius: 12px;
+      box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15);
+      pointer-events: auto;
+      ${pulse ? "animation: byob-toast-pulse 2s ease-in-out infinite;" : "animation: byob-toast-in 0.2s ease-out;"}
+    `;
+  }
+
   function showJoinToast(text) {
-    if (window !== window.top) return;
+    const stack = ensureToastStack();
+    if (!stack) return;
     hideJoinToast();
 
     const toast = document.createElement("div");
     toast.id = "byob-join-toast";
-    toast.style.cssText = `
-      position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%);
-      z-index: 999999; background: #7c3aed; color: white;
-      font-family: system-ui, sans-serif; font-size: 15px; font-weight: 600;
-      padding: 14px 28px; border-radius: 12px;
-      box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15);
-      pointer-events: none;
-      animation: byob-toast-pulse 2s ease-in-out infinite;
-    `;
+    _styleToast(toast, { pulse: true });
+    toast.style.pointerEvents = "none";
     toast.textContent = text;
-    const style = document.createElement("style");
-    style.id = "byob-toast-style";
-    style.textContent = `
-      @keyframes byob-toast-pulse {
-        0%, 100% { opacity: 1; box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15); }
-        50% { opacity: 0.85; box-shadow: 0 4px 32px rgba(124, 58, 237, 0.7), 0 0 0 1px rgba(255,255,255,0.25); }
-      }
-    `;
-    document.head.appendChild(style);
-    document.body.appendChild(toast);
+    stack.appendChild(toast);
   }
 
   function hideJoinToast() {
-    const toast = document.getElementById("byob-join-toast");
-    if (toast) toast.remove();
-    const style = document.getElementById("byob-toast-style");
-    if (style) style.remove();
+    document.getElementById("byob-join-toast")?.remove();
   }
 
   // Brief, non-blocking toast for room presence changes ("X joined" / "X left").
-  // Styled like showJoinToast but self-dismisses after 2.5s and stacks if
-  // multiple events land close together.
-  let _presenceToastHideTimer = null;
+  // Stacks with other toasts via the shared container.
   function showPresenceToast(text) {
-    if (window !== window.top) return;
-    const existing = document.getElementById("byob-presence-toast");
-    if (existing) existing.remove();
-    if (_presenceToastHideTimer) { clearTimeout(_presenceToastHideTimer); _presenceToastHideTimer = null; }
+    const stack = ensureToastStack();
+    if (!stack) return;
 
     const toast = document.createElement("div");
-    toast.id = "byob-presence-toast";
-    toast.style.cssText = `
-      position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%) translateY(10px);
-      z-index: 999999; background: #7c3aed; color: white;
-      font-family: system-ui, sans-serif; font-size: 15px; font-weight: 600;
-      padding: 14px 28px; border-radius: 12px;
-      box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15);
-      pointer-events: none; opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
-    `;
+    toast.className = "byob-presence-toast";
+    _styleToast(toast);
+    toast.style.pointerEvents = "none";
     toast.textContent = text;
-    document.body.appendChild(toast);
-    // Next frame: fade in
-    requestAnimationFrame(() => {
-      toast.style.opacity = "1";
-      toast.style.transform = "translateX(-50%) translateY(0)";
-    });
-    _presenceToastHideTimer = setTimeout(() => {
-      _presenceToastHideTimer = null;
-      toast.style.opacity = "0";
-      toast.style.transform = "translateX(-50%) translateY(10px)";
-      setTimeout(() => { if (toast.parentNode) toast.remove(); }, TOAST_FADE_MS);
+    stack.appendChild(toast);
+
+    setTimeout(() => {
+      toast.style.animation = "byob-toast-out 0.2s ease-in forwards";
+      setTimeout(() => toast.remove(), TOAST_FADE_MS);
     }, 2500);
   }
 
@@ -1274,18 +1288,20 @@
   function showUrlMismatchToast() {
     if (_urlMismatchShown) return;
     if (document.getElementById("byob-url-toast")) return;
+    const stack = ensureToastStack();
+    if (!stack) return;
     _urlMismatchShown = true;
 
     const toast = document.createElement("div");
     toast.id = "byob-url-toast";
     toast.style.cssText = `
-      position: fixed; bottom: 48px; left: 50%; transform: translateX(-50%);
-      z-index: 2147483647; background: #7c3aed; color: white;
+      background: #7c3aed; color: white;
       font-family: system-ui, sans-serif; font-size: 14px;
       padding: 12px 18px; border-radius: 12px;
       box-shadow: 0 4px 24px rgba(124, 58, 237, 0.5), 0 0 0 1px rgba(255,255,255,0.15);
       display: flex; align-items: center; gap: 12px;
-      max-width: calc(100vw - 32px);
+      pointer-events: auto;
+      animation: byob-toast-in 0.2s ease-out;
     `;
 
     const label = document.createElement("span");
@@ -1333,7 +1349,7 @@
     toast.appendChild(spacer);
     toast.appendChild(backBtn);
     toast.appendChild(updateBtn);
-    document.body.appendChild(toast);
+    stack.appendChild(toast);
   }
 
   function hideUrlMismatchToast() {

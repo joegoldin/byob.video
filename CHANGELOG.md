@@ -3,6 +3,32 @@
 
 ---
 
+# v6.5.9
+
+### Toasts stack instead of overlapping + Undo button on SponsorBlock skips
+
+Both windows now route every toast through a shared
+`column-reverse`/`flex` container so concurrent messages stack
+vertically (newest at bottom) instead of stomping each other.
+
+Main window (`assets/js/ui/toasts.js`): single `#byob-toast-container`
+at bottom-center. `showToast` and `showSkipToast` append into it.
+
+Third-party page (`extension/content.js`): single
+`#byob-toast-stack`. The join, presence, "followed room to:", and
+URL-mismatch toasts share it. All keep the same purple styling;
+multiple presence events ("Alice joined", "Bob closed window",
+"Followed room to: …") now visibly queue.
+
+Bonus: `showSkipToast(category, onUndo)` now accepts an optional
+callback. When `checkSponsorSkip` auto-skips a SponsorBlock segment,
+the toast renders a small **Undo** button that seeks back to the
+segment's start. `lastSkippedUUID` is preserved so the next 250 ms
+sponsor-check tick won't immediately re-skip — the user can watch
+through the segment uninterrupted.
+
+---
+
 # v6.5.8
 
 ### Toast on the destination page after the room auto-navigates the tab

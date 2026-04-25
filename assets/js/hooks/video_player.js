@@ -998,7 +998,7 @@ const VideoPlayer = {
         this.sponsorSegments,
         this._lastSkippedUUID,
         (t) => this._seekTo(t),
-        (cat) => showSkipToast(cat)
+        (cat, onUndo) => showSkipToast(cat, onUndo)
       );
     }, 250);
   },

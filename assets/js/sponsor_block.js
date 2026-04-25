@@ -102,7 +102,7 @@ export function retrySponsorBar(ctx, attempt = 0) {
  * @param {Array}  sponsorSegments   – segments with auto_skip setting
  * @param {string|null} lastSkippedUUID – UUID of the last segment we skipped
  * @param {Function} seekTo          – (seconds) => void
- * @param {Function} showSkipToast   – (category) => void
+ * @param {Function} showSkipToast   – (category, onUndo) => void
  * @returns {string|null} updated lastSkippedUUID
  */
 export function checkSponsorSkip(
@@ -117,7 +117,10 @@ export function checkSponsorSkip(
     if (pos >= seg.segment[0] && pos < seg.segment[1] - 0.5) {
       if (lastSkippedUUID !== seg.uuid) {
         seekTo(seg.segment[1]);
-        showSkipToast(seg.category);
+        // Pass an undo callback that seeks back to the segment start.
+        // lastSkippedUUID stays === seg.uuid so the next tick won't
+        // immediately re-skip; the user can watch through the segment.
+        showSkipToast(seg.category, () => seekTo(seg.segment[0]));
         return seg.uuid;
       }
       break;
