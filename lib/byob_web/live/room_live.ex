@@ -547,30 +547,11 @@ defmodule ByobWeb.RoomLive do
           expanded={@comments_expanded}
         />
 
-        <%!-- Extension mode banner --%>
-        <div
-          :if={@current_media && @current_media.source_type == :extension_required}
-          class="alert mb-3"
-        >
-          <div>
-            <p class="text-sm font-medium">Extension required for this site</p>
-            <p class="text-xs text-base-content/60">
-              Click play on the video for the extension to hook it.
-            </p>
-          </div>
-          <button
-            phx-hook="ExtOpenBtn"
-            id="ext-open-btn"
-            data-url={@current_media.url}
-            data-room-id={@room_id}
-            data-server-url={ByobWeb.Endpoint.url()}
-            data-token={ByobWeb.ExtensionSocket.generate_token(@room_id)}
-            data-username={@username}
-            class="btn btn-primary btn-sm"
-          >
-            Open Player Window
-          </button>
-        </div>
+        <%!-- The "Open / Focus Player Window" button used to live in a
+             banner here. It's been moved into the player placeholder
+             itself (assets/js/players/extension.js) so it's always
+             visible regardless of how the surrounding sidebar / banner
+             reflows at narrow window ratios. --%>
       </div>
 
       <%!-- Sidebar: queue/history at top, users pinned at bottom.

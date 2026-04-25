@@ -450,6 +450,8 @@ const VideoPlayer = {
     this.player = ExtensionPlayer.create(this.el, callbacks, {
       title,
       thumbnailUrl: thumb,
+      url,
+      hook: this,
     });
   },
 
@@ -793,6 +795,11 @@ const VideoPlayer = {
   _onReadyCount(data) {
     this._lastReadyCount = data;
     if (this._lastExtPlayerState) this._renderExtStatus();
+    // Notify the extension placeholder's inline button so its label
+    // ("Open" vs "Focus") flips with port-disconnect / new-popup events.
+    if (typeof this._extPlaceholderRefreshLabel === "function") {
+      try { this._extPlaceholderRefreshLabel(); } catch (_) {}
+    }
   },
 
   _onExtPlayerState(data) {

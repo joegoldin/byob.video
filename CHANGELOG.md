@@ -3,6 +3,33 @@
 
 ---
 
+# v6.5.28
+
+### "Open / Focus Player Window" button moved inside the player placeholder
+
+Previously the button lived in an `alert mb-3` banner above the player
+column. At certain window aspect ratios that banner could be pushed
+off-screen or hidden under the sidebar, leaving users unable to
+re-open the popup window.
+
+The button is now rendered by `assets/js/players/extension.js` directly
+inside the black placeholder box (under the title, status line, and
+progress bar), so it's always visible whenever the room's current
+video is `extension_required`.
+
+The button reuses the same flow as the old `ExtOpenBtn` — auth
+context (room id, token, username) comes from the player div's
+`data-*` attributes, the popup-state label flips between
+"Open Player Window" and "Focus Player Window" via the same
+server-side `ready_count` payload, and the click posts
+`byob:focus-external` (BG-mediated focus) when a popup is open or
+`byob:open-external` + `window.open(…, "byob_player", …)` otherwise.
+
+The LV banner is gone; the small "Extension required for this site"
+hint moves into the placeholder as a small footer line.
+
+---
+
 # v6.5.27
 
 ### Fix Nicknames hook locking the page
