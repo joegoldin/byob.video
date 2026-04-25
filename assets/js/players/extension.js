@@ -44,17 +44,19 @@ export function create(el, callbacks, opts) {
           <span id="ext-time-duration" class="text-xs text-base-content/40 tabular-nums">0:00</span>
         </div>
       </div>
-      <button
-        type="button"
-        id="ext-open-btn-inline"
-        class="btn btn-primary btn-sm gap-1 mt-1"
-      >
-        <span data-byob-ext-btn-label>Open Player Window</span>
-      </button>
-      <p class="text-[10px] text-base-content/40 max-w-sm text-center">
-        Extension required for this site. Click play on the video for the
-        extension to hook it.
-      </p>
+      <div class="alert mt-1 w-auto max-w-md py-2 px-4 flex flex-col items-center gap-2 text-center">
+        <button
+          type="button"
+          id="ext-open-btn-inline"
+          class="btn btn-primary btn-sm gap-1"
+        >
+          <span data-byob-ext-btn-label>Open Player Window</span>
+        </button>
+        <p class="text-xs text-base-content/60 leading-snug">
+          Extension required for this site.<br/>
+          Click play on the video for the extension to hook it.
+        </p>
+      </div>
     </div>
   `;
 

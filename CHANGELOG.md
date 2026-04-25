@@ -3,6 +3,18 @@
 
 ---
 
+# v6.5.29
+
+### Restyle the placeholder's player-window button
+
+Wrapped the inline button + hint copy in a daisyUI `alert` card so
+they read as a unit (mirroring the outlined banner the button used
+to live in before v6.5.28). The hint copy is now two explicit lines
+("Extension required for this site." / "Click play on the video for
+the extension to hook it.") instead of a single wrapping paragraph.
+
+---
+
 # v6.5.28
 
 ### "Open / Focus Player Window" button moved inside the player placeholder
