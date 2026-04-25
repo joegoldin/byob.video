@@ -122,6 +122,18 @@ const VideoPlayer = {
     this.clockSync = new ClockSync((event, payload) =>
       this.pushEvent(event, payload)
     );
+    // Kick off the probe burst + maintenance immediately rather than
+    // waiting for the server's mount-time SYNC_STATE push to arrive.
+    // After a deploy that round-trip can stall by several seconds, and
+    // until clockSync.isReady() flips back true the drift-report
+    // interval (mounted()) early-returns — which makes this client
+    // disappear from other peers' Stats-for-nerds Connected clients
+    // panel for the duration of the gap. Fire-and-forget; if
+    // _onSyncState lands later it'll re-call start() harmlessly (a
+    // second burst overlays this one and the existing ready flag
+    // stays true throughout).
+    this.clockSync.start();
+    this.clockSync.maintainSync();
 
     if (this.player && this.isReady) {
       const localState = this.player.getState?.();

@@ -3,6 +3,29 @@
 
 ---
 
+# v6.5.39
+
+### Warm clockSync immediately on LV reconnect
+
+`reconnected()` was tearing down the old `ClockSync` and creating
+a fresh one but not starting it — relying on the server's
+mount-time `SYNC_STATE` push to land and trigger `_onSyncState`,
+which in turn awaited `clockSync.start()`. After a deploy that
+round-trip can stall by several seconds, and until
+`clockSync.isReady()` flips back true the drift-report interval
+in `mounted()` early-returns — which makes this client
+disappear from other peers' Stats-for-nerds Connected clients
+panel for the duration of the gap.
+
+`reconnected()` now calls `clockSync.start()` and
+`maintainSync()` directly. If `_onSyncState` lands later it'll
+re-call `start()` harmlessly (a second burst overlays this one
+and the existing `ready` flag stays true throughout).
+
+Main-page-JS-only / no extension republish.
+
+---
+
 # v6.5.38
 
 ### Stats-for-nerds: render Connected clients from the user list
