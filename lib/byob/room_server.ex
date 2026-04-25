@@ -58,7 +58,10 @@ defmodule Byob.RoomServer do
   # Defer the side effects of a leave (broadcast "left" toast, pause room
   # if ≤1 user, mark user disconnected) by this much. Network blips that
   # resolve within the window leave no trace; only real disconnects fire.
-  @leave_grace_ms 1_500
+  # Real-world WAN reconnects (5G handoffs, VPN flip, browser tab reload)
+  # commonly take 2-4 seconds — 1.5s was triggering false "X left" toasts
+  # whenever a friend's tab so much as breathed funny.
+  @leave_grace_ms 5_000
 
   def default_sb_settings, do: @default_sb_settings
 

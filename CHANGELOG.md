@@ -3,6 +3,21 @@
 
 ---
 
+# v6.5.35
+
+### Bump leave grace from 1.5 s → 5 s
+
+Real-world WAN reconnects (5G handoffs, VPN flip, browser tab
+reload) commonly take 2-4 seconds, well past v6.5.12's 1.5 s
+window. False "X left" toasts were firing whenever a friend's tab
+breathed funny. Bumped the deferred-leave timer to 5 s.
+
+Drift correction thresholds (50 ms dead zone, 2 s hard-seek)
+unchanged — the actual sync feels fine, the only symptom was the
+spurious presence churn.
+
+---
+
 # v6.5.34
 
 ### Tighten the YT ended-stall fallback
