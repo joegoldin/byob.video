@@ -2,6 +2,37 @@
 
 ---
 
+# v6.5.2
+
+### Fix "Set room to this page" doing nothing after queue ended
+
+Two bugs:
+
+1. After a video ended and the queue cleared, `current_index` becomes
+   `nil`. The original `update_current_url/3` `with` clause bailed in
+   that case — the message was logged but no state change happened.
+   Rewritten to handle both cases:
+
+   * Queue active → rewrite the current item in place (URL +
+     re-parsed source_type/source_id, clear scraped title/thumbnail).
+   * Queue ended/empty → append a new MediaItem and point
+     `current_index` at it.
+
+   Either way the room flips to `:playing` at `current_time: 0` so
+   everyone joins the new video without a separate play click.
+
+2. `pending_advance_ref` from the just-finished video was never
+   cancelled, so its 5 s timer would later run `advance_queue` and
+   either skip past our new video or flip the room back to
+   `:ended`. Now cancelled (along with `sync_correction_ref`) before
+   the URL update lands.
+
+`schedule_sync_correction/1` reschedules; `add_to_history/2` records
+the new item. `queue_updated` and `video_changed` are broadcast so
+every client (LV main player + extension tabs) re-syncs.
+
+---
+
 # v6.5.1
 
 ### Settings panel polish — username on extension clients + smart popup reset

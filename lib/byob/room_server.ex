@@ -442,41 +442,75 @@ defmodule Byob.RoomServer do
     end
   end
 
-  # Update the URL of the currently-playing media item — used by the
-  # extension's "Set room to this page" toast. Re-parses source_type/source_id
-  # from the new URL; resets current_time to 0 and pauses so everyone catches
-  # up on the new video. Broadcasts video:change so all clients navigate.
+  # Set the room's current video to the given URL — used by the extension's
+  # "Set room to this page" toast. Two cases:
+  #   * Queue active and current_index is set: rewrite that item in place
+  #     (URL + re-parsed source_type/source_id; clear scraped title/thumb).
+  #   * Queue ended (current_index nil) or empty: append a new MediaItem and
+  #     point current_index at it so play_state can transition to :playing.
+  # Either way: cancel pending advance/sync-correction timers, reset
+  # current_time to 0, set play_state to :playing, and broadcast queue_updated
+  # + video_changed so every client (LV + extension) re-syncs.
   def handle_call({:update_current_url, user_id, url}, _from, state) do
-    with idx when not is_nil(idx) <- state.current_index,
-         %Byob.MediaItem{} = item <- Enum.at(state.queue, idx),
-         {:ok, parsed} <- Byob.MediaItem.parse_url(url) do
-      updated = %{
-        item
-        | url: url,
-          source_type: parsed.source_type,
-          source_id: parsed.source_id,
-          title: nil,
-          thumbnail_url: nil
-      }
+    case Byob.MediaItem.parse_url(url) do
+      {:ok, parsed} ->
+        now = System.monotonic_time(:millisecond)
+        state = maybe_cancel_pending_advance(state)
+        state = cancel_sync_correction(state)
 
-      queue = List.replace_at(state.queue, idx, updated)
-      now = System.monotonic_time(:millisecond)
+        {item, queue, idx} =
+          case state.current_index && Enum.at(state.queue, state.current_index) do
+            %Byob.MediaItem{} = current ->
+              updated = %{
+                current
+                | url: url,
+                  source_type: parsed.source_type,
+                  source_id: parsed.source_id,
+                  title: nil,
+                  thumbnail_url: nil
+              }
 
-      state = %{
-        state
-        | queue: queue,
-          current_time: 0.0,
-          play_state: :paused,
-          last_sync_at: now
-      }
+              {updated, List.replace_at(state.queue, state.current_index, updated),
+               state.current_index}
 
-      state = log_activity(state, :added, user_id, updated.title || updated.url)
+            _ ->
+              added_by_name =
+                case Map.get(state.users, user_id) do
+                  %{username: name} -> name
+                  _ -> nil
+                end
 
-      broadcast(state, {:queue_updated, %{queue: queue, current_index: idx}})
-      broadcast(state, {:video_changed, %{media_item: updated, index: idx}})
-      {:reply, {:ok, updated}, state}
-    else
-      _ -> {:reply, {:error, :not_updated}, state}
+              new_item = %{
+                parsed
+                | added_by: user_id,
+                  added_by_name: added_by_name,
+                  added_at: DateTime.utc_now()
+              }
+
+              queue = state.queue ++ [new_item]
+              {new_item, queue, length(queue) - 1}
+          end
+
+        state = %{
+          state
+          | queue: queue,
+            current_index: idx,
+            current_time: 0.0,
+            play_state: :playing,
+            last_sync_at: now,
+            sponsor_segments: []
+        }
+
+        state = add_to_history(state, item)
+        state = schedule_sync_correction(state)
+        state = log_activity(state, :added, user_id, item.title || item.url)
+
+        broadcast(state, {:queue_updated, %{queue: queue, current_index: idx}})
+        broadcast(state, {:video_changed, %{media_item: item, index: idx}})
+        {:reply, {:ok, item}, state}
+
+      _ ->
+        {:reply, {:error, :invalid_url}, state}
     end
   end
 
