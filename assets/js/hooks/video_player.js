@@ -759,6 +759,13 @@ const VideoPlayer = {
     this.sponsorSegments = [];
     this._sponsorBarSegments = null;
     this._sponsorBarDuration = 0;
+    // Reset the cached ext-player state so the placeholder doesn't carry
+    // the previous video's progress bar / timeline through the transition.
+    // The new popup re-hooks and pushes fresh `ext:player-state` events
+    // within ~1s, but the gap shouldn't display stale 1:17/23:40 figures
+    // from the previous episode.
+    this._lastExtPlayerState = null;
+    this._renderExtStatus();
     this._loadVideo(item.source_type, item.source_id, item.url, item);
     this._pendingState = {
       play_state: "playing",

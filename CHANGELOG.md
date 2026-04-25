@@ -3,6 +3,19 @@
 
 ---
 
+# v6.5.26
+
+### Reset external-player progress bar on third-party → third-party transition
+
+When the room moved between two extension-required videos (CR ep 1 →
+ep 2, etc.) the placeholder kept the previous video's progress fill
+and `1:17 / 23:40` timeline until the new popup re-hooked. Hook now
+clears `_lastExtPlayerState` and re-renders inside `_onVideoChange`
+so the placeholder collapses to "Waiting for external player…" until
+fresh state arrives from the new tab.
+
+---
+
 # v6.5.25
 
 ### Local nicknames + suppress YT auto-replay during autoplay countdown
