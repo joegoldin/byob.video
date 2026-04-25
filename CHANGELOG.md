@@ -3,6 +3,30 @@
 
 ---
 
+# v6.5.20
+
+### Details-for-nerds: usernames resolve correctly for browser drift reports
+
+The "Extension clients" panel showed `(unknown)` for browser-side
+drift-report rows because the LV per-tab `user_id` is itself
+`session:tab`, and the panel built the `client_id` key as
+`user_id:tab_id` — yielding `session:tab:browser`, three colon-
+separated parts. The template's `String.split(..., parts: 2)` then
+extracted only `"session"` as `owner_id` and looked it up in
+`@users`, which is keyed on the full `session:tab`.
+
+Two fixes:
+
+- The `sync_client_stats` broadcast now carries `username` directly
+  (from `RoomServer` state for extensions, from `socket.assigns` for
+  the LV drift-report path). The panel uses it when present and
+  falls back to the `@users` lookup for older rows.
+- The owner/tab split parses `client_id` as "everything before the
+  last `:` is the owner, the last segment is the tab" so multi-colon
+  user_ids resolve correctly even without the broadcast username.
+
+---
+
 # v6.5.19
 
 ### Firefox manifest: bump strict_min_version for `data_collection_permissions`

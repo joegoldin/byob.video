@@ -393,15 +393,27 @@ defmodule ByobWeb.RoomLive.Components do
               <div class="mt-2 pt-2 border-t border-base-300/50">
                 <div class="text-base-content/40 mb-1">Extension clients</div>
                 <%= for {client_id, info} <- active_clients do %>
-                  <% [owner_id | tab_rest] = String.split(client_id, ":", parts: 2)
-                     username = get_in(@users || %{}, [owner_id, :username]) || "(unknown)"
+                  <% # Prefer the username broadcast alongside the stats payload
+                     # (works for both extension clients and the LV browser
+                     # drift-report path, where user_id has its own internal
+                     # `:` and naive String.split would mis-key the @users
+                     # lookup). Fall back to the legacy @users-by-owner-id
+                     # lookup for any older entries that didn't carry it.
+                     parts = String.split(client_id, ":")
+                     {owner_parts, [tab_id]} = Enum.split(parts, length(parts) - 1)
+                     owner_id = Enum.join(owner_parts, ":")
+
+                     username =
+                       Map.get(info, :username) ||
+                         get_in(@users || %{}, [owner_id, :username]) ||
+                         "(unknown)"
+
                      ext_short = String.slice(owner_id, 0..7)
 
                      tab_short =
-                       case tab_rest do
-                         [tab_id] when is_binary(tab_id) and tab_id != "" -> String.slice(tab_id, 0..7)
-                         _ -> nil
-                       end
+                       if is_binary(tab_id) and tab_id != "",
+                         do: String.slice(tab_id, 0..7),
+                         else: nil
 
                      id_label =
                        if tab_short, do: "#{ext_short}:#{tab_short}", else: ext_short %>

@@ -143,6 +143,8 @@ defmodule ByobWeb.ExtensionChannel do
     raw_drift_ms = round((client_pos - server_pos) * 1000)
     drift_ms = raw_drift_ms - offset_ms
 
+    username = get_in(state, [Access.key(:users), socket.assigns.user_id, Access.key(:username)])
+
     Phoenix.PubSub.broadcast(
       Byob.PubSub,
       "room:#{socket.assigns.room_id}",
@@ -150,6 +152,7 @@ defmodule ByobWeb.ExtensionChannel do
        %{
          user_id: socket.assigns.user_id,
          tab_id: tab_id,
+         username: username,
          drift_ms: drift_ms,
          raw_drift_ms: raw_drift_ms,
          offset_ms: offset_ms,

@@ -207,6 +207,7 @@ defmodule ByobWeb.RoomLive do
     # Local (browser) player reports its adjusted drift and learned offset so
     # the "Details for nerds" panel can show it next to extension clients.
     user_id = socket.assigns[:user_id]
+    username = socket.assigns[:username]
     room_id = socket.assigns[:room_id]
     room_pid = socket.assigns[:room_pid]
 
@@ -233,6 +234,7 @@ defmodule ByobWeb.RoomLive do
          %{
            user_id: user_id,
            tab_id: "browser",
+           username: username,
            drift_ms: drift_ms,
            raw_drift_ms: drift_ms + offset_ms,
            offset_ms: offset_ms,
@@ -366,6 +368,7 @@ defmodule ByobWeb.RoomLive do
         drift_ms: data.drift_ms,
         raw_drift_ms: Map.get(data, :raw_drift_ms, data.drift_ms),
         offset_ms: Map.get(data, :offset_ms, 0),
+        username: Map.get(data, :username),
         server_position: data.server_position,
         play_state: data.play_state,
         updated_at: System.system_time(:second)
