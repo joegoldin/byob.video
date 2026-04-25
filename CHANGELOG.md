@@ -3,6 +3,42 @@
 
 ---
 
+# v6.5.15
+
+### Stop trusting `WindowProxy.closed` across COOP boundaries
+
+YouTube serves the watch page with `Cross-Origin-Opener-Policy:
+same-origin`. When the popup opened from the embed-blocked
+fallback navigates there, the parent's `WindowProxy.closed` flips
+to `true` even though the popup is still wide open. That made the
+"Focus player window" label flicker back to "Open in player
+window" within ~500 ms, and (worse) made `_onVideoChange`'s
+`if (… && !window._byobPlayerWindow.closed)` guard skip the popup
+close on subsequent transitions off the YT video.
+
+Every site that touches `_byobPlayerWindow` now keys on the
+reference itself instead of `.closed`:
+
+- `youtube_error.js` label poll: `!!window._byobPlayerWindow`.
+- `video_player.js` `_onVideoChange` close + the page-unload
+  handler: drop the `.closed` guard, just call `close()`. Closing
+  an already-closed window is a no-op, so the unconditional call
+  is safe.
+- `app.js` `ExtOpenBtn`: same. The click handler is also unified —
+  it always posts `byob:open-external` and calls
+  `window.open(url, "byob_player", …)`. The named-target reuses an
+  existing popup (or opens a fresh one if the previous reference
+  was stale), then `focus()`-es it. No more separate "if open,
+  just focus" branch that could get tricked by COOP.
+
+The label poll now also re-queries `[data-byob-yt-label]` by
+selector each tick instead of holding a closure-captured DOM
+reference, so a fallback-UI rebuild during `handleYTError`'s
+retry path doesn't leave a stale label sitting at the wrong
+text.
+
+---
+
 # v6.5.14
 
 ### Close extension tabs on every transition off third-party + dynamic

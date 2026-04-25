@@ -53,9 +53,10 @@ const VideoPlayer = {
     };
     window.addEventListener("message", this._embedReadyHandler);
 
-    // Close external player window on page unload/refresh
+    // Close external player window on page unload/refresh. Same COOP
+    // caveat as _onVideoChange — don't gate on .closed.
     this._unloadHandler = () => {
-      if (window._byobPlayerWindow && !window._byobPlayerWindow.closed) {
+      if (window._byobPlayerWindow) {
         try { window._byobPlayerWindow.close(); } catch (_) {}
       }
     };
@@ -722,8 +723,11 @@ const VideoPlayer = {
     const newIsExtension = item && item.source_type === "extension_required";
 
     if (!newIsExtension) {
-      // Close any open external player window
-      if (window._byobPlayerWindow && !window._byobPlayerWindow.closed) {
+      // Close any open external player window. Don't gate on .closed —
+      // YouTube sets COOP=same-origin which severs the opener and makes
+      // WindowProxy.closed return true even for an open popup. close() is
+      // a no-op on an actually-closed window, so call it unconditionally.
+      if (window._byobPlayerWindow) {
         try { window._byobPlayerWindow.close(); } catch (_) {}
         window._byobPlayerWindow = null;
       }

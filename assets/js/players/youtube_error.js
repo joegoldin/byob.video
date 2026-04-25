@@ -54,13 +54,24 @@ export function handleYTError(ctx, event) {
     });
 
     // Match ExtOpenBtn's behavior: when a popup is already open, the button
-    // focuses it instead of opening a duplicate. Poll so the label stays in
-    // sync with window state (user might close the popup manually).
+    // focuses it instead of opening a duplicate. The poll re-queries the
+    // label by selector each tick so the label stays correct even if the
+    // fallback UI gets rebuilt (handleYTError can fire more than once when
+    // the YT player retries; we don't want a closure-captured stale label
+    // reference to silently fail to update).
     if (ctx._extBtnPoll) clearInterval(ctx._extBtnPoll);
-    const ytLabel = ytBtn.querySelector("[data-byob-yt-label]");
     const refreshLabel = () => {
-      const isOpen = window._byobPlayerWindow && !window._byobPlayerWindow.closed;
-      if (ytLabel) ytLabel.textContent = isOpen ? "Focus player window" : "Open in player window";
+      // Don't read .closed on the popup — YouTube sets
+      // `Cross-Origin-Opener-Policy: same-origin`, which severs the opener
+      // relationship and makes WindowProxy.closed return `true` for a
+      // popup that's still actually open. The reference itself only goes
+      // null when we explicitly null it (on _onVideoChange off third-party
+      // sources), so use that as the open/closed signal instead.
+      const isOpen = !!window._byobPlayerWindow;
+      const labels = ctx.el.querySelectorAll("[data-byob-yt-label]");
+      labels.forEach((el) => {
+        el.textContent = isOpen ? "Focus player window" : "Open in player window";
+      });
     };
     refreshLabel();
     ctx._extBtnPoll = setInterval(refreshLabel, 500);
