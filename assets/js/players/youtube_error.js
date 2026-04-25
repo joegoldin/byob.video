@@ -5,6 +5,7 @@
  * Error codes: 100 = not found, 101/150 = embedding restricted.
  */
 import { LV_EVT } from "../sync/event_names";
+import { showToast } from "../ui/toasts";
 
 const YT_ERR_NOT_FOUND = 100;
 const YT_ERR_EMBED_DISABLED_1 = 101;
@@ -50,27 +51,29 @@ export function handleYTError(ctx, event) {
   if (ytBtn && hasExtension) {
     ytBtn.addEventListener("click", (e) => {
       e.preventDefault();
+      // YouTube's COOP=same-origin breaks named-target window reuse — every
+      // window.open(url, "byob_player") creates a NEW popup instead of
+      // reusing an existing one, so we'd silently duplicate. Use the
+      // server's ready_count (which reflects which usernames have a
+      // hooked-video tab open) as the open/closed signal: if our username
+      // already has a tab, the popup exists, just bail. The user can focus
+      // it manually via their taskbar.
+      if (_userHasOwnPopup(ctx)) {
+        showToast("Player window already open — check your taskbar");
+        return;
+      }
       _openInExternalWindow(ctx, url);
     });
 
-    // Match ExtOpenBtn's behavior: when a popup is already open, the button
-    // focuses it instead of opening a duplicate. The poll re-queries the
-    // label by selector each tick so the label stays correct even if the
-    // fallback UI gets rebuilt (handleYTError can fire more than once when
-    // the YT player retries; we don't want a closure-captured stale label
-    // reference to silently fail to update).
+    // The poll re-queries the label by selector each tick so the label
+    // stays correct even if the fallback UI gets rebuilt during
+    // handleYTError's retry path.
     if (ctx._extBtnPoll) clearInterval(ctx._extBtnPoll);
     const refreshLabel = () => {
-      // Don't read .closed on the popup — YouTube sets
-      // `Cross-Origin-Opener-Policy: same-origin`, which severs the opener
-      // relationship and makes WindowProxy.closed return `true` for a
-      // popup that's still actually open. The reference itself only goes
-      // null when we explicitly null it (on _onVideoChange off third-party
-      // sources), so use that as the open/closed signal instead.
-      const isOpen = !!window._byobPlayerWindow;
+      const haveTab = _userHasOwnPopup(ctx);
       const labels = ctx.el.querySelectorAll("[data-byob-yt-label]");
       labels.forEach((el) => {
-        el.textContent = isOpen ? "Focus player window" : "Open in player window";
+        el.textContent = haveTab ? "Focus player window" : "Open in player window";
       });
     };
     refreshLabel();
@@ -158,6 +161,20 @@ function _buildFallbackUI(title, thumb, url, hasExtension) {
   }
 
   return container;
+}
+
+// Server-authoritative "does this user already have a popup open?". Reads
+// the latest ready_count payload (`needs_open` is the list of usernames
+// that DON'T have a hooked-video tab open). When the popup tab actually
+// closes, the BG sees the port disconnect, broadcasts video:tab_closed,
+// the server rebroadcasts ready_count without that username — so this
+// flips back to false naturally.
+function _userHasOwnPopup(ctx) {
+  const username = ctx.el?.dataset?.username;
+  const rc = ctx._lastReadyCount;
+  if (!username || !rc) return false;
+  const needsOpen = Array.isArray(rc.needs_open) ? rc.needs_open : [];
+  return !needsOpen.includes(username);
 }
 
 // Open the YouTube URL in the byob popup window (same flow as the regular

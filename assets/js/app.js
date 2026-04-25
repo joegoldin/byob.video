@@ -54,34 +54,30 @@ const ExtOpenBtn = {
     this._updateLabel();
     this._interval = setInterval(() => this._updateLabel(), 500);
     this.el.addEventListener("click", () => {
-      // window.open with the same target name reuses an existing popup
-      // (and re-navigates it) or opens a new one — idempotent either way,
-      // and survives a stale reference if the user manually closed the
-      // popup. Use window.location.origin instead of the server-rendered
-      // Endpoint.url() so LAN-access sessions don't end up with
-      // server_url=http://localhost:4000.
-      window.postMessage({
-        type: LV_EVT.PW_OPEN_EXTERNAL,
-        url: this.el.dataset.url,
-        room_id: this.el.dataset.roomId,
-        server_url: window.location.origin,
-        token: this.el.dataset.token,
-        username: this.el.dataset.username,
-      }, "*");
-      window._byobPlayerWindow = window.open(
-        this.el.dataset.url, "byob_player",
-        "width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no"
-      );
-      if (window._byobPlayerWindow) {
-        try { window._byobPlayerWindow.focus(); } catch (_) {}
+      if (window._byobPlayerWindow && !window._byobPlayerWindow.closed) {
+        window._byobPlayerWindow.focus();
+      } else {
+        // Use window.location.origin instead of the server-rendered
+        // Endpoint.url() so LAN-access sessions don't end up with
+        // server_url=http://localhost:4000 which fails on their machine.
+        window.postMessage({
+          type: LV_EVT.PW_OPEN_EXTERNAL,
+          url: this.el.dataset.url,
+          room_id: this.el.dataset.roomId,
+          server_url: window.location.origin,
+          token: this.el.dataset.token,
+          username: this.el.dataset.username,
+        }, "*");
+        window._byobPlayerWindow = window.open(
+          this.el.dataset.url, "byob_player",
+          "width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no"
+        );
       }
       setTimeout(() => this._updateLabel(), 100);
     });
   },
   _updateLabel() {
-    // See click-handler comment — .closed is unreliable across COOP
-    // boundaries, so just check the reference.
-    const isOpen = !!window._byobPlayerWindow;
+    const isOpen = window._byobPlayerWindow && !window._byobPlayerWindow.closed;
     this.el.textContent = isOpen ? "Focus Player Window" : "Open Player Window";
   },
   destroyed() {

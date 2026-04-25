@@ -3,6 +3,40 @@
 
 ---
 
+# v6.5.16
+
+### YT fallback — server ready_count drives "Focus" label
+
+v6.5.15 dropped the `.closed` gate everywhere because YouTube's
+COOP severs it, but doing the same on the YT fallback's click
+handler (via the unified `_openInExternalWindow`) caused every
+"Focus player window" click to actually open a fresh popup —
+COOP also breaks named-target reuse, so `window.open(url,
+"byob_player")` creates a new window instead of focusing the
+existing one. And the click never resets the label after the
+user manually closed the popup, since `!!window._byobPlayerWindow`
+stays truthy.
+
+`ExtOpenBtn` is back to its v6.5.14 form — `.closed` works fine
+for Crunchyroll and similar non-COOP sites, and the named-target
+window reuse works there too.
+
+The YT fallback now derives both label and click behavior from
+the server's `ready_count` payload: if the user's username is
+**not** in `needs_open`, they already have a hooked-video tab —
+label says "Focus player window" and clicking shows a toast
+("Player window already open — check your taskbar") instead of
+duplicating. When the user actually closes the popup, the BG's
+port disconnect flushes through to the server which rebroadcasts
+`ready_count` with the username back in `needs_open`, flipping
+the label and re-enabling open-new behavior.
+
+`_onVideoChange` and the page-unload handler keep the v6.5.15
+"don't gate close on `.closed`" behavior — those paths actually
+need to close YT popups, where `.closed` lies.
+
+---
+
 # v6.5.15
 
 ### Stop trusting `WindowProxy.closed` across COOP boundaries
