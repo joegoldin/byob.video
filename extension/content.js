@@ -1270,13 +1270,37 @@
     }
   }
 
-  // Strip trailing slash + fragment so "?autoplay=1" and slug variations
-  // don't trigger a false mismatch. Conservative — keep query params so
-  // different YouTube videos aren't treated as identical.
+  // Reduce a URL to a canonical form for room-membership comparison.
+  //   * YouTube watch URLs collapse to youtube.com/watch?v=<id> — playlist
+  //     context (&list=…&index=…), share-link timecodes, autoplay flags,
+  //     etc. shouldn't read as "different video".
+  //   * youtu.be/<id> short links are normalized to the same canonical form.
+  //   * /shorts/<id> and /embed/<id> map to the same too.
+  //   * Other sites: strip the hash + a trailing slash; keep the rest of the
+  //     query (different episodes are usually distinguished by path or by
+  //     a non-trivial query, so we can't blanket-strip across hosts).
   function normalizeUrl(u) {
     try {
       const url = new URL(u);
       url.hash = "";
+      const host = url.hostname.toLowerCase();
+
+      // YouTube canonicalization
+      if (host === "youtu.be") {
+        const id = url.pathname.replace(/^\//, "").split("/")[0];
+        if (id) return `https://www.youtube.com/watch?v=${id}`;
+      }
+      if (host === "youtube.com" || host.endsWith(".youtube.com")) {
+        let id = null;
+        if (url.pathname === "/watch") {
+          id = url.searchParams.get("v");
+        } else {
+          const m = url.pathname.match(/^\/(?:shorts|embed|live|v)\/([^/]+)/);
+          if (m) id = m[1];
+        }
+        if (id) return `https://www.youtube.com/watch?v=${id}`;
+      }
+
       let s = url.toString();
       if (s.endsWith("/")) s = s.slice(0, -1);
       return s;

@@ -3,6 +3,30 @@
 
 ---
 
+# v6.5.13
+
+### YouTube URL matching ignores playlist / timecode / autoplay context
+
+`normalizeUrl/1` now collapses every YouTube URL form to
+`https://www.youtube.com/watch?v=<id>`:
+
+- `/watch?v=<id>&list=…&index=…&t=…` → canonical
+- `youtu.be/<id>` → canonical
+- `/shorts/<id>`, `/embed/<id>`, `/live/<id>`, `/v/<id>` → canonical
+
+Previously the literal-string comparison flagged the room URL
+(`/watch?v=abc`) and the page URL (`/watch?v=abc&list=…`) as
+different videos and tripped the "You've left the room's video"
+toast on age-restricted YouTube embeds opened in the popup window
+(which gets the playlist context appended automatically).
+
+Non-YouTube hosts keep the existing behavior — strip hash + a
+trailing slash, otherwise compare the full URL — since other
+sites (Crunchyroll, etc.) typically distinguish episodes via the
+path itself, not query params.
+
+---
+
 # v6.5.12
 
 ### 1.5 s grace period before honoring a leave
