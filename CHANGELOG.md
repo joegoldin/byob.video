@@ -3,6 +3,24 @@
 
 ---
 
+# v6.5.24
+
+### Stats panel no longer prunes browser drift rows on every users_updated
+
+`PubSub.handle_users_updated/2` extracted the row owner via
+`String.split(key, ":", parts: 2)`, which on a browser drift-report
+key (`session:tab:browser`) gave just `"session"` — never matching
+the connected `@users` keys (`session:tab`). So every join/leave
+pruned every browser-side row, leaving only your own (whose first
+report happened to land between two prunes) plus extension clients
+(whose keys really are two-part).
+
+Owner is now "everything before the last `:`", same parse the
+template uses, so multi-colon LV user_ids resolve correctly and the
+panel actually shows everyone connected.
+
+---
+
 # v6.5.23
 
 ### Show deployed commit hash in settings

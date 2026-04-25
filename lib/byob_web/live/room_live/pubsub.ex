@@ -167,8 +167,12 @@ defmodule ByobWeb.RoomLive.PubSub do
 
   def handle_users_updated(users, socket) do
     # Also prune sync_stats entries whose owner disappeared or is marked
-    # disconnected — otherwise the "Extension clients" panel keeps showing
-    # stale rows after an extension user closes their player tab.
+    # disconnected — otherwise the panel keeps showing stale rows after a
+    # user closes their player tab. Owner is "everything before the LAST
+    # `:`" in the key — LV per-tab user_ids are themselves `session:tab`,
+    # so a naive split-by-first-colon would extract just "session" and
+    # miss the @users key (`session:tab`), pruning every browser-side
+    # drift-report row on every users_updated tick.
     stats = Map.get(socket.assigns, :sync_stats, %{})
     clients = Map.get(stats, :clients, %{})
     connected_ids = users |> Enum.filter(fn {_, u} -> u.connected end) |> Enum.map(fn {id, _} -> id end) |> MapSet.new()
@@ -176,7 +180,8 @@ defmodule ByobWeb.RoomLive.PubSub do
     pruned =
       clients
       |> Enum.filter(fn {key, _} ->
-        [owner | _] = String.split(key, ":", parts: 2)
+        parts = String.split(key, ":")
+        owner = parts |> Enum.drop(-1) |> Enum.join(":")
         MapSet.member?(connected_ids, owner)
       end)
       |> Map.new()
