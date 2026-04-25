@@ -3,6 +3,35 @@
 
 ---
 
+# v6.5.11
+
+### Embed-blocked YouTube fallback opens in the byob popup window
+
+The "Watch on YouTube" button on the embed-blocked fallback (age-
+restricted videos, embed-disabled-by-uploader) was a plain
+`<a target="_blank" href="https://youtube.com/watch?v=…">`. It
+opened a fresh browser tab with no room context, so the extension's
+content script had nothing in `chrome.storage` and sync didn't
+auto-engage — the user just landed on YouTube as if they'd typed
+the URL themselves.
+
+Now (when the extension is detected) the button:
+
+1. Posts `byob:open-external` with the room id / server URL / token
+   / username — same payload as the regular "Open in extension"
+   flow, written into `chrome.storage` by the content script.
+2. Opens the URL in the `byob_player` named popup window (1280×800,
+   no menubar/toolbar) and focuses it.
+3. Re-uses the existing window if one is already open.
+
+Button label is now **"Open in player window"** to match the actual
+behavior. The `#player` element gained `data-room-id`,
+`data-server-url`, `data-token`, `data-username` so the fallback UI
+(built dynamically inside the player div) can read the same auth
+context the regular `ExtOpenBtn` button uses.
+
+---
+
 # v6.5.10
 
 ### Clearer follow-toast copy + ready-count in the main page's external-player status

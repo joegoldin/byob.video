@@ -42,6 +42,18 @@ export function handleYTError(ctx, event) {
   ctx.el.innerHTML = "";
   ctx.el.appendChild(container);
 
+  // Wire the YouTube fallback button to the same popup-window flow as the
+  // regular "Open in extension" button. Plain target=_blank would just open
+  // a new browser tab — the extension's content script wouldn't have the
+  // room config in chrome.storage and sync wouldn't auto-engage.
+  const ytBtn = container.querySelector("[data-byob-yt-fallback]");
+  if (ytBtn && hasExtension) {
+    ytBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      _openInExternalWindow(ctx, url);
+    });
+  }
+
   // Poll for extension install — update UI when detected
   if (!hasExtension) {
     ctx._extPollInterval = setInterval(() => {
@@ -92,9 +104,10 @@ function _buildFallbackUI(title, thumb, url, hasExtension) {
   if (hasExtension) {
     const ytBtn = document.createElement("a");
     ytBtn.href = url;
-    ytBtn.target = "_blank";
+    ytBtn.target = "byob_player";
+    ytBtn.dataset.byobYtFallback = "1";
     ytBtn.className = "btn btn-sm btn-primary gap-1";
-    ytBtn.innerHTML = `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg> Watch on YouTube`;
+    ytBtn.innerHTML = `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg> Open in player window`;
     btnContainer.appendChild(ytBtn);
 
     const hint = document.createElement("p");
@@ -122,4 +135,30 @@ function _buildFallbackUI(title, thumb, url, hasExtension) {
   }
 
   return container;
+}
+
+// Open the YouTube URL in the byob popup window (same flow as the regular
+// "Open in extension" button), and post the byob:open-external message
+// the extension's content script needs to write its room/auth config into
+// chrome.storage. Otherwise the new tab would have no room context and
+// sync wouldn't auto-engage.
+function _openInExternalWindow(ctx, url) {
+  const ds = ctx.el.dataset;
+  if (ds.roomId && ds.serverUrl && ds.token && ds.username) {
+    window.postMessage({
+      type: LV_EVT.PW_OPEN_EXTERNAL,
+      url,
+      room_id: ds.roomId,
+      // Mirror ExtOpenBtn: prefer window.location.origin so LAN-access
+      // sessions don't end up with server_url=http://localhost:4000.
+      server_url: window.location.origin,
+      token: ds.token,
+      username: ds.username,
+    }, "*");
+  }
+  window._byobPlayerWindow = window.open(
+    url, "byob_player",
+    "width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no"
+  );
+  if (window._byobPlayerWindow) window._byobPlayerWindow.focus();
 }

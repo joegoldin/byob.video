@@ -514,6 +514,10 @@ defmodule ByobWeb.RoomLive do
             phx-hook="VideoPlayer"
             data-user-id={@user_id}
             data-current-index={@current_index}
+            data-room-id={@room_id}
+            data-server-url={ByobWeb.Endpoint.url()}
+            data-token={ByobWeb.ExtensionSocket.generate_token(@room_id)}
+            data-username={@username}
             class="relative bg-base-300 rounded-lg overflow-hidden"
           >
             <div class="absolute inset-0 flex items-center justify-center text-base-content/40">
