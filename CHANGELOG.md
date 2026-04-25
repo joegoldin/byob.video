@@ -3,6 +3,27 @@
 
 ---
 
+# v6.5.34
+
+### Tighten the YT ended-stall fallback
+
+v6.5.33's fallback gated on `playerState === "playing"` and a
+30-s-or-5%-of-duration window. Both were wrong: the actual stall is a
+**paused/ended** local state with the server still expecting playing
+(YT silently parked at the final frame), and the 30 s window had no
+business being that wide.
+
+Tighter conditions now:
+- position is within the **last 5 seconds** of `getDuration()`,
+- local `playerState` is `paused` or `ended`,
+- `this.expectedPlayState === "playing"` (so an intentional user
+  pause near the credits — which would have flipped
+  `expectedPlayState` to `"paused"` via the onStateChange `:pause`
+  push — doesn't trigger),
+- position hasn't advanced for ~3 s (6 consecutive 500 ms ticks).
+
+---
+
 # v6.5.33
 
 ### Two-column placeholder card + stall-fallback for YT ended detection

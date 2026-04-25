@@ -987,13 +987,22 @@ const VideoPlayer = {
       if (dur > 0 && pos >= dur - 1) {
         if (!this._endedFired) fireEnded();
       } else if (
-        // Stall fallback: position hasn't moved for ~3s while expected to
-        // be playing AND we're within the last 30s of the video — treat
-        // as ended even though `getCurrentTime` is reporting < dur - 1.
+        // Stall fallback. Some YT videos park a few seconds short of
+        // `getDuration()` in a paused-ish state without firing the
+        // ENDED state-change event, leaving the queue hung. Conditions:
+        //   * within the last 5s of duration (tight window — false
+        //     positives are limited to the literal last few seconds),
+        //   * local player state is paused or ended (so we know it's
+        //     stopped, not just buffering),
+        //   * server still expects playing (rules out an intentional
+        //     user pause — that would have flipped expectedPlayState
+        //     to "paused" too via onStateChange's :pause push),
+        //   * position hasn't moved for ~3 s.
         !this._endedFired &&
         dur > 0 &&
-        pos > Math.max(dur - 30, dur * 0.95) &&
-        playerState === "playing" &&
+        pos >= dur - 5 &&
+        (playerState === "paused" || playerState === "ended") &&
+        this.expectedPlayState === "playing" &&
         this._endStallTicks >= 6
       ) {
         fireEnded();
