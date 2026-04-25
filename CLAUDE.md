@@ -4,7 +4,7 @@ Project context for AI assistants working on byob.video.
 
 ## What is this
 
-byob (bring your own binge) is a self-hosted another sync extension clone. Users create ephemeral rooms, paste video URLs, and watch in sync. Built with Elixir/Phoenix LiveView.
+byob (bring your own binge) is a self-hosted watch-party app. Users create ephemeral rooms, paste video URLs, and watch in sync. Built with Elixir/Phoenix LiveView.
 
 ## Tech stack
 

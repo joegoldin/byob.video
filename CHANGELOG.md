@@ -3,6 +3,17 @@
 
 ---
 
+# v6.5.36
+
+### Doc / changelog scrub
+
+CHANGELOG, CLAUDE.md, and the extension listing copy now read
+straightforwardly without comparisons to other sync extensions or
+references to internal recon work. Pure prose change — no code
+touched.
+
+---
+
 # v6.5.35
 
 ### Bump leave grace from 1.5 s → 5 s
@@ -1415,7 +1426,7 @@ exist anymore.
 
 ### Crunchyroll: call Bitmovin's JS API instead of fighting `<video>.currentTime=`
 
-Receivers on Crunchyroll wedged on every big seek-while-playing. Every fix from v5.0.4 through v5.0.31 (pre-seek, wait-for-seeked, queued-play-until-ready, progressive stall kicks, DRM sequencer) was working around the same root cause: setting `currentTime` on a playing MSE stream hands MSE an operation it can't complete cleanly, and the pipeline reports `playing=true` with frozen frames for many seconds. Survey of other sync extensions (another sync extension fallback `Playr`, Anime-Watch-Parties, AegroNN/WatchParty, squidync, roll_together, umi, syncwatch) confirmed this is what everyone hits — nobody using direct `<video>` manipulation actually solves it; syncwatch's Netflix path is the architectural template: inject a page-world shim and call the vendor's player API.
+Receivers on Crunchyroll wedged on every big seek-while-playing. Every fix from v5.0.4 through v5.0.31 (pre-seek, wait-for-seeked, queued-play-until-ready, progressive stall kicks, DRM sequencer) was working around the same root cause: setting `currentTime` on a playing MSE stream hands MSE an operation it can't complete cleanly, and the pipeline reports `playing=true` with frozen frames for many seconds. The architectural fix is to stop poking the underlying `<video>` element entirely and drive Crunchyroll's actual player engine via its own API — inject a page-world shim, call the vendor's player methods.
 
 Recon in Crunchyroll's player iframe confirmed:
 

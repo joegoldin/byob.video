@@ -10,7 +10,7 @@ Watch videos together in sync with byob.video — synchronized playback for YouT
 
 ## Description
 
-byob (Bring Your Own Binge) is a free, open-source another sync extension alternative. Create a room, share the link, and watch together.
+byob (Bring Your Own Binge) is a free, open-source watch-party app. Create a room, share the link, and watch together.
 
 **What the extension does:**
 
@@ -62,7 +62,7 @@ No data is collected. All communication is between the user's browser and their 
 
 ## Notes to Reviewer (Chrome / Firefox)
 
-This extension is the companion to byob.video, a self-hosted another sync extension clone built with Elixir/Phoenix. The extension does two things:
+This extension is the companion to byob.video, a self-hosted watch-party app built with Elixir/Phoenix. The extension does two things:
 
 1. For non-YouTube sites (e.g., Crunchyroll): the content script detects `<video>` elements via MutationObserver and relays play/pause/seek events through a service worker WebSocket connection to the byob server, enabling synchronized playback.
 
