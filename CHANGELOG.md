@@ -3,6 +3,24 @@
 
 ---
 
+# v6.5.8
+
+### Toast on the destination page after the room auto-navigates the tab
+
+When v6.5.4's "reuse the existing extension tab" path swaps
+`location.href` in response to a room URL change, the post-nav page
+now shows a brief purple toast — same style as the "X joined" /
+"X closed window" presence toasts — explaining what happened.
+
+A relay key `byob_pending_nav_toast` is written to `chrome.storage`
+just before the navigation; the new content script reads it on
+init, surfaces "Followed room to: <title>" (or
+"Followed room to new video" if the title hasn't been scraped yet),
+and removes the key. 15 s TTL keeps a stale relay from firing on
+some unrelated future page load.
+
+---
+
 # v6.5.7
 
 ### Fix v6.5.6 regression — other users' tabs weren't auto-navigating

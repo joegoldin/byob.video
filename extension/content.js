@@ -19,6 +19,11 @@
   const State = Object.freeze({ PLAYING: "playing", PAUSED: "paused" });
   const STORAGE_KEY = "watchparty_config";
   const PORT_NAME = "watchparty";
+  // Relay across the navigation triggered by COMMAND_VIDEO_CHANGE so the
+  // post-nav content script can surface a presence-style toast on the new
+  // page ("Followed room to: <title>"). Cleared as soon as it's read.
+  const PENDING_NAV_TOAST_KEY = "byob_pending_nav_toast";
+  const PENDING_NAV_TOAST_TTL_MS = 15000;
 
   // Named event strings. Mirror Byob.Events on the server and the same table
   // duplicated in extension/background.js (MV3 content scripts can't import).
@@ -264,8 +269,36 @@
     try { hookedVideo.currentTime = target; } catch (_) {}
   }
 
+  // Surface a presence-style toast on the post-nav page when the previous
+  // content script (on the prior URL) auto-navigated this tab in response
+  // to a room URL change. Always clears the storage key — even if the
+  // hint is too old to display — so a stale relay can't fire later.
+  async function maybeShowFollowedToast() {
+    if (window !== window.top) return;
+    try {
+      const cfg = await chrome.storage.local.get(PENDING_NAV_TOAST_KEY);
+      const data = cfg[PENDING_NAV_TOAST_KEY];
+      if (data) {
+        try { await chrome.storage.local.remove(PENDING_NAV_TOAST_KEY); } catch (_) {}
+        if (data.at && Date.now() - data.at < PENDING_NAV_TOAST_TTL_MS) {
+          const text = data.title
+            ? `Followed room to: ${data.title}`
+            : "Followed room to new video";
+          // showPresenceToast self-dismisses after ~2.5s with the same
+          // purple styling as the "X joined / X closed window" toasts.
+          if (document.body) {
+            showPresenceToast(text);
+          } else {
+            document.addEventListener("DOMContentLoaded", () => showPresenceToast(text), { once: true });
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
   // ── Init / activation ─────────────────────────────────────────────────────
   async function init() {
+    maybeShowFollowedToast();
     window.addEventListener("message", (e) => {
       if (e.origin !== window.location.origin) return;
       try {
@@ -923,10 +956,20 @@
       // shouldn't get yanked away.
       if (msg.navigate && msg.url && wasPlayerTab && window === window.top) {
         if (location.href !== msg.url) {
-          // setSyncedUrl already kicked off the chrome.storage update.
-          // Give it a moment to flush so the new content.js (post-nav)
-          // reads the updated target_url and activates immediately.
-          setTimeout(() => { location.href = msg.url; }, 100);
+          // Stash a one-shot toast hint so the post-nav content script can
+          // surface "Followed room to: <title>" — same purple style as the
+          // presence toasts. Then navigate once both writes have flushed.
+          (async () => {
+            try {
+              await chrome.storage.local.set({
+                [PENDING_NAV_TOAST_KEY]: { title: msg.title || null, at: Date.now() },
+              });
+            } catch (_) {}
+            // setSyncedUrl already kicked off the chrome.storage update for
+            // target_url; the await above also ensures any pending storage
+            // ops have flushed before we navigate.
+            location.href = msg.url;
+          })();
         }
       }
       return;
