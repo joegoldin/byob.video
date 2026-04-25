@@ -890,11 +890,25 @@
     }
 
     if (msg.type === EVT.COMMAND_VIDEO_CHANGE) {
-      // Room advanced to a new video (manual queue nav, or "Set room to this
-      // page"). Update our canonical URL reference so the mismatch toast
-      // disappears if this tab happens to already be on that URL, and
-      // appears if we're on a different one.
+      // Room advanced to a new video (manual queue nav, "Set room to this
+      // page", or queue auto-advance to another extension-required video).
+      // Update our canonical URL reference so the mismatch toast disappears
+      // if this tab is already on that URL.
       if (msg.url) setSyncedUrl(msg.url);
+
+      // navigate=true: the new video is extension-required, so the BG would
+      // otherwise close this tab and force a re-open. Reuse it instead —
+      // navigate the tab itself to the new URL. Only do this on tabs that
+      // currently host a hooked video; non-player tabs (e.g. a CR browse
+      // page) shouldn't get yanked away.
+      if (msg.navigate && msg.url && hookedVideo && window === window.top) {
+        if (location.href !== msg.url) {
+          // setSyncedUrl already kicked off the chrome.storage update.
+          // Give it a moment to flush so the new content.js (post-nav)
+          // reads the updated target_url and activates immediately.
+          setTimeout(() => { location.href = msg.url; }, 100);
+        }
+      }
       return;
     }
 

@@ -1,4 +1,36 @@
+
 # byob Changelog
+
+---
+
+# v6.5.4
+
+### Reuse extension tabs on third-party → third-party transitions
+
+When a queue auto-advances or a "Set room to this page" lands on
+another extension-required URL, we no longer close the third-party
+tab and force the user to click "Open in extension" again — the
+content script just navigates the existing tab to the new URL.
+
+`background.js` now classifies the new media item by source_type:
+
+* **`extension_required`**: broadcast `command:video-change` with
+  `navigate: true` to all hooked tabs. Each content script updates
+  `chrome.storage`'s `target_url` (so the post-nav reload still
+  activates the sync), then sets `location.href` to the new URL.
+  Tabs already on the destination URL skip the navigation.
+* **YouTube / Vimeo / direct**: keep the existing close-on-autoplay-
+  advance behavior so the user falls back to the main LV player.
+* **Manual mid-play change to a non-extension type**: just broadcast
+  the metadata refresh; don't force close (the URL-mismatch toast
+  remains the user's escape hatch).
+
+Only tabs with `hookedVideo` actually navigate — a non-player tab on
+the same origin (e.g. a Crunchyroll browse page) gets the metadata
+refresh but isn't yanked to a watch URL it didn't ask for. A small
+100 ms delay between the storage update and the navigation gives
+`chrome.storage.local.set` time to flush before the new content
+script's `tryActivate` reads it.
 
 ---
 

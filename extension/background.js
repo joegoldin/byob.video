@@ -435,24 +435,38 @@ function connectToRoom(roomId, serverUrl, token, username) {
       currentSourceType = mi.source_type;
     }
 
-    // If an autoplay countdown was active, the queue just advanced —
-    // close all extension tabs so users navigate to the new video.
-    if (autoplayCountdownActive) {
-      closeExtensionTabs();
-      autoplayCountdownActive = false;
-      return;
-    }
+    const wasAutoplayAdvance = autoplayCountdownActive;
+    autoplayCountdownActive = false;
 
-    // Otherwise (manual queue navigation, or "Set room to this page" update):
-    // tell content scripts so they can update their synced URL reference,
-    // without closing the tab.
-    if (mi) {
+    // Reuse existing extension tabs whenever the new video is also
+    // extension-required — much smoother than close-then-reopen, which
+    // forces the user to click "Open in extension" again. The content
+    // script updates chrome.storage's target_url, then navigates the tab
+    // to the new URL. Tabs not currently hooked to a video get the same
+    // metadata refresh without forced navigation.
+    //
+    // For non-extension types (YouTube/Vimeo/direct), the main LV player
+    // can show the video directly — close the extension tabs so the user
+    // returns to byob.video.
+    if (mi && mi.source_type === "extension_required") {
       broadcastToContentScripts({
         type: EVT.COMMAND_VIDEO_CHANGE,
         url: mi.url,
         source_type: mi.source_type,
         source_id: mi.source_id,
         title: mi.title,
+        navigate: true,
+      });
+    } else if (wasAutoplayAdvance) {
+      closeExtensionTabs();
+    } else if (mi) {
+      broadcastToContentScripts({
+        type: EVT.COMMAND_VIDEO_CHANGE,
+        url: mi.url,
+        source_type: mi.source_type,
+        source_id: mi.source_id,
+        title: mi.title,
+        navigate: false,
       });
     }
   });
