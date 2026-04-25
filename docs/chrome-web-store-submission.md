@@ -10,6 +10,10 @@ Synchronizes video playback with byob.video watch party rooms. The extension det
 
 The extension uses chrome.storage.local to store the active room configuration (room ID, server URL, authentication token) when the user clicks "Open Player Window" from a byob.video room. This config is read by the content script to determine whether to activate on the current page. The data is cleared when the user leaves the room or closes the player window.
 
+### tabs
+
+The extension uses chrome.tabs.onRemoved to reliably detect when the user closes the player popup window so it can update room presence (mark the user's player window as closed for everyone in the room). Service-worker port-disconnect events are unreliable when the worker has been suspended, so the tabs-removed event is a fallback signal. The extension also uses chrome.tabs.update({active: true}) and chrome.windows.update({focused: true}) to bring the existing player popup to the foreground when the user clicks "Focus Player Window" — without this, YouTube's Cross-Origin-Opener-Policy prevents the page from focusing the popup directly. The extension does not read any tab content, URLs, or history; it only acts on the popup tab it itself opened.
+
 ### Host permission (<all_urls> via content_scripts)
 
 The extension needs to run on any URL because byob.video rooms can link to video content on any website (Crunchyroll, anime streaming sites, video hosting platforms, etc.). The content script must detect `<video>` elements on these arbitrary domains to synchronize playback. It also needs to run inside YouTube embed iframes on the byob.video domain to inject SponsorBlock seek bar segments. The extension only activates when the user explicitly opens a player window from a byob.video room — it does not run or collect data on pages the user visits normally.

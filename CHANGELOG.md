@@ -3,6 +3,19 @@
 
 ---
 
+# v6.5.19
+
+### Firefox manifest: bump strict_min_version for `data_collection_permissions`
+
+The AMO validator flagged that
+`browser_specific_settings.gecko.data_collection_permissions` requires
+Firefox 140 (desktop) and Firefox for Android 142, but the manifest
+declared `strict_min_version: 128`. Bumped to 140.0 desktop / 142.0
+Android (added `gecko_android`). Cleared the validator warnings; the
+"no data collection" disclosure stays in the manifest.
+
+---
+
 # v6.5.18
 
 ### Roulette landing fix + tab-close fallback + YT replay cancels autoplay
