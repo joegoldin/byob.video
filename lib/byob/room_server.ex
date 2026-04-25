@@ -435,8 +435,27 @@ defmodule Byob.RoomServer do
                 end
               end)
 
-            state = %{state | queue: queue, history: history}
+            # Rewrite activity-log entries that recorded the URL (because the
+            # title hadn't been scraped yet) so the feed displays the title.
+            old_url = item.url
+
+            activity_log =
+              if title && title != "" && old_url do
+                Enum.map(state.activity_log, fn entry ->
+                  if entry.action in [:added, :played] && entry.detail == old_url do
+                    %{entry | detail: title}
+                  else
+                    entry
+                  end
+                end)
+              else
+                state.activity_log
+              end
+
+            log_changed = activity_log != state.activity_log
+            state = %{state | queue: queue, history: history, activity_log: activity_log}
             broadcast(state, {:queue_updated, %{queue: queue, current_index: idx}})
+            if log_changed, do: broadcast(state, {:activity_log_updated, activity_log})
             {:reply, :ok, state}
         end
     end
@@ -503,7 +522,12 @@ defmodule Byob.RoomServer do
 
         state = add_to_history(state, item)
         state = schedule_sync_correction(state)
-        state = log_activity(state, :added, user_id, item.title || item.url)
+        fetch_sponsor_segments(item)
+        state = fetch_comments_for_current(state)
+        # Use :played (same as queue→Play Now) so the activity feed reads
+        # "<user> jumped to <title>" rather than "<user> added <url>", which
+        # mis-suggests a queue add.
+        state = log_activity(state, :played, user_id, item.title || item.url)
 
         broadcast(state, {:queue_updated, %{queue: queue, current_index: idx}})
         broadcast(state, {:video_changed, %{media_item: item, index: idx}})
@@ -1115,7 +1139,7 @@ defmodule Byob.RoomServer do
     activity_log =
       if old_url && meta[:title] do
         Enum.map(state.activity_log, fn entry ->
-          if entry.action == :added && entry.detail == old_url do
+          if entry.action in [:added, :played] && entry.detail == old_url do
             %{entry | detail: meta[:title]}
           else
             entry

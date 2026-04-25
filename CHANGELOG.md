@@ -2,6 +2,32 @@
 
 ---
 
+# v6.5.3
+
+### Activity log entries for "Set room to this page"
+
+`update_current_url/3` now logs `:played` (same action as queue → Play
+Now) instead of `:added`. The activity feed reads "<user> played
+<title>" rather than "<user> added <url>", which mis-suggested a queue
+add.
+
+The room scrapes the page title later via `video:media_info`. The
+existing oembed-update path rewrote `:added` entries when the title
+arrived; widened to also rewrite `:played`. The
+`update_current_media/2` handler (which is what `video:media_info`
+calls) didn't touch the activity log at all — it now rewrites both
+`:added` and `:played` entries whose `detail` still holds the URL,
+and broadcasts `{:activity_log_updated, ...}` so the LV panel
+refreshes. After scraping, the feed reads "<user> played <title>"
+instead of "<user> played https://crunchyroll.com/watch/…".
+
+`fetch_sponsor_segments/1` and `fetch_comments_for_current/1` are now
+called too — both no-op for non-YouTube sources, so safe for the
+extension-required CR/Crunchyroll case but useful when the new URL
+happens to be a YouTube link.
+
+---
+
 # v6.5.2
 
 ### Fix "Set room to this page" doing nothing after queue ended
