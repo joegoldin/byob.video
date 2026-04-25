@@ -345,14 +345,14 @@ defmodule ByobWeb.RoomLive.Components do
             API Documentation
           </a>
         </div>
-        <%!-- Details for nerds --%>
+        <%!-- Stats for nerds --%>
         <details
           class="mt-4 pt-4 border-t border-base-300"
-          id="details-for-nerds"
+          id="stats-for-nerds"
           phx-hook="PreserveDetails"
         >
           <summary class="text-xs text-base-content/40 cursor-pointer hover:text-base-content/60 select-none">
-            Details for nerds
+            Stats for nerds
           </summary>
           <div class="mt-2 text-xs text-base-content/50 space-y-1 font-mono">
             <div class="flex justify-between">

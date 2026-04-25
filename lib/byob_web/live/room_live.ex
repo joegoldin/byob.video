@@ -205,7 +205,7 @@ defmodule ByobWeb.RoomLive do
 
   def handle_event(@ev_video_drift_report, params, socket) do
     # Local (browser) player reports its adjusted drift and learned offset so
-    # the "Details for nerds" panel can show it next to extension clients.
+    # the "Stats for nerds" panel can show it next to extension clients.
     user_id = socket.assigns[:user_id]
     username = socket.assigns[:username]
     room_id = socket.assigns[:room_id]

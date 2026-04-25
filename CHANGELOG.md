@@ -3,6 +3,15 @@
 
 ---
 
+# v6.5.22
+
+### Rename "Details for nerds" → "Stats for nerds"
+
+Settings panel summary, container id (`stats-for-nerds`), and stale
+comment references all renamed.
+
+---
+
 # v6.5.21
 
 ### Rename Details-for-nerds section to "Connected clients"

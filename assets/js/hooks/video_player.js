@@ -93,7 +93,7 @@ const VideoPlayer = {
     this._resizeHandler = () => this._sizePlayer();
     window.addEventListener("resize", this._resizeHandler);
 
-    // Report drift + learned offset so the "Details for nerds" panel can show
+    // Report drift + learned offset so the "Stats for nerds" panel can show
     // this browser's local player alongside extension clients. 1s cadence is
     // plenty (panel prunes > 5s stale).
     this._driftReportInterval = setInterval(() => {
