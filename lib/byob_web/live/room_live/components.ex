@@ -391,7 +391,7 @@ defmodule ByobWeb.RoomLive.Components do
             <% end %>
             <%= if map_size(active_clients) > 0 do %>
               <div class="mt-2 pt-2 border-t border-base-300/50">
-                <div class="text-base-content/40 mb-1">Extension clients</div>
+                <div class="text-base-content/40 mb-1">Connected clients</div>
                 <%= for {client_id, info} <- active_clients do %>
                   <% # Prefer the username broadcast alongside the stats payload
                      # (works for both extension clients and the LV browser
@@ -458,7 +458,7 @@ defmodule ByobWeb.RoomLive.Components do
                 <% end %>
               </div>
             <% else %>
-              <div class="text-base-content/30 mt-1">No extension clients reporting</div>
+              <div class="text-base-content/30 mt-1">No clients reporting</div>
             <% end %>
           </div>
         </details>

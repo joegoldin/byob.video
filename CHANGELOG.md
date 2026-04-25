@@ -3,6 +3,20 @@
 
 ---
 
+# v6.5.21
+
+### Rename Details-for-nerds section to "Connected clients"
+
+The drift-stats section was historically titled "Extension clients"
+because only the extension reported. Since v6.3.0 the LV main player
+also reports its drift via `video:drift_report`, and v6.5.20 made
+those rows resolve their username correctly. The label is now
+"Connected clients" (and the empty state "No clients reporting")
+so it's not misleading when the only viewer is watching YouTube
+directly in the LV.
+
+---
+
 # v6.5.20
 
 ### Details-for-nerds: usernames resolve correctly for browser drift reports
