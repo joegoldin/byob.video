@@ -314,7 +314,40 @@ const liveSocket = new LiveSocket("/live", Socket, {
     PreserveDetails: {
       beforeUpdate() { this._wasOpen = this.el.open; },
       updated() { this.el.open = this._wasOpen; }
-    }
+    },
+    // Settings → "Forget cleared popups". Each child item declares the
+    // localStorage key it represents via data-storage-key. On mount, items
+    // whose key isn't actually set are hidden; if none are set, the whole
+    // container hides itself. The data-reset-all button clears every set
+    // key in scope and re-runs the visibility pass.
+    DismissedPopups: {
+      mounted() {
+        this._refresh = () => {
+          const items = this.el.querySelectorAll("[data-storage-key]");
+          let any = false;
+          items.forEach((item) => {
+            const key = item.dataset.storageKey;
+            const set = (() => { try { return localStorage.getItem(key) === "1"; } catch (_) { return false; } })();
+            item.style.display = set ? "" : "none";
+            if (set) any = true;
+          });
+          this.el.style.display = any ? "" : "none";
+        };
+        this._refresh();
+        this._onClick = (e) => {
+          const btn = e.target.closest("[data-reset-all]");
+          if (!btn || !this.el.contains(btn)) return;
+          this.el.querySelectorAll("[data-storage-key]").forEach((item) => {
+            try { localStorage.removeItem(item.dataset.storageKey); } catch (_) {}
+          });
+          this._refresh();
+        };
+        document.addEventListener("click", this._onClick);
+      },
+      destroyed() {
+        if (this._onClick) document.removeEventListener("click", this._onClick);
+      },
+    },
   },
 })
 

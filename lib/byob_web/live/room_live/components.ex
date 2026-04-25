@@ -259,6 +259,7 @@ defmodule ByobWeb.RoomLive.Components do
   attr :api_key, :any, default: nil
   attr :show_comments, :boolean, default: true
   attr :sync_stats, :any, default: nil
+  attr :users, :any, default: %{}
 
   def settings_modal(assigns) do
     ~H"""
@@ -392,8 +393,23 @@ defmodule ByobWeb.RoomLive.Components do
               <div class="mt-2 pt-2 border-t border-base-300/50">
                 <div class="text-base-content/40 mb-1">Extension clients</div>
                 <%= for {client_id, info} <- active_clients do %>
+                  <% [owner_id | tab_rest] = String.split(client_id, ":", parts: 2)
+                     username = get_in(@users || %{}, [owner_id, :username]) || "(unknown)"
+                     ext_short = String.slice(owner_id, 0..7)
+
+                     tab_short =
+                       case tab_rest do
+                         [tab_id] when is_binary(tab_id) and tab_id != "" -> String.slice(tab_id, 0..7)
+                         _ -> nil
+                       end
+
+                     id_label =
+                       if tab_short, do: "#{ext_short}:#{tab_short}", else: ext_short %>
                   <div class="mb-2 p-1.5 rounded bg-base-200/50">
-                    <div class="text-base-content/30 text-[10px] truncate mb-0.5">{client_id}</div>
+                    <div class="text-[10px] truncate mb-0.5" title={client_id}>
+                      <span class="text-base-content/70 font-semibold">{username}</span>
+                      <span class="text-base-content/30">({id_label})</span>
+                    </div>
                     <div class="flex justify-between">
                       <span>Drift</span>
                       <span class={
@@ -435,21 +451,21 @@ defmodule ByobWeb.RoomLive.Components do
           </div>
         </details>
         <%!-- Reset dismissed popups --%>
-        <div class="mt-4 pt-4 border-t border-base-300">
-          <button
-            type="button"
-            class="btn btn-sm btn-ghost w-full"
-            onclick={
-              ~s|["byob_autoplay_help_dismissed"].forEach(k => { try { localStorage.removeItem(k); } catch (_) {} }); this.textContent = "Popups will show again"; this.disabled = true;|
-            }
-          >
-            Forget cleared popups
-          </button>
-          <p class="text-xs text-base-content/50 mt-1 text-center">
-            <span>Re-enables any "don't show again" dialogs</span>
-            <br />
-            <span>(e.g. the autoplay-blocked help).</span>
+        <div
+          id="dismissed-popups"
+          phx-hook="DismissedPopups"
+          phx-update="ignore"
+          class="mt-4 pt-4 border-t border-base-300"
+        >
+          <p class="text-xs text-base-content/50 mb-2 text-center">
+            Cleared popups
           </p>
+          <ul class="text-xs text-base-content/60 mb-2 space-y-0.5 list-disc list-inside">
+            <li data-storage-key="byob_autoplay_help_dismissed">Autoplay-blocked help</li>
+          </ul>
+          <button data-reset-all type="button" class="btn btn-sm btn-ghost w-full">
+            Re-enable
+          </button>
         </div>
         <%!-- Attribution --%>
         <div class="mt-4 pt-4 border-t border-base-300 text-xs text-base-content/40 space-y-1">

@@ -2,6 +2,36 @@
 
 ---
 
+# v6.5.1
+
+### Settings panel polish — username on extension clients + smart popup reset
+
+The "Extension clients" rows in Details for nerds now show the username
+(in primary text) followed by `(ext_id_short:tab_id_short)` in muted
+text, with the full client_id in a `title=` tooltip. Looks like:
+
+```
+host (edbb2f8a:ff79ce7f)
+  Drift                    -209ms
+  Server pos               117.3s
+  State                    playing
+```
+
+The "Forget cleared popups" section is now driven by a `DismissedPopups`
+JS hook. It scans `localStorage` for the keys it knows about
+(currently just `byob_autoplay_help_dismissed`); items whose key isn't
+actually set are hidden, and if no key is set the whole section hides
+itself. So if you've never dismissed any "don't show again" dialog,
+the section disappears entirely. When at least one is set, you see a
+bulleted list naming each cleared popup and a single "Re-enable"
+button that wipes them.
+
+Adding new dismissable popups is a one-line change — declare the
+localStorage key on a `<li data-storage-key="…">` and the hook handles
+visibility + reset.
+
+---
+
 # v6.5.0
 
 ### Keep extension window open on queue end + "URL mismatch" toast

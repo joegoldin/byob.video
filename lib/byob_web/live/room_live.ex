@@ -498,6 +498,7 @@ defmodule ByobWeb.RoomLive do
       api_key={@api_key}
       show_comments={@show_comments}
       sync_stats={@sync_stats}
+      users={@users}
     />
     <Components.autoplay_help_modal />
 
