@@ -3,6 +3,44 @@
 
 ---
 
+# v6.5.12
+
+### 1.5 s grace period before honoring a leave
+
+When a user's socket briefly drops and reconnects within seconds (a
+common case on flaky networks or quick page reloads), the room
+treated each transition as a real leave/join: "X left" + "X joined"
+toasts spammed, the activity log doubled up, and — worst — if the
+room was down to 2 users, the leave path's ≤1-user pause logic
+fired and stopped playback for everyone.
+
+`RoomServer.leave/2` now schedules a `{:finalize_leave, user_id}`
+message via `Process.send_after` (1.5 s timeout) instead of running
+the leave side-effects synchronously. `RoomServer.join/4` cancels
+any pending finalize for the same `user_id` (LV reconnect path,
+where `user_id` is stable) before its own logic runs. The
+finalize handler only fires the deferred work if the user is still
+absent at the timeout — so:
+
+- LV reconnects within the window: no state change, no toasts.
+- Extension reconnects (which generate a fresh `user_id`) within
+  the window: the new socket joins under the same username; when
+  the old `user_id`'s timer fires 1.5 s later, `username_connected?`
+  returns true, so the "left" toast and ≤1-user pause are
+  suppressed.
+- Genuine disconnects (no reconnect): toast fires after 1.5 s as
+  before, and the room pauses if it's down to one human.
+
+The activity-log `:joined` entry is now also gated on
+`was_present` so reconnects don't spam the feed.
+
+`pending_leaves` was added to the GenServer struct (initialized
+empty, restored as empty on persist-reload). The state file format
+gains a no-op key on disk; older snapshots `Map.merge` cleanly with
+the new defaults.
+
+---
+
 # v6.5.11
 
 ### Embed-blocked YouTube fallback opens in the byob popup window

@@ -38,6 +38,7 @@ defmodule Byob.RoomServer do
     rate_limit_ref: nil,
     activity_log: [],
     pending_advance_ref: nil,
+    pending_leaves: %{},
     round: nil,
     round_expire_ref: nil,
     round_last_broadcast_ms: 0,
@@ -54,6 +55,10 @@ defmodule Byob.RoomServer do
   @persist_interval_ms 5_000
   @rate_limit_reset_interval_ms 5_000
   @sync_broadcast_debounce_ms 500
+  # Defer the side effects of a leave (broadcast "left" toast, pause room
+  # if ≤1 user, mark user disconnected) by this much. Network blips that
+  # resolve within the window leave no trace; only real disconnects fire.
+  @leave_grace_ms 1_500
 
   def default_sb_settings, do: @default_sb_settings
 
@@ -222,6 +227,7 @@ defmodule Byob.RoomServer do
             event_counts: %{},
             sponsor_segments: [],
             pending_advance_ref: nil,
+            pending_leaves: %{},
             round: nil,
             round_expire_ref: nil,
             round_last_broadcast_ms: 0,
@@ -258,6 +264,12 @@ defmodule Byob.RoomServer do
   def handle_call({:join, user_id, username, opts}, _from, state) do
     is_extension = Keyword.get(opts, :is_extension, false)
     silent = Keyword.get(opts, :silent, false)
+
+    # Cancel a pending leave for the same user_id (LV reconnect — same id
+    # across the brief socket drop). This kills the deferred "left" toast
+    # and the ≤1-user pause logic before they fire.
+    state = cancel_pending_leave_timer(state, user_id)
+
     was_present = username_connected?(state, username)
 
     # Clean up stale disconnected users — reconnections create new user IDs
@@ -309,9 +321,11 @@ defmodule Byob.RoomServer do
 
     # Skip activity logs + presence toasts on silent re-joins (e.g. the
     # LV ensure_room_pid hook re-marking the user as connected after a
-    # brief socket drop). These shouldn't look like fresh joins.
+    # brief socket drop) AND on reconnects within the leave-grace window
+    # (where the username was still present from the deferred-leave POV).
+    # Both cases shouldn't look like fresh joins.
     state =
-      if silent do
+      if silent or was_present do
         state
       else
         log_activity(state, :joined, user_id)
@@ -539,84 +553,20 @@ defmodule Byob.RoomServer do
   end
 
   def handle_call({:leave, user_id}, _from, state) do
-    state = log_activity(state, :left, user_id)
-    leaving_username = get_in(state, [Access.key(:users), user_id, Access.key(:username)])
+    case Map.get(state.users, user_id) do
+      nil ->
+        {:reply, :ok, state}
 
-    # If this is an extension user leaving, clear only their ready tabs.
-    # When the SW dies, it can't send video:unready — this is the fallback.
-    is_ext = get_in(state, [Access.key(:users), user_id, Access.key(:is_extension)])
-
-    state =
-      if is_ext do
-        ready_tabs = Map.get(state, :ready_tabs, %{})
-        open_tabs = Map.get(state, :open_tabs, %{})
-
-        cleaned_ready =
-          ready_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
-
-        cleaned_open =
-          open_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
-
-        state |> Map.put(:ready_tabs, cleaned_ready) |> Map.put(:open_tabs, cleaned_open)
-      else
-        state
-      end
-
-    # Mark as disconnected instead of removing
-    state =
-      case Map.get(state.users, user_id) do
-        nil -> state
-        user -> put_in(state.users[user_id], %{user | connected: false})
-      end
-
-    # Count distinct USERNAMES, not raw user_ids. Per-tab user IDs
-    # (session_id:tab_id + one extra for the extension SW) mean a single
-    # real person can contribute 2–3 connected entries to state.users.
-    # We want "2 actual humans → 1 human" to pause, not "4 user_ids → 3".
-    connected_usernames =
-      state.users
-      |> Enum.filter(fn {_, u} -> u.connected end)
-      |> Enum.map(fn {_, u} -> u.username end)
-      |> Enum.uniq()
-
-    connected_count = length(connected_usernames)
-
-    # Pause when the room is down to ≤1 distinct user — there's nobody
-    # left to watch in sync, so leaving state=:playing just lets the
-    # server-side clock drift. 2 → 1 pauses; 3 → 2 doesn't.
-    state =
-      if connected_count <= 1 and state.play_state == :playing do
-        %{
-          state
-          | play_state: :paused,
-            current_time: current_position(state),
-            last_sync_at: System.monotonic_time(:millisecond)
-        }
-        |> cancel_sync_correction()
-        |> tap(fn s ->
-          now = System.monotonic_time(:millisecond)
-          broadcast(s, {:sync_pause, %{time: s.current_time, server_time: now, user_id: nil}})
-        end)
-      else
-        state
-      end
-
-    state =
-      if connected_count == 0 do
-        schedule_cleanup(state)
-      else
-        broadcast(state, {:users_updated, state.users})
-        broadcast_ready_count(state)
-        state
-      end
-
-    # Toast "username left" only if no other connection with the same
-    # username is still present.
-    if leaving_username && not username_connected?(state, leaving_username) do
-      broadcast(state, {:room_presence, %{event: Events.presence_left(), username: leaving_username}})
+      _user ->
+        # Defer the visible side effects (mark disconnected, "left" toast,
+        # ≤1-user pause, ready-count refresh) by @leave_grace_ms. Network
+        # blips that resolve within the window leave no trace — the
+        # incoming :join will cancel this timer before it fires.
+        state = cancel_pending_leave_timer(state, user_id)
+        ref = Process.send_after(self(), {:finalize_leave, user_id}, @leave_grace_ms)
+        pending = Map.put(state.pending_leaves, user_id, ref)
+        {:reply, :ok, %{state | pending_leaves: pending}}
     end
-
-    {:reply, :ok, state}
   end
 
   def handle_call(:get_state, _from, state) do
@@ -1155,6 +1105,11 @@ defmodule Byob.RoomServer do
     {:noreply, state}
   end
 
+  def handle_info({:finalize_leave, user_id}, state) do
+    state = %{state | pending_leaves: Map.delete(state.pending_leaves, user_id)}
+    {:noreply, do_finalize_leave(state, user_id)}
+  end
+
   def handle_info(:reset_rate_limits, state) do
     state = %{state | event_counts: %{}}
     state = schedule_rate_limit_reset(state)
@@ -1369,6 +1324,105 @@ defmodule Byob.RoomServer do
   defp username_connected?(state, username) do
     state.users
     |> Enum.any?(fn {_, u} -> u.connected && u.username == username end)
+  end
+
+  defp cancel_pending_leave_timer(state, user_id) do
+    case Map.get(state.pending_leaves, user_id) do
+      nil ->
+        state
+
+      ref ->
+        Process.cancel_timer(ref)
+        %{state | pending_leaves: Map.delete(state.pending_leaves, user_id)}
+    end
+  end
+
+  defp do_finalize_leave(state, user_id) do
+    case Map.get(state.users, user_id) do
+      nil ->
+        state
+
+      user ->
+        leaving_username = user.username
+        is_ext = Map.get(user, :is_extension, false)
+
+        state = log_activity(state, :left, user_id)
+
+        # If this is an extension user leaving, clear only their ready tabs.
+        # When the SW dies, it can't send video:unready — this is the fallback.
+        state =
+          if is_ext do
+            ready_tabs = Map.get(state, :ready_tabs, %{})
+            open_tabs = Map.get(state, :open_tabs, %{})
+
+            cleaned_ready =
+              ready_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
+
+            cleaned_open =
+              open_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
+
+            state |> Map.put(:ready_tabs, cleaned_ready) |> Map.put(:open_tabs, cleaned_open)
+          else
+            state
+          end
+
+        # Mark as disconnected instead of removing
+        state = put_in(state.users[user_id], %{user | connected: false})
+
+        # Count distinct USERNAMES, not raw user_ids. Per-tab user IDs
+        # (session_id:tab_id + one extra for the extension SW) mean a
+        # single real person can contribute 2–3 connected entries to
+        # state.users. We want "2 actual humans → 1 human" to pause,
+        # not "4 user_ids → 3".
+        connected_usernames =
+          state.users
+          |> Enum.filter(fn {_, u} -> u.connected end)
+          |> Enum.map(fn {_, u} -> u.username end)
+          |> Enum.uniq()
+
+        connected_count = length(connected_usernames)
+
+        # Pause when the room is down to ≤1 distinct user — there's
+        # nobody left to watch in sync, so leaving state=:playing just
+        # lets the server-side clock drift.
+        state =
+          if connected_count <= 1 and state.play_state == :playing do
+            %{
+              state
+              | play_state: :paused,
+                current_time: current_position(state),
+                last_sync_at: System.monotonic_time(:millisecond)
+            }
+            |> cancel_sync_correction()
+            |> tap(fn s ->
+              now = System.monotonic_time(:millisecond)
+              broadcast(s, {:sync_pause, %{time: s.current_time, server_time: now, user_id: nil}})
+            end)
+          else
+            state
+          end
+
+        state =
+          if connected_count == 0 do
+            schedule_cleanup(state)
+          else
+            broadcast(state, {:users_updated, state.users})
+            broadcast_ready_count(state)
+            state
+          end
+
+        # Toast "username left" only if no other connection with the
+        # same username is still present (extension reconnect with a
+        # new user_id during the grace window suppresses this).
+        if leaving_username && not username_connected?(state, leaving_username) do
+          broadcast(
+            state,
+            {:room_presence, %{event: Events.presence_left(), username: leaving_username}}
+          )
+        end
+
+        state
+    end
   end
 
   defp user_has_no_open_tabs?(open_tabs, ext_user_id) do
