@@ -366,6 +366,71 @@ const liveSocket = new LiveSocket("/live", Socket, {
         if (this._onClick) document.removeEventListener("click", this._onClick);
       },
     },
+    // Local-only nickname overlay. Each `[data-byob-username="X"]` element
+    // is rendered as the canonical username; this hook walks them on mount
+    // / update / DOM mutation and appends a sibling `<span>` with the user's
+    // nickname (if set) in muted text. `[data-byob-nickname-btn="X"]`
+    // buttons trigger an inline prompt; submitted text is saved to
+    // localStorage under `byob_nicknames`. State is per-browser, never
+    // sent to the server.
+    Nicknames: {
+      mounted() {
+        this._read();
+        this._refresh();
+        this._onClick = (e) => {
+          const btn = e.target.closest("[data-byob-nickname-btn]");
+          if (!btn || !this.el.contains(btn)) return;
+          this._editFor(btn.dataset.byobNicknameBtn);
+        };
+        this.el.addEventListener("click", this._onClick);
+        this._observer = new MutationObserver(() => this._refresh());
+        this._observer.observe(this.el, { childList: true, subtree: true });
+      },
+      updated() { this._refresh(); },
+      destroyed() {
+        if (this._onClick) this.el.removeEventListener("click", this._onClick);
+        if (this._observer) this._observer.disconnect();
+      },
+      _read() {
+        try {
+          this._map = JSON.parse(localStorage.getItem("byob_nicknames") || "{}");
+        } catch (_) { this._map = {}; }
+      },
+      _save() {
+        try { localStorage.setItem("byob_nicknames", JSON.stringify(this._map || {})); } catch (_) {}
+      },
+      _refresh() {
+        if (!this._map) this._read();
+        this.el.querySelectorAll("[data-byob-username]").forEach((el) => {
+          const username = el.dataset.byobUsername;
+          const nickname = (username && this._map[username]) || null;
+          let suffix = el.nextElementSibling;
+          if (suffix && !suffix.classList.contains("byob-nickname-suffix")) suffix = null;
+          if (nickname) {
+            if (!suffix) {
+              suffix = document.createElement("span");
+              suffix.className = "byob-nickname-suffix text-base-content/40 text-xs";
+              el.after(suffix);
+            }
+            suffix.textContent = ` (${nickname})`;
+          } else if (suffix) {
+            suffix.remove();
+          }
+        });
+      },
+      _editFor(username) {
+        if (!username) return;
+        const current = (this._map && this._map[username]) || "";
+        const next = window.prompt(`Nickname for ${username} (leave blank to clear):`, current);
+        if (next === null) return;
+        if (!this._map) this._map = {};
+        const trimmed = next.trim();
+        if (trimmed === "") delete this._map[username];
+        else this._map[username] = trimmed;
+        this._save();
+        this._refresh();
+      },
+    },
   },
 })
 

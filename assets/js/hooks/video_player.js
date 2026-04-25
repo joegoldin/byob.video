@@ -315,6 +315,7 @@ const VideoPlayer = {
       onLoadStart: () => {
         this.isReady = false;
         this._endedFired = false;
+        this._endedAt = null;
       },
       onStateChange: (stateName) => {
         this._onPlayerStateChange(stateName);
@@ -493,15 +494,26 @@ const VideoPlayer = {
     }
 
     if (stateName === "playing") {
+      // YouTube can auto-replay (end-card UI, related-video carousel,
+      // or just internal state churn between ENDED and a fresh state)
+      // within ~100-300ms of firing the ended event. Treat any
+      // "playing" transition that lands within 500ms of ended as
+      // auto-replay — don't push :play to the server (that would
+      // cancel the autoplay-advance timer) and pause the player so
+      // the queue can finalize. A user clicking the YT replay button
+      // takes much longer (seconds), so the gate cleanly separates
+      // the two intents.
+      if (this._endedFired && this._endedAt && Date.now() - this._endedAt < 500) {
+        try { this._pause(); } catch (_) {}
+        return;
+      }
+
       this.expectedPlayState = "playing";
       window.__byobPlaying = true;
-      // YouTube's end-card replay button (visible during the autoplay
-      // countdown) takes us ended → buffering → playing. Resetting
-      // _endedFired now lets a subsequent end-of-video on the replay
-      // run trigger another :ended push. The server-side :play handler
-      // also cancels the autoplay-advance timer so the queue doesn't
-      // skip past us.
+      // Reset the ended marker so a subsequent end-of-replay run still
+      // pushes :ended.
       this._endedFired = false;
+      this._endedAt = null;
       const position = this.player.getCurrentTime();
       this.pushEvent(LV_EVT.EV_VIDEO_PLAY, { position });
       // Update own reconcile so it doesn't drift-correct back to old position
@@ -520,6 +532,7 @@ const VideoPlayer = {
       this.expectedPlayState = null;
       window.__byobPlaying = false;
       this.reconcile.stop();
+      this._endedAt = Date.now();
       // Only send ended if the position-based detector hasn't already
       if (!this._endedFired) {
         this._endedFired = true;
@@ -938,6 +951,7 @@ const VideoPlayer = {
       if (dur > 0 && pos >= dur - 1) {
         if (!this._endedFired) {
           this._endedFired = true;
+          this._endedAt = Date.now();
           this.expectedPlayState = null;
           this.reconcile.stop();
           const currentIndex = this.el.dataset.currentIndex;
@@ -947,6 +961,7 @@ const VideoPlayer = {
         }
       } else if (pos < dur - 2) {
         this._endedFired = false;
+        this._endedAt = null;
       }
     }, 500);
 

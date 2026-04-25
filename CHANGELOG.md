@@ -3,6 +3,41 @@
 
 ---
 
+# v6.5.25
+
+### Local nicknames + suppress YT auto-replay during autoplay countdown
+
+**Local nicknames.** Each user row now has a small `nickname` button
+next to other users. Clicking it pops a prompt and saves the entered
+text to `localStorage` under `byob_nicknames`. Wherever a username
+is rendered (user list, Stats-for-nerds connected clients, activity
+log lines) a muted ` (<nickname>)` suffix appears alongside it.
+State is per-browser, never sent to the server, so it doesn't
+affect anyone else's view.
+
+A new `Nicknames` JS hook on the room root walks
+`[data-byob-username]` elements on mount, on every LV update, and
+via a MutationObserver, then appends/removes a sibling
+`.byob-nickname-suffix` span per the localStorage map.
+`[data-byob-nickname-btn]` buttons are wired through the same hook.
+
+**YT auto-replay no longer cancels the autoplay countdown.** When
+the LAST queue item finished, YouTube's end-card UI was occasionally
+flicking the player back into a `playing` state on its own (related-
+video preview, end-card hover, etc.). The hook treated that as a
+user replay and pushed `:play` to the server, which cancelled the
+advance timer; the video then played again, ended, scheduled a
+fresh countdown, and only then ended the queue.
+
+Hook now records `_endedAt` on the ended transition and treats any
+`playing` event landing within 500 ms of it as an auto-replay —
+suppresses the `:play` push and pauses the player so the queue can
+finalize. A real user click on YT's replay button (always seconds,
+not milliseconds, after ended) still cancels the countdown as
+v6.5.18 intended.
+
+---
+
 # v6.5.24
 
 ### Stats panel no longer prunes browser drift rows on every users_updated

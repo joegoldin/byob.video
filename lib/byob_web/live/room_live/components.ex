@@ -428,7 +428,10 @@ defmodule ByobWeb.RoomLive.Components do
                        if tab_short, do: "#{ext_short}:#{tab_short}", else: ext_short %>
                   <div class="mb-2 p-1.5 rounded bg-base-200/50">
                     <div class="text-[10px] truncate mb-0.5" title={client_id}>
-                      <span class="text-base-content/70 font-semibold">{username}</span>
+                      <span
+                        class="text-base-content/70 font-semibold"
+                        data-byob-username={username}
+                      >{username}</span>
                       <span class="text-base-content/30">({id_label})</span>
                     </div>
                     <div class="flex justify-between">
@@ -1082,7 +1085,7 @@ defmodule ByobWeb.RoomLive.Components do
             <span :if={entry.action == :round_cancelled} class="text-base-content/30 flex-shrink-0">
               &#8634;
             </span>
-            <span class="flex-1 line-clamp-2">{format_log_entry(entry)}</span>
+            <span class="flex-1 line-clamp-2" data-byob-username={entry[:user]}>{format_log_entry(entry)}</span>
             <time
               :if={entry.at}
               datetime={DateTime.to_iso8601(entry.at)}
@@ -1126,8 +1129,12 @@ defmodule ByobWeb.RoomLive.Components do
             class="flex items-center gap-2 text-sm"
           >
             <div class={"w-2 h-2 rounded-full flex-shrink-0 #{if user.connected, do: "bg-success", else: "bg-base-content/20"}"} />
-            <%!-- Other users: just show name --%>
-            <span :if={!is_self_user(uid, @user_id)} class="truncate">{user.username}</span>
+            <%!-- Other users: just show name (Nicknames hook decorates) --%>
+            <span
+              :if={!is_self_user(uid, @user_id)}
+              class="truncate flex-1"
+              data-byob-username={user.username}
+            >{user.username}</span>
             <%!-- Self: show name + tab indicator --%>
             <span
               :if={is_self_user(uid, @user_id) && !@editing_username}
@@ -1145,6 +1152,14 @@ defmodule ByobWeb.RoomLive.Components do
               class="btn btn-xs btn-ghost opacity-50 hover:opacity-100"
             >
               edit
+            </button>
+            <button
+              :if={!is_self_user(uid, @user_id)}
+              type="button"
+              data-byob-nickname-btn={user.username}
+              class="btn btn-xs btn-ghost opacity-50 hover:opacity-100"
+            >
+              nickname
             </button>
             <form
               :if={uid == @user_id && @editing_username}

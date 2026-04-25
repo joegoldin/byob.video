@@ -507,7 +507,11 @@ defmodule ByobWeb.RoomLive do
     />
     <Components.autoplay_help_modal />
 
-    <div class={"flex flex-col lg:flex-row gap-3 #{unless @comments_expanded, do: "lg:h-[calc(100vh-3.5rem)]"}"}>
+    <div
+      id="byob-nicknames-root"
+      phx-hook="Nicknames"
+      class={"flex flex-col lg:flex-row gap-3 #{unless @comments_expanded, do: "lg:h-[calc(100vh-3.5rem)]"}"}
+    >
       <%!-- Main content --%>
       <div class="flex-1 min-w-0 min-h-0 flex flex-col">
         <%!-- Player wrapper: sizes the player to fit viewport while maintaining 16:9 --%>
