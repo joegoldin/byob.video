@@ -901,6 +901,15 @@
     }
 
     if (msg.type === EVT.COMMAND_VIDEO_CHANGE) {
+      // Capture whether this tab is acting as a player BEFORE updating
+      // _syncedUrl. setSyncedUrl → checkUrlMismatch → unhookVideo when the
+      // current location no longer matches the new room URL, which would
+      // null out hookedVideo before the navigate gate below — and another
+      // user's tab (where this is exactly the case) would skip the
+      // navigation and require a manual click. `synced` is sticky for the
+      // session, so it's the right player-tab marker.
+      const wasPlayerTab = !!hookedVideo || synced;
+
       // Room advanced to a new video (manual queue nav, "Set room to this
       // page", or queue auto-advance to another extension-required video).
       // Update our canonical URL reference so the mismatch toast disappears
@@ -910,9 +919,9 @@
       // navigate=true: the new video is extension-required, so the BG would
       // otherwise close this tab and force a re-open. Reuse it instead —
       // navigate the tab itself to the new URL. Only do this on tabs that
-      // currently host a hooked video; non-player tabs (e.g. a CR browse
-      // page) shouldn't get yanked away.
-      if (msg.navigate && msg.url && hookedVideo && window === window.top) {
+      // were acting as the player; non-player tabs (e.g. a CR browse page)
+      // shouldn't get yanked away.
+      if (msg.navigate && msg.url && wasPlayerTab && window === window.top) {
         if (location.href !== msg.url) {
           // setSyncedUrl already kicked off the chrome.storage update.
           // Give it a moment to flush so the new content.js (post-nav)

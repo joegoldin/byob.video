@@ -3,6 +3,31 @@
 
 ---
 
+# v6.5.7
+
+### Fix v6.5.6 regression — other users' tabs weren't auto-navigating
+
+v6.5.6 added an unhook-on-URL-mismatch step inside
+`checkUrlMismatch/0`, which `setSyncedUrl/1` calls. Order of events
+in the `COMMAND_VIDEO_CHANGE` handler ended up:
+
+1. `setSyncedUrl(msg.url)` — `_syncedUrl` flips to the new URL.
+2. `checkUrlMismatch()` runs internally — old `location.href` no
+   longer matches → `unhookVideo()` → `hookedVideo = null`.
+3. Navigate gate `if (msg.navigate && hookedVideo && ...)` fails
+   because `hookedVideo` was just nulled.
+
+Result: User A's tab (already on the destination) navigated
+correctly (no-op), but User B's tab (still on the old episode)
+unhooked and stopped — they had to click the toast button to move.
+
+Capture `wasPlayerTab = !!hookedVideo || synced` once, before
+`setSyncedUrl` runs, and gate navigation on that. `synced` is sticky
+across the unhook so it's a stable "this tab is acting as a player"
+marker.
+
+---
+
 # v6.5.6
 
 ### Don't hook videos on the wrong URL
