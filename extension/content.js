@@ -417,6 +417,17 @@
 
   function hookVideo(video) {
     if (hookedVideo === video) return;
+
+    // Don't hook if we're not on the room's URL — a stray video element on
+    // a different page (e.g. user clicked through to next episode but the
+    // room is still on the previous one) would otherwise have its play /
+    // pause / seek events propagated to the server as if it were the
+    // current video, breaking sync for everyone.
+    if (!urlMatches()) {
+      if (window === window.top) updateSyncBarStatus("out_of_sync");
+      return;
+    }
+
     const wasHooked = !!hookedVideo;
     if (hookedVideo) unhookVideo();
 
@@ -1128,6 +1139,17 @@
   // ── URL mismatch tracking (v6.5) ──────────────────────────────────────────
   // Canonical room URL, polling, and persistent toast. Only runs in the top
   // frame (same gate as other toasts) — iframes can't navigate the window.
+  // True if either we don't yet know the room's URL (initial load, before
+  // command:initial-state) or our location.href matches it. False means the
+  // user has navigated away from the room's video; hooking the local <video>
+  // would point sync events at the wrong content (e.g. while browsing to
+  // the next CR episode the previous one is still playing — server sees
+  // play_state events from a video that isn't the room's).
+  function urlMatches() {
+    if (!_syncedUrl) return true;
+    return normalizeUrl(location.href) === normalizeUrl(_syncedUrl);
+  }
+
   function setSyncedUrl(url) {
     const changed = _syncedUrl !== url;
     _syncedUrl = url;
@@ -1162,9 +1184,22 @@
     if (window !== window.top) return;
     if (!_syncedUrl) { hideUrlMismatchToast(); return; }
 
-    if (normalizeUrl(location.href) === normalizeUrl(_syncedUrl)) {
+    const matched = normalizeUrl(location.href) === normalizeUrl(_syncedUrl);
+
+    if (matched) {
       hideUrlMismatchToast();
+      // Just transitioned back onto the room's URL — pick up any video
+      // element that's now on the page so the existing tab can resume
+      // playing in sync. The MutationObserver fires on DOM additions but
+      // not on URL-only SPA changes where the video already exists.
+      if (synced && !hookedVideo) {
+        document.querySelectorAll("video").forEach((v) => hookVideo(v));
+      }
     } else {
+      // Drop any hooked video — its play/pause/seek events would otherwise
+      // be propagated to the server as if it were the room's current video.
+      if (hookedVideo) unhookVideo();
+      updateSyncBarStatus("out_of_sync");
       showUrlMismatchToast();
     }
   }
@@ -1474,6 +1509,7 @@
       paused:    { color: "#ff9900", text: "Paused",                             tip: "Video is paused — synced with room" },
       finished:  { color: "#7c3aed", text: "Finished",                           tip: "Video ended — next video loading" },
       queue_ended: { color: "#7c3aed", text: "Queue finished",                   tip: "No more videos queued — feel free to keep browsing" },
+      out_of_sync: { color: "#ff9900", text: "Out of sync",                      tip: "This page isn't the room's current video — use the toast to re-sync or update the room" },
     };
     const s = states[state];
     if (!s) return;

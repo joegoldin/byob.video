@@ -3,6 +3,32 @@
 
 ---
 
+# v6.5.6
+
+### Don't hook videos on the wrong URL
+
+When the user clicked through to the next episode in the same SPA tab
+while the room's current video was still playing on the previous URL,
+the content script's `MutationObserver` would discover the new video
+element on the destination page and hook it. The next play / pause /
+seek event from that hijacked element would propagate to the server
+as if it were the room's current video — corrupting state for
+everyone in the room.
+
+`hookVideo/1` now bails when `urlMatches/0` returns false. The
+URL-mismatch poll (`checkUrlMismatch/0`) also unhooks any
+already-hooked video on transition into mismatch, and re-hooks any
+`<video>` it finds when the user navigates back onto the room's URL.
+A new sync-bar state `out_of_sync` ("Out of sync", amber) makes the
+state explicit alongside the existing persistent toast.
+
+Net effect: while you're browsing to the next episode, your local
+playback events stay local. Pick "Back to room video" to rejoin or
+"Set room to this page" to redirect the room — sync resumes cleanly
+either way.
+
+---
+
 # v6.5.5
 
 ### Fix v6.5.4 — main player was racing the extension and closing the tab anyway
