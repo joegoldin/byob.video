@@ -3,6 +3,27 @@
 
 ---
 
+# v6.5.30
+
+### Self-heal stuck "Focus Player Window" state
+
+If the SW was suspended when the popup tab closed, it could miss
+both `port.onDisconnect` and `chrome.tabs.onRemoved` — leaving the
+server's `open_tabs` with a phantom entry. `ready_count.needs_open`
+then kept claiming the user had a popup, so the placeholder button
+stayed on "Focus Player Window" indefinitely; clicking it tried to
+focus a tab that wasn't there.
+
+`byob:focus-external` handler now walks `hookedTabs`, calls
+`chrome.tabs.get(tabId)` per entry, and on any rejection (tab gone)
+cleans the entry out of `hookedTabs` and pushes
+`video:tab_closed` + `video:unready` to the channel. Within a tick
+the server rebroadcasts `ready_count` without the phantom, the
+button label flips back to "Open Player Window", and the next
+click opens a fresh popup.
+
+---
+
 # v6.5.29
 
 ### Restyle the placeholder's player-window button

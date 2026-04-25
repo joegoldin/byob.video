@@ -576,19 +576,37 @@ chrome.runtime.onMessage.addListener((msg) => {
     // The LV main page asked us to focus its popup. window.open()'s
     // named-target reuse is broken across COOP (YouTube), and the parent
     // can't focus() the WindowProxy across it either — but chrome.tabs
-    // can. Activate the first hooked tab and bring its window to the
-    // foreground.
-    for (const tabId of hookedTabs) {
-      chrome.tabs.update(tabId, { active: true })
-        .then(() => chrome.tabs.get(tabId))
-        .then((tab) => {
+    // can. Walk hookedTabs, focus the first one that's still alive, and
+    // garbage-collect any that aren't (SW suspension can swallow both
+    // port.onDisconnect and chrome.tabs.onRemoved, leaving phantom
+    // entries that fool the server's open_tabs / ready_count). Sending
+    // video:tab_closed on cleanup makes the LV's "Focus" label flip
+    // back to "Open Player Window" so the user can re-open.
+    (async () => {
+      const tabIds = Array.from(hookedTabs);
+      let focused = false;
+      for (const tabId of tabIds) {
+        try {
+          const tab = await chrome.tabs.get(tabId);
+          await chrome.tabs.update(tabId, { active: true });
           if (tab && tab.windowId !== undefined) {
-            return chrome.windows.update(tab.windowId, { focused: true });
+            await chrome.windows.update(tab.windowId, { focused: true });
           }
-        })
-        .catch(() => {});
-      break;
-    }
+          focused = true;
+          break;
+        } catch (_) {
+          // Tab is gone — drop the phantom and notify server.
+          hookedTabs.delete(tabId);
+          if (channel) {
+            try {
+              channel.push(EVT.CHAN_VIDEO_TAB_CLOSED, { tab_id: String(tabId) });
+              channel.push(EVT.CHAN_VIDEO_UNREADY, { tab_id: String(tabId) });
+            } catch (_) {}
+          }
+        }
+      }
+      void focused;
+    })();
   }
 });
 
