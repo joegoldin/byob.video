@@ -3,6 +3,28 @@
 
 ---
 
+# v6.5.37
+
+### Reset `_endedFired` on any detected seek
+
+`_endedFired` only got reset when the seek detector observed
+`pos < dur - 2` on a 500 ms tick. A rapid sequence of seeks (e.g.,
+the YT replay button briefly leaves the player past `dur` →
+`fireEnded` → `_endedFired = true`, then the user immediately
+seeks back to near the end faster than the next tick) could
+sandwich the reset branch — the next tick saw `pos > dur - 2`,
+didn't reset, and the natural end-of-video play-through silently
+no-op'd because `_endedFired` was still `true`. Result: queue
+hung at the visual end of a video that had clearly finished.
+
+Any time the seek-detector recognizes a large position jump (the
+seek itself), `_endedFired` and `_endedAt` are cleared. A user
+seeking is unambiguous evidence they aren't at the end anymore,
+so a subsequent natural play-through to `dur - 1` re-fires
+`video:ended` correctly.
+
+---
+
 # v6.5.36
 
 ### Doc / changelog scrub

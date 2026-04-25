@@ -952,13 +952,23 @@ const VideoPlayer = {
       const isPaused = playerState === "paused";
       // Detect seeks: large position jumps (>3s while playing, >1s while paused)
       const jumpThreshold = isPaused ? 1 : 3;
-      if (Math.abs(pos - this.lastKnownPosition) > jumpThreshold) {
+      const jumped = Math.abs(pos - this.lastKnownPosition) > jumpThreshold;
+      if (jumped) {
         if (!this.suppression.isActive()) {
           this.pushEvent(LV_EVT.EV_VIDEO_SEEK, { position: pos });
           const serverTime = this.clockSync.serverNow();
           this.reconcile.setServerState(pos, serverTime, this.clockSync);
           this.reconcile.pauseFor(1000);
         }
+        // Any seek is unambiguous evidence the user isn't at the end of
+        // the video anymore. Reset the ended marker so a subsequent play-
+        // through to dur fires :ended again. Without this, a rapid
+        // sequence of seeks (e.g. past-end → start → near-end within <500ms,
+        // faster than this 500ms tick) leaves _endedFired stuck true from
+        // the first seek's "past dur-1" trigger and the natural end of
+        // the next play-through silently no-ops.
+        this._endedFired = false;
+        this._endedAt = null;
       }
       this.lastKnownPosition = pos;
 
