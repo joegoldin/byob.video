@@ -296,6 +296,15 @@ defmodule ByobWeb.RoomLive.Components do
             >
               v{Application.spec(:byob, :vsn)}
             </a>
+            <%= if Byob.Build.sha() do %>
+              <span class="text-base-content/30">
+                (<a
+                  href={Byob.Build.commit_url()}
+                  target="_blank"
+                  class="link link-primary"
+                ><code>{Byob.Build.sha()}</code></a>)
+              </span>
+            <% end %>
           </p>
         </div>
 

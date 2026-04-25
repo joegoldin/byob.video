@@ -3,6 +3,23 @@
 
 ---
 
+# v6.5.23
+
+### Show deployed commit hash in settings
+
+Settings modal's version line now reads `vX.Y.Z (abc1234)`, where the
+hash links to the corresponding github commit. The version itself
+still links to the CHANGELOG.
+
+`Byob.Build.sha/0` resolves the hash at compile time from (in order)
+`GIT_SHA` env var, then `git rev-parse --short HEAD` if `.git` is
+present, otherwise `nil` — releases built outside the deploy flow
+just don't render the parens. `Dockerfile` accepts a `GIT_SHA` build
+arg, and `just deploy` calls `fly deploy --build-arg GIT_SHA=$(git
+rev-parse --short HEAD)` so production carries the correct ref.
+
+---
+
 # v6.5.22
 
 ### Rename "Details for nerds" → "Stats for nerds"

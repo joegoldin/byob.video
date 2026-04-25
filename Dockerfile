@@ -21,6 +21,13 @@ COPY lib lib
 COPY assets assets
 COPY priv priv
 
+# Captured at compile time by Byob.Build (lib/byob/build.ex) and rendered
+# next to the version in the settings modal as a link to the github
+# commit. `just deploy` (or `fly deploy --build-arg GIT_SHA=…`) supplies
+# this; the Dockerfile alone has no .git so the fallback would just be nil.
+ARG GIT_SHA=
+ENV GIT_SHA=$GIT_SHA
+
 # Compile first so phoenix-colocated hooks are generated in _build
 RUN mix compile
 RUN mix assets.deploy

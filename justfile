@@ -49,6 +49,11 @@ bump NEW_VERSION:
     echo "{{NEW_VERSION}}" > VERSION
     just sync-version
 
+# Deploy to fly. Passes the current short HEAD as GIT_SHA so the
+# settings modal's commit hash links to the right github commit.
+deploy:
+    fly deploy --app byob-video --build-arg GIT_SHA=$(git rev-parse --short HEAD)
+
 # Clean build artifacts
 clean:
     rm -f result-chrome result-firefox
