@@ -3,6 +3,26 @@
 
 ---
 
+# v6.5.5
+
+### Fix v6.5.4 — main player was racing the extension and closing the tab anyway
+
+`VideoPlayer._onVideoChange` (LV main hook) unconditionally called
+`window._byobPlayerWindow.close()` and broadcast
+`byob:clear-external` whenever the room's video changed. Even after
+v6.5.4 had `background.js` send `navigate: true` for ext → ext
+transitions, the LV path won the race and shut the popup before the
+content script could navigate.
+
+Gated both calls on the new media item's source type. If the new
+item is `extension_required`, we keep the popup window open and the
+`chrome.storage` config intact so the extension's content script can
+swap `location.href` in place. For YouTube / Vimeo / direct video,
+behavior is unchanged: close the popup and clear storage so the
+user falls back to the main LV player.
+
+---
+
 # v6.5.4
 
 ### Reuse extension tabs on third-party → third-party transitions

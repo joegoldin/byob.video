@@ -709,13 +709,23 @@ const VideoPlayer = {
     const item = data.media_item;
     this.el.dataset.currentIndex = data.index;
     this.reconcile.stop();
-    // Close any open external player window
-    if (window._byobPlayerWindow && !window._byobPlayerWindow.closed) {
-      try { window._byobPlayerWindow.close(); } catch (_) {}
-      window._byobPlayerWindow = null;
+
+    // If the new video is also extension-required, keep the popup window
+    // and chrome.storage config alive — the extension's content script
+    // will navigate the existing tab to the new URL itself. Closing /
+    // clearing now would race with that nav and force the user to click
+    // "Open in extension" again on every episode.
+    const newIsExtension = item && item.source_type === "extension_required";
+
+    if (!newIsExtension) {
+      // Close any open external player window
+      if (window._byobPlayerWindow && !window._byobPlayerWindow.closed) {
+        try { window._byobPlayerWindow.close(); } catch (_) {}
+        window._byobPlayerWindow = null;
+      }
+      // Clear extension storage config
+      window.postMessage({ type: LV_EVT.PW_CLEAR_EXTERNAL }, "*");
     }
-    // Clear extension storage config
-    window.postMessage({ type: LV_EVT.PW_CLEAR_EXTERNAL }, "*");
     // Clear old sponsor data — new segments will arrive via sponsor:segments event
     this._lastSponsorData = null;
     this.sponsorSegments = [];
