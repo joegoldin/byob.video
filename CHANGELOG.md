@@ -3,6 +3,47 @@
 
 ---
 
+# v6.5.17
+
+### "Focus player window" actually focuses + works across YT/CR transitions
+### + extension detection works on any host
+
+Three fixes in one round.
+
+**1. Focus actually focuses.** YT's COOP severs both `.closed` and the
+parent's ability to call `.focus()` across the boundary, and the
+content-script side can't navigate to the popup either. New flow: a
+`byob:focus-external` window-postMessage hops through the page-level
+content script (`chrome.runtime.sendMessage`) to BG, which calls
+`chrome.tabs.update(tabId, {active: true})` +
+`chrome.windows.update(windowId, {focused: true})` on the user's
+hooked tab. Works regardless of COOP. `ExtOpenBtn` and the YT fallback
+button both use this on click when the user already has a popup;
+otherwise they open fresh.
+
+**2. ExtOpenBtn label survives YT→CR popup navigation.** Previously
+the label polled `window._byobPlayerWindow.closed`, which YouTube's
+COOP poisoned permanently — even after the popup re-navigated to
+Crunchyroll, the parent's WindowProxy never recovered. The button
+showed "Open Player Window" and clicking duplicated. Now the label
+is driven by the server's `ready_count` payload (specifically
+`needs_open`): if the user's username isn't in that list, they have
+a hooked-video popup somewhere — label says "Focus Player Window".
+The BG's port-disconnect detection on actual close fans out via
+the channel, so closing all popups flips the label back without any
+client-side `.closed` polling.
+
+**3. Extension detection works on any host.** `content.js` previously
+only set `data-byob-extension` on `byob.video` or `localhost`. LAN
+access (192.168.x.x), ngrok tunnels, dev domains, etc. all looked
+"extension not installed" to the page. The LV root template now
+renders `<html data-byob-app="1">`, and `content.js` checks for
+that marker (in addition to the legacy hostname allowlist) before
+broadcasting extension presence. Marker is a no-op for unrelated
+sites, so this doesn't expand the fingerprint surface.
+
+---
+
 # v6.5.16
 
 ### YT fallback — server ready_count drives "Focus" label

@@ -47,15 +47,30 @@ const ReplaceLayoutNav = {
   },
 }
 
+// Server's ready_count payload is the source of truth for "does this user
+// already have a hooked-video popup open?". `window._byobPlayerWindow`
+// can't be trusted: COOP severs both `.closed` and named-target reuse
+// once the popup loads YouTube, so the parent never gets accurate state
+// from JS alone. The BG-side port-disconnect detection fans out via the
+// room channel's ready_count broadcast and lands here.
 const ExtOpenBtn = {
-  mounted() { this._setup(); },
+  mounted() {
+    this._setup();
+    this.handleEvent("ready:count", (data) => {
+      this._lastReadyCount = data;
+      this._updateLabel();
+    });
+  },
   updated() { this._updateLabel(); },
   _setup() {
     this._updateLabel();
-    this._interval = setInterval(() => this._updateLabel(), 500);
     this.el.addEventListener("click", () => {
-      if (window._byobPlayerWindow && !window._byobPlayerWindow.closed) {
-        window._byobPlayerWindow.focus();
+      if (this._userHasPopup()) {
+        // BG-mediated focus — content.js relays the postMessage to BG via
+        // chrome.runtime.sendMessage; BG calls chrome.tabs.update +
+        // chrome.windows.update on the user's hooked tab. Works across
+        // COOP boundaries where window-side focus() doesn't.
+        window.postMessage({ type: LV_EVT.PW_FOCUS_EXTERNAL }, "*");
       } else {
         // Use window.location.origin instead of the server-rendered
         // Endpoint.url() so LAN-access sessions don't end up with
@@ -76,12 +91,16 @@ const ExtOpenBtn = {
       setTimeout(() => this._updateLabel(), 100);
     });
   },
-  _updateLabel() {
-    const isOpen = window._byobPlayerWindow && !window._byobPlayerWindow.closed;
-    this.el.textContent = isOpen ? "Focus Player Window" : "Open Player Window";
+  _userHasPopup() {
+    const username = this.el.dataset.username;
+    const rc = this._lastReadyCount;
+    if (!username || !rc) return false;
+    const needsOpen = Array.isArray(rc.needs_open) ? rc.needs_open : [];
+    return !needsOpen.includes(username);
   },
-  destroyed() {
-    if (this._interval) clearInterval(this._interval);
+  _updateLabel() {
+    const isOpen = this._userHasPopup();
+    this.el.textContent = isOpen ? "Focus Player Window" : "Open Player Window";
   },
 }
 

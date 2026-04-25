@@ -69,6 +69,7 @@
     // assets/js/hooks/video_player.js, assets/js/sponsor_block.js.
     BYOB_CLEAR_EXTERNAL: "byob:clear-external",
     BYOB_OPEN_EXTERNAL: "byob:open-external",
+    BYOB_FOCUS_EXTERNAL: "byob:focus-external",
     BYOB_RELAY: "byob:relay",
     BYOB_SPONSOR_SEGMENTS: "byob:sponsor-segments",
   });
@@ -170,8 +171,16 @@
   }
 
 
-  // Signal extension is installed — only on our domain.
-  if (window.location.hostname === "byob.video" || window.location.hostname === "localhost") {
+  // Signal extension is installed. The byob LV root template renders
+  // <html data-byob-app="1"> on every page it owns; checking that marker
+  // means the detection works on any host (LAN access, ngrok tunnel,
+  // dev server on a non-localhost name) without leaking extension presence
+  // to unrelated sites.
+  const _isByobApp =
+    document.documentElement.hasAttribute("data-byob-app") ||
+    window.location.hostname === "byob.video" ||
+    window.location.hostname === "localhost";
+  if (_isByobApp) {
     document.documentElement.setAttribute("data-byob-extension", "true");
   }
 
@@ -304,6 +313,14 @@
       try {
         if (e.data?.type === EVT.BYOB_CLEAR_EXTERNAL) {
           chrome.storage.local.remove(STORAGE_KEY);
+          return;
+        }
+        if (e.data?.type === EVT.BYOB_FOCUS_EXTERNAL) {
+          // YouTube COOP severs window-name reuse + cross-COOP focus(),
+          // so the LV main page can't bring its popup forward by itself.
+          // Hop through chrome.runtime so the BG can use chrome.tabs.update
+          // / chrome.windows.update to switch focus to the popup tab.
+          try { chrome.runtime.sendMessage({ type: EVT.BYOB_FOCUS_EXTERNAL }); } catch (_) {}
           return;
         }
         if (e.data?.type === EVT.BYOB_OPEN_EXTERNAL) {

@@ -68,6 +68,7 @@ const EVT = Object.freeze({
   // Extension-internal broadcasts
   BYOB_VIDEO_HOOKED: "byob:video-hooked",
   BYOB_USER_ACTIVE: "byob:user-active",
+  BYOB_FOCUS_EXTERNAL: "byob:focus-external",
   BYOB_CHANNEL_READY: "byob:channel-ready",
   BYOB_CLOCK_SYNC: "byob:clock-sync",
   BYOB_PRESENCE: "byob:presence",
@@ -550,6 +551,24 @@ chrome.runtime.onMessage.addListener((msg) => {
     // activations that happened in the top frame (and vice-versa), which
     // navigator.userActivation can't do reliably.
     broadcastToContentScripts({ type: EVT.BYOB_USER_ACTIVE, t: msg.t });
+  }
+  if (msg.type === EVT.BYOB_FOCUS_EXTERNAL) {
+    // The LV main page asked us to focus its popup. window.open()'s
+    // named-target reuse is broken across COOP (YouTube), and the parent
+    // can't focus() the WindowProxy across it either — but chrome.tabs
+    // can. Activate the first hooked tab and bring its window to the
+    // foreground.
+    for (const tabId of hookedTabs) {
+      chrome.tabs.update(tabId, { active: true })
+        .then(() => chrome.tabs.get(tabId))
+        .then((tab) => {
+          if (tab && tab.windowId !== undefined) {
+            return chrome.windows.update(tab.windowId, { focused: true });
+          }
+        })
+        .catch(() => {});
+      break;
+    }
   }
 });
 

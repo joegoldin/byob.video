@@ -5,7 +5,6 @@
  * Error codes: 100 = not found, 101/150 = embedding restricted.
  */
 import { LV_EVT } from "../sync/event_names";
-import { showToast } from "../ui/toasts";
 
 const YT_ERR_NOT_FOUND = 100;
 const YT_ERR_EMBED_DISABLED_1 = 101;
@@ -51,15 +50,14 @@ export function handleYTError(ctx, event) {
   if (ytBtn && hasExtension) {
     ytBtn.addEventListener("click", (e) => {
       e.preventDefault();
-      // YouTube's COOP=same-origin breaks named-target window reuse — every
-      // window.open(url, "byob_player") creates a NEW popup instead of
-      // reusing an existing one, so we'd silently duplicate. Use the
-      // server's ready_count (which reflects which usernames have a
-      // hooked-video tab open) as the open/closed signal: if our username
-      // already has a tab, the popup exists, just bail. The user can focus
-      // it manually via their taskbar.
+      // YouTube's COOP breaks both .closed and named-target reuse, so JS
+      // can't focus the existing popup or avoid duplicating with a plain
+      // window.open. Hop through the extension instead: the BG has the
+      // chrome.tabs API and can focus the popup tab regardless of COOP.
+      // Server-side ready_count tells us whether the user has a popup at
+      // all — port-disconnect on close fans out via the room channel.
       if (_userHasOwnPopup(ctx)) {
-        showToast("Player window already open — check your taskbar");
+        window.postMessage({ type: LV_EVT.PW_FOCUS_EXTERNAL }, "*");
         return;
       }
       _openInExternalWindow(ctx, url);
