@@ -52,6 +52,18 @@ export function handleYTError(ctx, event) {
       e.preventDefault();
       _openInExternalWindow(ctx, url);
     });
+
+    // Match ExtOpenBtn's behavior: when a popup is already open, the button
+    // focuses it instead of opening a duplicate. Poll so the label stays in
+    // sync with window state (user might close the popup manually).
+    if (ctx._extBtnPoll) clearInterval(ctx._extBtnPoll);
+    const ytLabel = ytBtn.querySelector("[data-byob-yt-label]");
+    const refreshLabel = () => {
+      const isOpen = window._byobPlayerWindow && !window._byobPlayerWindow.closed;
+      if (ytLabel) ytLabel.textContent = isOpen ? "Focus player window" : "Open in player window";
+    };
+    refreshLabel();
+    ctx._extBtnPoll = setInterval(refreshLabel, 500);
   }
 
   // Poll for extension install — update UI when detected
@@ -107,7 +119,7 @@ function _buildFallbackUI(title, thumb, url, hasExtension) {
     ytBtn.target = "byob_player";
     ytBtn.dataset.byobYtFallback = "1";
     ytBtn.className = "btn btn-sm btn-primary gap-1";
-    ytBtn.innerHTML = `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg> Open in player window`;
+    ytBtn.innerHTML = `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg> <span data-byob-yt-label>Open in player window</span>`;
     btnContainer.appendChild(ytBtn);
 
     const hint = document.createElement("p");

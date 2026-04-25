@@ -145,6 +145,8 @@ const VideoPlayer = {
     if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
     if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
     if (this._driftReportInterval) clearInterval(this._driftReportInterval);
+    if (this._extPollInterval) clearInterval(this._extPollInterval);
+    if (this._extBtnPoll) clearInterval(this._extBtnPoll);
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
     if (this._unloadHandler) window.removeEventListener("beforeunload", this._unloadHandler);
     if (this._resizeHandler) window.removeEventListener("resize", this._resizeHandler);
@@ -251,6 +253,7 @@ const VideoPlayer = {
       (sourceType === "youtube" && sourceId ? `https://img.youtube.com/vi/${sourceId}/hqdefault.jpg` : null);
     this._embedBlocked = false;
     if (this._extPollInterval) { clearInterval(this._extPollInterval); this._extPollInterval = null; }
+    if (this._extBtnPoll) { clearInterval(this._extBtnPoll); this._extBtnPoll = null; }
     // Structural offset is a property of the current player pipeline. A new
     // source can mean different latency; let it re-learn from scratch.
     this.reconcile.resetOffset();

@@ -3,6 +3,32 @@
 
 ---
 
+# v6.5.14
+
+### Close extension tabs on every transition off third-party + dynamic
+### "Open / Focus player window" label on the embed-blocked fallback
+
+Two related fixes.
+
+**Tab close** — `background.js`'s `CHAN_VIDEO_CHANGE` handler used
+to call `closeExtensionTabs()` only inside an `autoplayCountdownActive`
+branch. Manual queue→Play Now of a YouTube video, or "Set room to
+this page" pointing at a YouTube URL, both fell through to a
+metadata-only broadcast and left the third-party popup open. Now
+the rule is simpler: if the new video is **not** `extension_required`,
+close every connected extension tab — regardless of how the
+transition was triggered.
+
+**Dynamic label** — the "Open in player window" button on the
+embed-blocked YouTube fallback (age-restricted etc.) had a static
+label, so a user could click it twice and end up with two popups.
+It now polls `window._byobPlayerWindow` every 500 ms and flips to
+**"Focus player window"** when one is already open — same UX as
+the existing `ExtOpenBtn`. The poll is cleaned up on hook destroy
+and on every `_loadVideo`.
+
+---
+
 # v6.5.13
 
 ### YouTube URL matching ignores playlist / timecode / autoplay context
