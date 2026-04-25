@@ -282,8 +282,8 @@
         try { await chrome.storage.local.remove(PENDING_NAV_TOAST_KEY); } catch (_) {}
         if (data.at && Date.now() - data.at < PENDING_NAV_TOAST_TTL_MS) {
           const text = data.title
-            ? `Followed room to: ${data.title}`
-            : "Followed room to new video";
+            ? `Synced to room — now playing: ${data.title}`
+            : "Synced to room — now playing this page";
           // showPresenceToast self-dismisses after ~2.5s with the same
           // purple styling as the "X joined / X closed window" toasts.
           if (document.body) {

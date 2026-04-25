@@ -145,6 +145,10 @@ defmodule ByobWeb.RoomLive.PubSub do
     {:noreply, push_event(socket, Events.ext_media_info(), info)}
   end
 
+  def handle_ready_count(data, socket) do
+    {:noreply, push_event(socket, Events.ready_count(), data)}
+  end
+
   def handle_extension_player_state(state, socket) do
     current = socket.assigns.ext_player
 

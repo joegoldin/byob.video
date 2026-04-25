@@ -3,6 +3,37 @@
 
 ---
 
+# v6.5.10
+
+### Clearer follow-toast copy + ready-count in the main page's external-player status
+
+The auto-navigate toast now reads
+**"Synced to room — now playing this page"** (or "Synced to room —
+now playing: <title>" when the title is already known). Previous
+"Followed room to new video" was ambiguous about whether the room
+moved to the user or the user moved to the room.
+
+The main page's `_onExtPlayerState` now appends a readiness summary
+to the extension placeholder's status line, mirroring the
+third-party sync bar's tooltip:
+
+```
+Playing in external window — 2/3 ready · 1 needs to open · Bob needs to hit play
+```
+
+Plumbing: `RoomServer` already broadcasts `{:ready_count, ...}`. The
+LV now subscribes via `handle_info({:ready_count, …})` →
+`PubSub.handle_ready_count/2` → `push_event(socket, "ready:count", …)`.
+The hook stashes the payload (`_lastReadyCount`) and re-renders
+through a new `_renderExtStatus/0` whenever either an
+`ext:player-state` or `ready:count` event lands.
+
+The suffix is empty when nothing useful can be added (no extension
+users yet, or the count hasn't arrived). When everyone's synced it
+collapses to "— N/N ready".
+
+---
+
 # v6.5.9
 
 ### Toasts stack instead of overlapping + Undo button on SponsorBlock skips

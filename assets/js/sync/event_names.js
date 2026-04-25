@@ -25,6 +25,7 @@ export const LV_EVT = Object.freeze({
   QUEUE_ENDED: "queue:ended",
   MEDIA_METADATA: "media:metadata",
   TOAST: "toast",
+  READY_COUNT: "ready:count",
 
   // Browser → server (pushEvent in hook, handle_event in LV)
   EV_VIDEO_PLAY: "video:play",

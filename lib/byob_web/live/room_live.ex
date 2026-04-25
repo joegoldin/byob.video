@@ -343,6 +343,8 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:queue_ended, data}, socket), do: PubSub.handle_queue_ended(data, socket)
   def handle_info({:video_changed, data}, socket), do: PubSub.handle_video_changed(data, socket)
 
+  def handle_info({:ready_count, data}, socket), do: PubSub.handle_ready_count(data, socket)
+
   def handle_info({:url_preview_result, result}, socket),
     do: UrlPreview.handle_preview_result(result, socket)
 

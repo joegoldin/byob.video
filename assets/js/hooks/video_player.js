@@ -74,6 +74,7 @@ const VideoPlayer = {
     this.handleEvent(LV_EVT.SPONSOR_SEGMENTS, (data) => this._onSponsorSegments(data));
     this.handleEvent(LV_EVT.EXT_PLAYER_STATE, (data) => this._onExtPlayerState(data));
     this.handleEvent(LV_EVT.EXT_MEDIA_INFO, (data) => this._onExtMediaInfo(data));
+    this.handleEvent(LV_EVT.READY_COUNT, (data) => this._onReadyCount(data));
     this.handleEvent(LV_EVT.SB_SETTINGS, (data) => {
       this.sbSettings = data;
       this._applySponsorSettingsFull();
@@ -755,7 +756,21 @@ const VideoPlayer = {
     );
   },
 
+  _onReadyCount(data) {
+    this._lastReadyCount = data;
+    if (this._lastExtPlayerState) this._renderExtStatus();
+  },
+
   _onExtPlayerState(data) {
+    this._lastExtPlayerState = data;
+    this._renderExtStatus();
+  },
+
+  // Compose "<base> — <readiness>" for the extension placeholder. Mirrors
+  // the per-tab tooltip text the third-party sync bar shows so users on
+  // the main page can see at a glance whether their friends still need
+  // to open a player window or hit play.
+  _renderExtStatus() {
     const status = document.getElementById("ext-status");
     const container = document.getElementById("ext-progress-container");
     const fill = document.getElementById("ext-progress-fill");
@@ -764,17 +779,47 @@ const VideoPlayer = {
     if (!status) return;
 
     const fmt = (s) => Math.floor(s / 60) + ":" + Math.floor(s % 60).toString().padStart(2, "0");
+    const data = this._lastExtPlayerState || {};
 
     if (data.hooked) {
-      status.textContent = data.playing ? "Playing in external window" : "Paused in external window";
+      const base = data.playing ? "Playing in external window" : "Paused in external window";
+      status.textContent = base + this._readinessSuffix();
       if (container) container.style.display = "block";
       if (fill && data.duration > 0) fill.style.width = ((data.position / data.duration) * 100) + "%";
       if (timeCur) timeCur.textContent = fmt(data.position);
       if (timeDur) timeDur.textContent = fmt(data.duration);
     } else {
-      status.textContent = "Waiting for external player...";
+      status.textContent = "Waiting for external player..." + this._readinessSuffix();
       if (container) container.style.display = "none";
     }
+  },
+
+  // " — N/M ready" or " — N/M ready · 1 needs to open · Bob needs to hit play"
+  // Mirrors the extension sync bar's tooltip semantics; empty string when
+  // there's nothing useful to add (no extension users connected, or the
+  // count hasn't arrived yet).
+  _readinessSuffix() {
+    const r = this._lastReadyCount;
+    if (!r || !r.total || r.total <= 0) return "";
+
+    const allReady = r.ready >= r.total;
+    if (allReady) return ` — ${r.ready}/${r.total} ready`;
+
+    const parts = [`${r.ready}/${r.total} ready`];
+    const openList = Array.isArray(r.needs_open) ? r.needs_open : [];
+    const playList = Array.isArray(r.needs_play) ? r.needs_play : [];
+    const needTab = openList.length || (r.total - r.has_tab);
+    const needClick = playList.length || (r.has_tab - r.ready);
+
+    if (needTab > 0) {
+      const names = openList.length ? ` (${openList.join(", ")})` : "";
+      parts.push(`${needTab} need${needTab === 1 ? "s" : ""} to open${names}`);
+    }
+    if (needClick > 0) {
+      const names = playList.length ? ` (${playList.join(", ")})` : "";
+      parts.push(`${needClick} need${needClick === 1 ? "s" : ""} to hit play${names}`);
+    }
+    return ` — ${parts.join(" · ")}`;
   },
 
   _onExtMediaInfo(data) {
