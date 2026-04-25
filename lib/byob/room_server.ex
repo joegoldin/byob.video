@@ -1934,6 +1934,21 @@ defmodule Byob.RoomServer do
 
     state = add_item_to_queue(state, item, :queue)
 
+    # Curated-playlist candidates land here with duration_s = nil because
+    # the YouTube playlistItems endpoint doesn't return durations. Kick
+    # off the same metadata fetch the manual add_to_queue path uses so
+    # the queue thumbnail's "M:SS" overlay (and any missing title/thumb)
+    # gets backfilled via :oembed_result.
+    item_id = item.id
+    pid = self()
+
+    Task.start(fn ->
+      case fetch_youtube_meta(item.source_id, url) do
+        {:ok, meta} -> send(pid, {:oembed_result, item_id, meta})
+        _ -> :ok
+      end
+    end)
+
     title = candidate.title || url
 
     state =

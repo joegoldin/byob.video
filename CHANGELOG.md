@@ -3,6 +3,26 @@
 
 ---
 
+# v6.5.32
+
+### Roulette / vote winners get duration overlay on the queue thumbnail
+
+Manual `add_to_queue` for a YouTube URL fired
+`Byob.YouTube.Videos.fetch/1` on a `Task.start` and updated the queue
+item via `:oembed_result` so title / thumbnail / duration land within
+a tick. Pool-driven enqueues (`append_pool_winner/2` for roulette and
+voting winners) skipped that fetch — and curated-playlist candidates
+have `duration_s: nil` because the YouTube `playlistItems` endpoint
+doesn't return durations. The result: roulette winners from curated
+playlists landed in the queue without the `M:SS` overlay on their
+thumbnail.
+
+`append_pool_winner/2` now fires the same metadata fetch, so the
+overlay (and any missing title/thumb) shows up shortly after the
+winner is enqueued.
+
+---
+
 # v6.5.31
 
 ### Nickname suffix shows up in Stats for nerds → Connected clients
