@@ -3,6 +3,20 @@
 
 ---
 
+# v6.5.31
+
+### Nickname suffix shows up in Stats for nerds → Connected clients
+
+The Nicknames hook scoped its scan / MutationObserver / click delegation to
+its own element (`#byob-nicknames-root`), but the settings modal — where
+the Stats for nerds panel lives — is rendered as a sibling of that
+element, not a descendant. So usernames inside the modal never got the
+` (nickname)` suffix. Hook now scans / observes / delegates from
+`document.body`, picking up the modal, autoplay-help dialog, and any
+future top-level overlay.
+
+---
+
 # v6.5.30
 
 ### Self-heal stuck "Focus Player Window" state

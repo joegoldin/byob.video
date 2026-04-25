@@ -378,23 +378,28 @@ const liveSocket = new LiveSocket("/live", Socket, {
         this._read();
         this._scheduled = false;
         this._refreshing = false;
+        // Scan document.body, not just this.el — settings modal /
+        // autoplay-help modal / toasts are rendered as siblings of the
+        // hook's element, so a hook-scoped scan would miss usernames
+        // inside them (e.g. Stats for nerds → Connected clients rows).
+        this._scope = document.body;
         this._refresh();
         this._onClick = (e) => {
           const btn = e.target.closest("[data-byob-nickname-btn]");
-          if (!btn || !this.el.contains(btn)) return;
+          if (!btn) return;
           this._editFor(btn.dataset.byobNicknameBtn);
         };
-        this.el.addEventListener("click", this._onClick);
+        document.addEventListener("click", this._onClick);
         // Observer watches for LV-driven DOM changes; coalesce + skip our
         // own mutations (the suffix add/remove inside _refresh would
         // otherwise re-trigger the callback synchronously and lock the
         // page in a tight loop).
         this._observer = new MutationObserver(() => this._scheduleRefresh());
-        this._observer.observe(this.el, { childList: true, subtree: true });
+        this._observer.observe(this._scope, { childList: true, subtree: true });
       },
       updated() { this._scheduleRefresh(); },
       destroyed() {
-        if (this._onClick) this.el.removeEventListener("click", this._onClick);
+        if (this._onClick) document.removeEventListener("click", this._onClick);
         if (this._observer) this._observer.disconnect();
       },
       _read() {
@@ -423,7 +428,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
         this._refreshing = true;
         if (this._observer) this._observer.disconnect();
         try {
-          this.el.querySelectorAll("[data-byob-username]").forEach((el) => {
+          (this._scope || document.body).querySelectorAll("[data-byob-username]").forEach((el) => {
             const username = el.dataset.byobUsername;
             const nickname = (username && this._map[username]) || null;
             let suffix = el.nextElementSibling;
@@ -442,7 +447,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
           });
         } finally {
           if (this._observer) {
-            this._observer.observe(this.el, { childList: true, subtree: true });
+            this._observer.observe(this._scope || document.body, { childList: true, subtree: true });
           }
           this._refreshing = false;
         }
