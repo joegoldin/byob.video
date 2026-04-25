@@ -3,6 +3,50 @@
 
 ---
 
+# v6.5.18
+
+### Roulette landing fix + tab-close fallback + YT replay cancels autoplay
+
+**YT replay no longer gets skipped past.** When a YouTube video ended,
+byob fired its 5 s autoplay countdown — but YouTube also rendered its
+end-card replay button right where the user was looking. Clicking it
+restarted the video locally; the countdown timer kept running and
+yanked everyone to the next queue item 5 s later. Now the server's
+`:play` handler calls `maybe_cancel_pending_advance/1` so a fresh
+play during the countdown kills the advance timer (broadcasting
+`autoplay_countdown_cancelled` to clear the overlay too). The hook
+also resets `_endedFired` on the playing-state transition, so a
+subsequent end-of-replay-run still pushes `video:ended` correctly.
+
+### Roulette ball lands on the right slice + tab-close fallback signal
+
+**Roulette off-by-one.** `RouletteWheel._tickLanding` settled the ball
+at `theta0 + v0/k` after the running phase finished, but
+`_simulateSlice` (and `Round.simulate_landing_slice/2` on the server)
+both compute the winning slice using `(v0/k)(1 - e^-4)`. The
+`(1 - e^-4)` factor is ~0.9817, so the ball over-rotates by ~1.83%
+of `v0/k` before settling — enough to land one slice past the
+server-determined winner near a slice boundary. The settle now uses
+the same truncated rotation, so the visual landing matches the
+server's slice exactly.
+
+**Popup-close detection fallback.** Some browsers / SW-suspension
+states miss the `port.onDisconnect` that fires when a popup tab
+closes — when that happens, BG never sends `video:tab_closed`, the
+server's `open_tabs` keeps the stale entry, the ready_count
+broadcast still claims the user has a popup, and the LV's
+"Focus / Open" buttons stay stuck on "Focus" forever.
+
+`background.js` now also listens for `chrome.tabs.onRemoved`. It
+flushes any stale port entries for that tab, removes from
+`hookedTabs`, and pushes `video:tab_closed` + `video:unready` to
+the channel. The browser's tab-removed event is independent of SW
+lifecycle, so this catches the cases where the port disconnect
+silently went missing. Both `manifest.json` and
+`manifest.firefox.json` gain the `tabs` permission.
+
+---
+
 # v6.5.17
 
 ### "Focus player window" actually focuses + works across YT/CR transitions

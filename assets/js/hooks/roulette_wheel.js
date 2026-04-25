@@ -235,9 +235,14 @@ const RouletteWheel = {
       this._applyBall(theta, radius);
       this._raf = requestAnimationFrame(this._loop);
     } else {
-      // Landing finished — ball has effectively stopped. Begin settle.
-      // The final resting angle (as t→∞) is theta0 + v0/k.
-      const finalAngle = L.theta0 + L.v0 / L.k;
+      // Landing finished — ball has effectively stopped. Use the SAME
+      // truncation factor (1 - e^-4) the slice simulation uses, instead
+      // of the asymptote v₀/k. Without this, the ball rests at a slightly
+      // farther angle than _simulateSlice predicted (~1.83% of v₀/k of
+      // additional rotation), which can push it one slice past the
+      // server-determined winner.
+      const totalRotation = (L.v0 / L.k) * (1 - Math.exp(-4.0));
+      const finalAngle = L.theta0 + totalRotation;
       this._settle = { startTs: performance.now(), baseAngle: finalAngle };
       this._phase = "settling";
       this._raf = requestAnimationFrame(this._loop);

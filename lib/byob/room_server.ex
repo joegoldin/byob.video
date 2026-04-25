@@ -586,6 +586,12 @@ defmodule Byob.RoomServer do
         now = System.monotonic_time(:millisecond)
         was_paused = state.play_state != :playing
 
+        # If the autoplay-advance timer is running (current video just
+        # ended), a fresh :play means a client replayed the same video
+        # (e.g. YouTube's end-card replay button) — cancel the advance
+        # so we don't yank them to the next queue item 5s later.
+        state = maybe_cancel_pending_advance(state)
+
         # Only accept the client's position when this is a real state
         # transition (paused → playing). A client that's already seeing the
         # video as playing and echoes `video:play` again must NOT be allowed

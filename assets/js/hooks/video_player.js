@@ -495,6 +495,13 @@ const VideoPlayer = {
     if (stateName === "playing") {
       this.expectedPlayState = "playing";
       window.__byobPlaying = true;
+      // YouTube's end-card replay button (visible during the autoplay
+      // countdown) takes us ended → buffering → playing. Resetting
+      // _endedFired now lets a subsequent end-of-video on the replay
+      // run trigger another :ended push. The server-side :play handler
+      // also cancels the autoplay-advance timer so the queue doesn't
+      // skip past us.
+      this._endedFired = false;
       const position = this.player.getCurrentTime();
       this.pushEvent(LV_EVT.EV_VIDEO_PLAY, { position });
       // Update own reconcile so it doesn't drift-correct back to old position

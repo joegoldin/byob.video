@@ -115,6 +115,26 @@ let clockSyncTimer = null;
 // ready-count tooltip / presence toast logic.
 const hookedTabs = new Set();
 
+// chrome.tabs.onRemoved fires reliably from the browser regardless of SW
+// suspension state — port.onDisconnect can be missed if the SW was idle
+// when the tab closed. This is the belt-and-braces signal that flushes
+// hookedTabs and notifies the server, so ready_count flips back to
+// "needs to open" and the LV's ExtOpenBtn / YT-fallback labels update.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  for (let i = ports.length - 1; i >= 0; i--) {
+    if (ports[i].tabId === tabId) ports.splice(i, 1);
+  }
+  if (hookedTabs.has(tabId)) {
+    hookedTabs.delete(tabId);
+    if (channel) {
+      try {
+        channel.push(EVT.CHAN_VIDEO_TAB_CLOSED, { tab_id: String(tabId) });
+        channel.push(EVT.CHAN_VIDEO_UNREADY, { tab_id: String(tabId) });
+      } catch (_) {}
+    }
+  }
+});
+
 // Listen for port connections from content scripts
 chrome.runtime.onConnect.addListener((port) => {
   if (port.name !== EVT.PORT_NAME) return;
