@@ -17,7 +17,6 @@
 
   // ── Constants ─────────────────────────────────────────────────────────────
   const State = Object.freeze({ PLAYING: "playing", PAUSED: "paused" });
-  const STORAGE_KEY = "watchparty_config";
   const PORT_NAME = "watchparty";
   // Relay across the navigation triggered by COMMAND_VIDEO_CHANGE so the
   // post-nav content script can surface a presence-style toast on the new
@@ -63,6 +62,7 @@
     BYOB_BAR_UPDATE: "byob:bar-update",
     BYOB_READY_COUNT: "byob:ready-count",
     BYOB_EMBED_READY: "byob:embed-ready",
+    BYOB_CHECK_MANAGED: "byob:check-managed",
 
     // Page-world CustomEvents (window.postMessage) — contract with
     // assets/js (LiveView). Matching literals live in assets/js/app.js,
@@ -312,7 +312,9 @@
       if (e.origin !== window.location.origin) return;
       try {
         if (e.data?.type === EVT.BYOB_CLEAR_EXTERNAL) {
-          chrome.storage.local.remove(STORAGE_KEY);
+          // Backward-compat no-op: per-tab byob-managed tracking in
+          // the BG (with chrome.tabs.onRemoved cleanup) replaced the
+          // chrome.storage.local handoff this used to clear.
           return;
         }
         if (e.data?.type === EVT.BYOB_FOCUS_EXTERNAL) {
@@ -324,46 +326,44 @@
           return;
         }
         if (e.data?.type === EVT.BYOB_OPEN_EXTERNAL) {
-          chrome.storage.local.set({
-            [STORAGE_KEY]: {
-              room_id: e.data.room_id,
-              server_url: e.data.server_url,
-              target_url: e.data.url,
-              token: e.data.token,
-              username: e.data.username,
-              timestamp: Date.now(),
-            },
-          });
+          // Forward to the BG so it can mark the about-to-be-opened
+          // tab as byob-managed via openerTabId. Replaces the older
+          // chrome.storage.local handoff, which let any tab on a
+          // matching URL claim activation (including tabs opened by
+          // other tools — e.g. a different sync extension's popup).
+          try {
+            chrome.runtime.sendMessage({
+              type: EVT.BYOB_OPEN_EXTERNAL,
+              config: {
+                room_id: e.data.room_id,
+                server_url: e.data.server_url,
+                target_url: e.data.url,
+                token: e.data.token,
+                username: e.data.username,
+              },
+            });
+          } catch (_) {}
         }
       } catch (_) {}
     });
 
     const tryActivate = async (attempt) => {
       if (attempt > 5) return;
+      const host = window.location.hostname;
+      if (host === "byob.video" || host === "localhost") return;
       try {
-        const config = await chrome.storage.local.get(STORAGE_KEY);
-        if (config[STORAGE_KEY]) {
-          const { room_id, server_url, target_url, token, username, timestamp } = config[STORAGE_KEY];
-          const age = Date.now() - (timestamp || 0);
-          if (age < 30 * 60 * 1000) {
-            const host = window.location.hostname;
-            if (host === "byob.video" || host === "localhost") return;
-
-            const isTopFrame = window === window.top;
-            if (!isTopFrame) {
-              activate(room_id, server_url, token, username);
-              return;
-            }
-            if (target_url) {
-              const targetBase = new URL(target_url).origin + new URL(target_url).pathname;
-              const currentBase = window.location.origin + window.location.pathname;
-              if (currentBase.startsWith(targetBase) || targetBase.startsWith(currentBase)) {
-                showJoinToast("Loading byob sync...");
-                activate(room_id, server_url, token, username);
-                return;
-              }
-            }
-          }
+        // Ask the BG: was this tab opened from a byob room? Only tabs
+        // whose openerTabId matches a recent byob:open-external from
+        // the byob.video page are managed. Any tab the user landed on
+        // via other means (another extension's popup, manual nav,
+        // etc.) gets {managed: false} and we stay dormant.
+        const response = await chrome.runtime.sendMessage({ type: EVT.BYOB_CHECK_MANAGED });
+        if (response?.managed && response.config) {
+          const { room_id, server_url, token, username } = response.config;
+          const isTopFrame = window === window.top;
+          if (isTopFrame) showJoinToast("Loading byob sync...");
+          activate(room_id, server_url, token, username);
+          return;
         }
       } catch (_) {}
       setTimeout(() => tryActivate(attempt + 1), ACTIVATE_RETRY_MS);
@@ -1234,25 +1234,11 @@
   }
 
   function setSyncedUrl(url) {
-    const changed = _syncedUrl !== url;
     _syncedUrl = url;
-    // Keep chrome.storage's target_url aligned so a full-page reload still
-    // activates sync (tryActivate() uses target_url as the pathname gate).
-    if (changed && url) {
-      try {
-        chrome.storage.local.get(STORAGE_KEY).then((config) => {
-          const cfg = config[STORAGE_KEY];
-          if (cfg) {
-            chrome.storage.local.set({
-              [STORAGE_KEY]: { ...cfg, target_url: url, timestamp: Date.now() },
-            });
-          }
-        });
-      } catch (_) {}
-    }
-    // Re-evaluate on every update so the toast dismisses itself if the
-    // room moved to match our current page (e.g. user clicked "Set room
-    // to this page" and the server broadcast came back).
+    // BG-managed tab IDs are now the activation gate, so target_url
+    // no longer needs to be persisted to chrome.storage for reload
+    // re-activation. _syncedUrl is still used locally to drive the
+    // checkUrlMismatch toast.
     checkUrlMismatch();
     ensureUrlPollStarted();
   }

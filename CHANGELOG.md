@@ -3,6 +3,38 @@
 
 ---
 
+# v6.5.41
+
+### Only hook tabs opened from a byob room
+
+The content script gated activation on a `chrome.storage.local`
+config that was URL-keyed: any tab anywhere on the matching URL
+within a 30 minute window claimed it. So a stale entry from an
+earlier byob session would activate sync on a Crunchyroll tab
+opened by another tool (e.g. another sync extension's external
+player popup) — even when the user wasn't currently in any byob
+room.
+
+Replaced the URL-based handoff with per-tab BG tracking:
+
+- byob.video page postMessages `byob:open-external`. Content
+  script forwards to BG via `chrome.runtime.sendMessage`,
+  which records the *opener* tabId.
+- The new tab's content script asks BG `byob:check-managed`.
+  BG resolves via `sender.tab.openerTabId`: only tabs whose
+  opener was a byob.video tab that recently requested an open
+  get a `{managed: true, config}` response.
+- `chrome.tabs.onRemoved` cleans up the marking when the tab
+  closes. Long-lived state lives in `chrome.storage.session`
+  so SW restarts don't lose it mid-session.
+
+Stale entries can no longer leak across tabs — the opener
+relationship is the gate, not URL plus timestamp.
+
+Extension republish for both stores; no server changes.
+
+---
+
 # v6.5.40
 
 ### Drop `tabs` permission (Chrome Web Store rejection)

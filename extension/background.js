@@ -69,12 +69,67 @@ const EVT = Object.freeze({
   BYOB_VIDEO_HOOKED: "byob:video-hooked",
   BYOB_USER_ACTIVE: "byob:user-active",
   BYOB_FOCUS_EXTERNAL: "byob:focus-external",
+  BYOB_OPEN_EXTERNAL: "byob:open-external",
+  BYOB_CHECK_MANAGED: "byob:check-managed",
   BYOB_CHANNEL_READY: "byob:channel-ready",
   BYOB_CLOCK_SYNC: "byob:clock-sync",
   BYOB_PRESENCE: "byob:presence",
   BYOB_BAR_UPDATE: "byob:bar-update",
   BYOB_READY_COUNT: "byob:ready-count",
 });
+
+// Tabs the user opened *from a byob room* are tracked so the content
+// script only activates sync there. Without this, any stale chrome
+// .storage.local entry let us hook into tabs opened by other tools
+// (e.g. another sync extension's external-player popup), which is
+// the exact issue Chrome reviewers + users have flagged.
+//
+// Two-stage tracking handles the unavoidable race between
+//   1. byob.video page postMessage("byob:open-external") →
+//      content script forwards to BG
+//   2. window.open() → new tab created → its content script runs
+//
+// Either ordering is fine: we record the *opener* tabId on (1), and
+// when the new tab's content script later asks BYOB_CHECK_MANAGED
+// we resolve via sender.tab.openerTabId. byobManagedTabs is the
+// authoritative set; pendingByobOpens is the inbox.
+const pendingByobOpens = new Map(); // openerTabId -> {config, expiresAt}
+const PENDING_OPEN_TTL_MS = 30000;
+const MANAGED_TABS_STORAGE_KEY = "byob_managed_tabs";
+let byobManagedTabs = new Map(); // tabId -> config (mirror of session storage)
+let managedTabsLoaded = null;
+
+async function loadManagedTabs() {
+  if (managedTabsLoaded) return managedTabsLoaded;
+  managedTabsLoaded = (async () => {
+    try {
+      const result = await chrome.storage.session.get(MANAGED_TABS_STORAGE_KEY);
+      const obj = result[MANAGED_TABS_STORAGE_KEY] || {};
+      byobManagedTabs = new Map(Object.entries(obj).map(([k, v]) => [Number(k), v]));
+    } catch (_) {
+      byobManagedTabs = new Map();
+    }
+  })();
+  return managedTabsLoaded;
+}
+
+async function persistManagedTabs() {
+  const obj = Object.fromEntries(byobManagedTabs);
+  try {
+    await chrome.storage.session.set({ [MANAGED_TABS_STORAGE_KEY]: obj });
+  } catch (_) {}
+}
+
+function expirePendingOpens() {
+  const now = Date.now();
+  for (const [k, v] of pendingByobOpens) {
+    if (v.expiresAt < now) pendingByobOpens.delete(k);
+  }
+}
+
+// Eager load so chrome.tabs.onRemoved handlers can read fresh state
+// without an await race.
+loadManagedTabs();
 
 // Timings (ms)
 const CLOCK_SYNC_BURST_SAMPLES = 5;
@@ -132,6 +187,17 @@ chrome.tabs.onRemoved.addListener((tabId) => {
         channel.push(EVT.CHAN_VIDEO_UNREADY, { tab_id: String(tabId) });
       } catch (_) {}
     }
+  }
+  // The byob room that opened this tab is gone OR the popup itself
+  // closed — either way the marking is no longer relevant. Drop both
+  // managed-tab state and any in-flight pending open keyed by this
+  // tab as the opener.
+  if (byobManagedTabs.has(tabId)) {
+    byobManagedTabs.delete(tabId);
+    persistManagedTabs();
+  }
+  if (pendingByobOpens.has(tabId)) {
+    pendingByobOpens.delete(tabId);
   }
 });
 
@@ -558,7 +624,48 @@ function connectToRoom(roomId, serverUrl, token, username) {
 }
 
 // Listen for messages from content scripts (cross-origin safe)
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === EVT.BYOB_OPEN_EXTERNAL) {
+    // byob.video page asked to open a popup. Record the *opener*
+    // tabId so the new tab's content script can claim it via
+    // BYOB_CHECK_MANAGED. The window.open() that follows on the
+    // page side may or may not have already created the new tab by
+    // the time this message lands — we don't care, because
+    // BYOB_CHECK_MANAGED resolves by openerTabId either way.
+    const openerTabId = sender.tab?.id;
+    if (openerTabId != null && msg.config) {
+      expirePendingOpens();
+      pendingByobOpens.set(openerTabId, {
+        config: msg.config,
+        expiresAt: Date.now() + PENDING_OPEN_TTL_MS,
+      });
+    }
+    return false;
+  }
+  if (msg.type === EVT.BYOB_CHECK_MANAGED) {
+    const tabId = sender.tab?.id;
+    const openerTabId = sender.tab?.openerTabId;
+    if (tabId == null) {
+      sendResponse({ managed: false });
+      return false;
+    }
+    (async () => {
+      await loadManagedTabs();
+      let cfg = byobManagedTabs.get(tabId);
+      if (!cfg && openerTabId != null) {
+        expirePendingOpens();
+        const pending = pendingByobOpens.get(openerTabId);
+        if (pending) {
+          cfg = pending.config;
+          pendingByobOpens.delete(openerTabId);
+          byobManagedTabs.set(tabId, cfg);
+          persistManagedTabs();
+        }
+      }
+      sendResponse(cfg ? { managed: true, config: cfg } : { managed: false });
+    })();
+    return true; // async response
+  }
   if (msg.type === EVT.BYOB_VIDEO_HOOKED) {
     broadcastToContentScripts({ type: EVT.BYOB_VIDEO_HOOKED });
   }
