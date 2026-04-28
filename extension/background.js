@@ -19,6 +19,7 @@ const EVT = Object.freeze({
   VIDEO_ENDED: "video:ended",
   VIDEO_READY: "video:ready",
   VIDEO_DRIFT: "video:drift",
+  VIDEO_LIVE_STATUS: "video:live_status",
   VIDEO_REQUEST_SYNC: "video:request-sync",
   VIDEO_UPDATE_URL: "video:update_url",
 
@@ -30,6 +31,7 @@ const EVT = Object.freeze({
   COMMAND_SYNCED: "command:synced",
   COMMAND_QUEUE_ENDED: "command:queue-ended",
   COMMAND_VIDEO_CHANGE: "command:video-change",
+  COMMAND_LIVE_STATUS: "command:live-status",
   SYNC_CORRECTION: "sync:correction",
   AUTOPLAY_COUNTDOWN: "autoplay:countdown",
   AUTOPLAY_CANCELLED: "autoplay:cancelled",
@@ -44,6 +46,7 @@ const EVT = Object.freeze({
   CHAN_VIDEO_READY: "video:ready",
   CHAN_VIDEO_UNREADY: "video:unready",
   CHAN_VIDEO_DRIFT: "video:drift",
+  CHAN_VIDEO_LIVE_STATUS: "video:live_status",
   CHAN_VIDEO_TAB_OPENED: "video:tab_opened",
   CHAN_VIDEO_TAB_CLOSED: "video:tab_closed",
   CHAN_VIDEO_ALL_CLOSED: "video:all_closed",
@@ -64,6 +67,7 @@ const EVT = Object.freeze({
   CHAN_VIDEO_CHANGE: "video:change",
   CHAN_QUEUE_ENDED: "queue:ended",
   CHAN_QUEUE_UPDATED: "queue:updated",
+  CHAN_LIVE_STATUS: "live:status",
 
   // Extension-internal broadcasts
   BYOB_VIDEO_HOOKED: "byob:video-hooked",
@@ -155,6 +159,7 @@ let autoplayCountdownActive = false;
 let currentSyncedUrl = null;
 let currentSourceType = null;
 let currentQueueSize = 0;
+let currentIsLive = false;
 
 // NTP-style clock sync state.
 // serverMonotonicMs ≈ Date.now() + clockOffset
@@ -279,6 +284,7 @@ function handleContentMessage(msg, port, tabId) {
           if (resp.current_url) currentSyncedUrl = resp.current_url;
           if (resp.current_source_type) currentSourceType = resp.current_source_type;
           if (resp.queue_size != null) currentQueueSize = resp.queue_size;
+          if (resp.is_live != null) currentIsLive = !!resp.is_live;
           port.postMessage({
             type: EVT.COMMAND_INITIAL_STATE,
             play_state: resp.play_state,
@@ -286,6 +292,7 @@ function handleContentMessage(msg, port, tabId) {
             server_time: resp.server_time,
             current_url: resp.current_url,
             queue_size: resp.queue_size,
+            is_live: !!resp.is_live,
           });
         });
       }
@@ -299,6 +306,7 @@ function handleContentMessage(msg, port, tabId) {
           if (resp.current_url) currentSyncedUrl = resp.current_url;
           if (resp.current_source_type) currentSourceType = resp.current_source_type;
           if (resp.queue_size != null) currentQueueSize = resp.queue_size;
+          if (resp.is_live != null) currentIsLive = !!resp.is_live;
           // Broadcast command:synced directly — the content script will
           // seek + play/pause itself based on the play_state/current_time.
           // (Stage-2 simplification: no preceding CMD:play/pause dance.)
@@ -309,6 +317,7 @@ function handleContentMessage(msg, port, tabId) {
             server_time: resp.server_time,
             current_url: resp.current_url,
             queue_size: resp.queue_size,
+            is_live: !!resp.is_live,
           };
           if (tabId != null) broadcastToTab(tabId, synced);
           else broadcastToContentScripts(synced);
@@ -344,6 +353,10 @@ function handleContentMessage(msg, port, tabId) {
 
     case EVT.VIDEO_DRIFT:
       if (channel) channel.push(EVT.CHAN_VIDEO_DRIFT, { drift_ms: msg.drift, tab_id: String(tabId) });
+      break;
+
+    case EVT.VIDEO_LIVE_STATUS:
+      if (channel) channel.push(EVT.CHAN_VIDEO_LIVE_STATUS, { is_live: !!msg.is_live });
       break;
 
     case EVT.VIDEO_UPDATE_URL:
@@ -513,6 +526,14 @@ function connectToRoom(roomId, serverUrl, token, username) {
     });
   });
 
+  channel.on(EVT.CHAN_LIVE_STATUS, (data) => {
+    currentIsLive = !!data?.is_live;
+    broadcastToContentScripts({
+      type: EVT.COMMAND_LIVE_STATUS,
+      is_live: currentIsLive,
+    });
+  });
+
   channel.on(EVT.CHAN_VIDEO_CHANGE, (data) => {
     // Cache the canonical URL so new tabs joining mid-playback know what
     // to compare against. `data.media_item` is the serialized MediaItem.
@@ -520,6 +541,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
     if (mi && mi.url) {
       currentSyncedUrl = mi.url;
       currentSourceType = mi.source_type;
+      currentIsLive = !!mi.is_live;
     }
 
     autoplayCountdownActive = false;
@@ -542,6 +564,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
         source_type: mi.source_type,
         source_id: mi.source_id,
         title: mi.title,
+        is_live: !!mi.is_live,
         navigate: true,
       });
     } else {

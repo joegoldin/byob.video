@@ -38,6 +38,7 @@
     VIDEO_SEEK: "video:seek",
     VIDEO_ENDED: "video:ended",
     VIDEO_READY: "video:ready",
+    VIDEO_LIVE_STATUS: "video:live_status",
     VIDEO_REQUEST_SYNC: "video:request-sync",
     VIDEO_UPDATE_URL: "video:update_url",
 
@@ -49,6 +50,7 @@
     COMMAND_SYNCED: "command:synced",
     COMMAND_QUEUE_ENDED: "command:queue-ended",
     COMMAND_VIDEO_CHANGE: "command:video-change",
+    COMMAND_LIVE_STATUS: "command:live-status",
     SYNC_CORRECTION: "sync:correction",
     AUTOPLAY_COUNTDOWN: "autoplay:countdown",
     AUTOPLAY_CANCELLED: "autoplay:cancelled",
@@ -87,6 +89,7 @@
   let hookedVideo = null;
   let synced = false;
   let needsGesture = true;
+  let isLive = false; // current item live status (URL hint + runtime detection)
   let timeReportInterval = null;
   let reconcileInterval = null;
   let commandGuard = null;         // suppress outgoing events after a server command
@@ -653,6 +656,9 @@
       _log("onVideoSeeked ignored — no user activation");
       return;
     }
+    // Live: each viewer has their own DVR position relative to the
+    // live edge — broadcasting this seek would knock peers off live.
+    if (isLive) return;
     lastSeekAt = Date.now();
     _hardSeekFailures = 0;
     updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
@@ -688,6 +694,16 @@
 
     reconcileInterval = setInterval(() => {
       if (!hookedVideo || !synced || !serverRef || commandGuard || needsGesture) return;
+
+      // Auto-detect live vs VOD on every tick — cheap, and lets us
+      // bidirectionally switch when a live ends or a VOD turns out
+      // to be live.
+      sampleLiveStatus();
+
+      // For live content, the only thing that syncs is play/pause.
+      // Position drift / hard seeks are meaningless against the
+      // live edge and would knock the player off it on every tick.
+      if (isLive) return;
 
       const now = Date.now();
       const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
@@ -790,6 +806,34 @@
   function stopReconcile() {
     if (reconcileInterval) { clearInterval(reconcileInterval); reconcileInterval = null; }
     if (hookedVideo && hookedVideo.playbackRate !== 1.0) hookedVideo.playbackRate = 1.0;
+  }
+
+  // Detect whether the hooked <video> is live and tell the server
+  // when our reading differs from the room's current is_live flag.
+  // HLS live streams expose duration === Infinity; finite durations
+  // mean VOD. Called from the reconcile tick so it piggybacks the
+  // existing "we have a hooked video and we're synced" gate.
+  let _lastPushedLive = null;
+  function sampleLiveStatus() {
+    if (!hookedVideo || !port) return;
+    const d = hookedVideo.duration;
+    let detected = null;
+    if (d === Infinity || (typeof d === "number" && isNaN(d))) {
+      detected = true;
+    } else if (typeof d === "number" && isFinite(d) && d > 0) {
+      detected = false;
+    }
+    if (detected === null) return;
+    // Don't spam the channel with redundant pushes — only when the
+    // detected value actually changes versus what we last sent.
+    if (detected === _lastPushedLive) return;
+    if (detected === isLive) {
+      _lastPushedLive = detected;
+      return;
+    }
+    _lastPushedLive = detected;
+    isLive = detected;
+    port.postMessage({ type: EVT.VIDEO_LIVE_STATUS, is_live: detected });
   }
 
   function updateServerRef(position, playState, serverTime) {
@@ -912,7 +956,21 @@
 
     if (msg.type === EVT.COMMAND_INITIAL_STATE) {
       if (msg.current_url) setSyncedUrl(msg.current_url);
+      if (msg.is_live != null) isLive = !!msg.is_live;
       tryAutoSync();
+      return;
+    }
+
+    if (msg.type === EVT.COMMAND_LIVE_STATUS) {
+      isLive = !!msg.is_live;
+      _lastPushedLive = isLive;
+      // If we just switched out of live, the reconcile loop's next
+      // tick re-engages drift correction. If we just switched into
+      // live, ensure playbackRate is reset (reconcile may have been
+      // tweaking it).
+      if (hookedVideo && isLive && hookedVideo.playbackRate !== 1.0) {
+        hookedVideo.playbackRate = 1.0;
+      }
       return;
     }
 
@@ -930,6 +988,7 @@
       }
 
       if (msg.current_url) setSyncedUrl(msg.current_url);
+      if (msg.is_live != null) isLive = !!msg.is_live;
 
       hideJoinToast();
       _log("synced! expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
@@ -965,6 +1024,10 @@
       // Update our canonical URL reference so the mismatch toast disappears
       // if this tab is already on that URL.
       if (msg.url) setSyncedUrl(msg.url);
+      if (msg.is_live != null) {
+        isLive = !!msg.is_live;
+        _lastPushedLive = isLive;
+      }
 
       // navigate=true: the new video is extension-required, so the BG would
       // otherwise close this tab and force a re-open. Reuse it instead —
@@ -1073,6 +1136,10 @@
         break;
 
       case EVT.COMMAND_SEEK:
+        // Defensive: server already drops seeks for live items, so
+        // we shouldn't see this — but if a stale seek arrives mid
+        // VOD→live transition, ignore it.
+        if (isLive) break;
         _log("cmd:seek pos=", msg.position, "server_time=", msg.server_time);
         lastSeekAt = Date.now();
         updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time);

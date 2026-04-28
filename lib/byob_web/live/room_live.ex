@@ -22,6 +22,7 @@ defmodule ByobWeb.RoomLive do
   @ev_video_ended Events.ev_video_ended()
   @ev_video_embed_blocked Events.ev_video_embed_blocked()
   @ev_video_drift_report Events.ev_video_drift_report()
+  @ev_video_live_status Events.ev_video_live_status()
   @ev_sync_ping Events.in_sync_ping()
 
   def mount(%{"id" => room_id}, _session, socket) do
@@ -252,6 +253,18 @@ defmodule ByobWeb.RoomLive do
 
   def handle_event(@ev_video_ended, params, socket), do: Playback.handle_ended(params, socket)
 
+  def handle_event(@ev_video_live_status, params, socket) do
+    # Client (LV embed or extension content script) auto-detected
+    # whether the current item is live based on duration-growth /
+    # video.duration === Infinity. Forward to the room server, which
+    # rebroadcasts to peers so they all stop / start time-based sync
+    # in lockstep.
+    is_live = !!params["is_live"]
+    room_pid = socket.assigns[:room_pid]
+    if room_pid, do: Byob.RoomServer.update_live_status(room_pid, is_live)
+    {:noreply, socket}
+  end
+
   def handle_event("queue:skip", params, socket), do: Queue.handle_skip(params, socket)
   def handle_event("queue:remove", params, socket), do: Queue.handle_remove(params, socket)
 
@@ -346,6 +359,10 @@ defmodule ByobWeb.RoomLive do
   def handle_info({:video_changed, data}, socket), do: PubSub.handle_video_changed(data, socket)
 
   def handle_info({:ready_count, data}, socket), do: PubSub.handle_ready_count(data, socket)
+
+  def handle_info({:live_status, data}, socket) do
+    {:noreply, push_event(socket, Events.live_status(), data)}
+  end
 
   def handle_info({:url_preview_result, result}, socket),
     do: UrlPreview.handle_preview_result(result, socket)
@@ -684,7 +701,8 @@ defmodule ByobWeb.RoomLive do
       source_type: Atom.to_string(item.source_type),
       source_id: item.source_id,
       title: item.title,
-      thumbnail_url: item.thumbnail_url
+      thumbnail_url: item.thumbnail_url,
+      is_live: Map.get(item, :is_live, false)
     }
   end
 
@@ -695,7 +713,8 @@ defmodule ByobWeb.RoomLive do
       source_type: to_string(item[:source_type] || item["source_type"]),
       source_id: item[:source_id] || item["source_id"],
       title: item[:title] || item["title"],
-      thumbnail_url: item[:thumbnail_url] || item["thumbnail_url"]
+      thumbnail_url: item[:thumbnail_url] || item["thumbnail_url"],
+      is_live: item[:is_live] || item["is_live"] || false
     }
   end
 

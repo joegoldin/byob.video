@@ -10,11 +10,13 @@ defmodule Byob.MediaItem do
     :published_at,
     :added_by,
     :added_by_name,
-    :added_at
+    :added_at,
+    is_live: false
   ]
 
   @youtube_hosts ~w(youtube.com www.youtube.com m.youtube.com youtu.be)
   @vimeo_hosts ~w(vimeo.com www.vimeo.com player.vimeo.com)
+  @twitch_hosts ~w(twitch.tv www.twitch.tv m.twitch.tv)
 
   @drm_hosts [
     {"netflix.com", "Netflix"},
@@ -41,13 +43,15 @@ defmodule Byob.MediaItem do
 
           true ->
             {source_type, source_id} = classify(host, uri)
+            is_live = live?(host, uri, source_type)
 
             {:ok,
              %__MODULE__{
                id: generate_id(),
                url: url,
                source_type: source_type,
-               source_id: source_id
+               source_id: source_id,
+               is_live: is_live
              }}
         end
 
@@ -123,6 +127,30 @@ defmodule Byob.MediaItem do
 
   defp youtube_host?(host), do: host in @youtube_hosts
   defp vimeo_host?(host), do: host in @vimeo_hosts
+  defp twitch_host?(host), do: host in @twitch_hosts
+
+  # Best-effort live detection. False positives are mostly harmless
+  # (the worst case is a non-live video that won't allow time-based
+  # sync — user can re-add as a normal URL). False negatives mean
+  # the player will fight live's "you can't seek there" reality.
+  defp live?(host, %URI{path: path} = _uri, _source_type) when is_binary(path) do
+    cond do
+      # YouTube /live/<id> is a redirect alias for live (or scheduled
+      # premiere) videos. Regular live broadcasts also live under
+      # /watch?v=<id> — those we can't tell apart from VODs at parse
+      # time, so leave them as not-live and let the user override
+      # later if we ever add an "is live" toggle.
+      youtube_host?(host) and Regex.match?(~r{^/live/}, path) -> true
+      # Twitch: /<channel> is always a live channel page. /videos/<id>
+      # is a VOD which DOES support seeking. Everything else (clips,
+      # categories, etc.) we treat as live since extension-required
+      # sync without seek is the safer default for them.
+      twitch_host?(host) and not Regex.match?(~r{^/videos/}, path) -> true
+      true -> false
+    end
+  end
+
+  defp live?(_, _, _), do: false
 
   # Vimeo URLs: vimeo.com/123456789, player.vimeo.com/video/123456789
   defp extract_vimeo_id(_host, %URI{path: path}) when is_binary(path) do

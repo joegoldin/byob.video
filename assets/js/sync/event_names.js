@@ -26,6 +26,7 @@ export const LV_EVT = Object.freeze({
   MEDIA_METADATA: "media:metadata",
   TOAST: "toast",
   READY_COUNT: "ready:count",
+  LIVE_STATUS: "live:status",
 
   // Browser → server (pushEvent in hook, handle_event in LV)
   EV_VIDEO_PLAY: "video:play",
@@ -34,6 +35,7 @@ export const LV_EVT = Object.freeze({
   EV_VIDEO_ENDED: "video:ended",
   EV_VIDEO_EMBED_BLOCKED: "video:embed_blocked",
   EV_VIDEO_DRIFT_REPORT: "video:drift_report",
+  EV_VIDEO_LIVE_STATUS: "video:live_status",
   EV_SYNC_PING: "sync:ping",
 
   // Page-world postMessage types (contract with extension/content.js)

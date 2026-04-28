@@ -16,6 +16,7 @@ const PAUSE_ON_LOAD_POLL_MS = 100;
 const PAUSE_ON_LOAD_MAX_ATTEMPTS = 10;
 const VIDEO_CHANGE_RETRY_1_MS = 1000;
 const VIDEO_CHANGE_RETRY_2_MS = 3000;
+const LIVE_DETECTION_INTERVAL_MS = 3000;
 
 const VideoPlayer = {
   mounted() {
@@ -82,6 +83,7 @@ const VideoPlayer = {
     });
     this.handleEvent(LV_EVT.VIDEO_CHANGE, (data) => this._onVideoChange(data));
     this.handleEvent(LV_EVT.QUEUE_ENDED, () => this._onQueueEnded());
+    this.handleEvent(LV_EVT.LIVE_STATUS, (data) => this._onServerLiveStatus(data));
     this.handleEvent(LV_EVT.MEDIA_METADATA, (data) => {
       if (data.title) this._lastTitle = data.title;
       if (data.thumbnail_url) this._lastThumb = data.thumbnail_url;
@@ -99,6 +101,10 @@ const VideoPlayer = {
     this._driftReportInterval = setInterval(() => {
       if (!this.player || !this.isReady) return;
       if (!this.clockSync?.isReady?.()) return;
+      // Live content has no meaningful position drift — let the
+      // player handle live-edge sync internally and skip the report
+      // so peers see "no drift data" rather than misleading numbers.
+      if (this._isLive) return;
       const state = this.player.getState?.();
       this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
         drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
@@ -106,6 +112,16 @@ const VideoPlayer = {
         playing: state === "playing",
       });
     }, DRIFT_REPORT_INTERVAL_MS);
+
+    // Auto-detect live vs VOD. The URL parser sets is_live on a
+    // best-effort basis (youtube.com/live/<id>, twitch.tv/<channel>),
+    // but most live broadcasts live under /watch?v=<id> too — and
+    // a live stream eventually ends and becomes a VOD. Sample
+    // getDuration() over time: live duration grows at ~wall-clock
+    // rate, VOD duration is stable. Bidirectional: when a live
+    // stream stops growing we flip back so the queue's
+    // ended-detection re-engages.
+    this._liveDetectionInterval = setInterval(() => this._sampleLiveStatus(), LIVE_DETECTION_INTERVAL_MS);
   },
 
   reconnected() {
@@ -158,6 +174,7 @@ const VideoPlayer = {
     if (this.stateCheckInterval) clearInterval(this.stateCheckInterval);
     if (this.sponsorCheckInterval) clearInterval(this.sponsorCheckInterval);
     if (this._driftReportInterval) clearInterval(this._driftReportInterval);
+    if (this._liveDetectionInterval) clearInterval(this._liveDetectionInterval);
     if (this._extPollInterval) clearInterval(this._extPollInterval);
     if (this._extBtnPoll) clearInterval(this._extBtnPoll);
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
@@ -208,15 +225,22 @@ const VideoPlayer = {
       const position = state.current_time + elapsed;
       this.expectedPlayState = "playing";
       this.suppression.suppress("playing");
-      this._seekTo(position);
+      // For live content, every player joins at its own live edge —
+      // a server-derived position would knock us off live. Skip the
+      // seek + reconcile entirely; play() lands us at live by default.
+      if (!this._isLive) {
+        this._seekTo(position);
+      }
       this._play();
-      this.reconcile.setServerState(
-        state.current_time,
-        state.server_time,
-        this.clockSync
-      );
-      this.reconcile.pauseFor(2000);
-      this.reconcile.start();
+      if (!this._isLive) {
+        this.reconcile.setServerState(
+          state.current_time,
+          state.server_time,
+          this.clockSync
+        );
+        this.reconcile.pauseFor(2000);
+        this.reconcile.start();
+      }
 
       this._retryPlayOrShowOverlay(position);
     } else if (state.play_state === "paused") {
@@ -261,6 +285,13 @@ const VideoPlayer = {
     this._playerSettled = false;
     this.sourceType = sourceType;
     this.sourceId = sourceId;
+    // Live content (YT live, Twitch) skips time-based sync — drift
+    // reports, reconcile loop, seek-event push, and ended detection
+    // are all gated on this flag downstream. The URL parser seeds
+    // this; runtime auto-detection (_sampleLiveStatus) confirms or
+    // overrides it from the player's actual duration behavior.
+    this._isLive = !!mediaItem?.is_live;
+    this._lastDurationSample = null;
     this._lastTitle = mediaItem?.title || url;
     this._lastThumb = mediaItem?.thumbnail_url ||
       (sourceType === "youtube" && sourceId ? `https://img.youtube.com/vi/${sourceId}/hqdefault.jpg` : null);
@@ -532,11 +563,15 @@ const VideoPlayer = {
       this._endedAt = null;
       const position = this.player.getCurrentTime();
       this.pushEvent(LV_EVT.EV_VIDEO_PLAY, { position });
-      // Update own reconcile so it doesn't drift-correct back to old position
-      const serverTime = this.clockSync.serverNow();
-      this.reconcile.setServerState(position, serverTime, this.clockSync);
-      this.reconcile.pauseFor(1000); // let server catch up before correcting
-      this.reconcile.start();
+      // For live content, position has no meaning to peers, and the
+      // reconcile loop would constantly fight the player's own live-
+      // edge management. Skip starting it.
+      if (!this._isLive) {
+        const serverTime = this.clockSync.serverNow();
+        this.reconcile.setServerState(position, serverTime, this.clockSync);
+        this.reconcile.pauseFor(1000);
+        this.reconcile.start();
+      }
     } else if (stateName === "paused") {
       this.expectedPlayState = "paused";
       window.__byobPlaying = false;
@@ -549,6 +584,11 @@ const VideoPlayer = {
       window.__byobPlaying = false;
       this.reconcile.stop();
       this._endedAt = Date.now();
+      // Live streams don't have a meaningful "ended" — a brief stall
+      // (broadcaster blip, reconnection) shouldn't auto-advance the
+      // queue. We rely on duration-growth detection to flip _isLive
+      // off if the broadcast actually ended and became a VOD.
+      if (this._isLive) return;
       // Only send ended if the position-based detector hasn't already
       if (!this._endedFired) {
         this._endedFired = true;
@@ -806,6 +846,105 @@ const VideoPlayer = {
     );
   },
 
+  // Server told us the current item's live status changed. The
+  // sender may be us (ignore — we already updated locally before
+  // pushing) or a peer (apply locally so we drop into / out of
+  // skip-sync mode in lockstep).
+  _onServerLiveStatus(data) {
+    const next = !!data?.is_live;
+    if (next === this._isLive) return;
+    this._isLive = next;
+    if (next) {
+      // Switched into live — stop the reconcile loop so we don't
+      // fight the player's live-edge management, and clear any
+      // pending end-detection state from the prior VOD pass.
+      this.reconcile.stop();
+      this._endedFired = false;
+      this._endedAt = null;
+    } else {
+      // Switched out of live (broadcast ended → became a VOD with
+      // a finite duration). Re-engage reconcile only if we're
+      // currently playing, mirroring the path _applyPendingState
+      // takes on a fresh VOD load.
+      const playerState = this.player?.getState?.();
+      if (playerState === "playing") {
+        const pos = this._getCurrentTime();
+        const serverTime = this.clockSync?.serverNow?.();
+        if (typeof pos === "number" && typeof serverTime === "number") {
+          this.reconcile.setServerState(pos, serverTime, this.clockSync);
+          this.reconcile.pauseFor(1000);
+          this.reconcile.start();
+        }
+      }
+    }
+  },
+
+  // Poll the player for live vs VOD signals. YT/Vimeo: live
+  // duration grows at ≈ wall-clock rate; VOD duration is stable.
+  // Direct video / HLS: video.duration is Infinity / NaN for live.
+  _sampleLiveStatus() {
+    if (!this.player || !this.isReady) return;
+    const playerState = this.player.getState?.();
+    // getDuration() doesn't update reliably while paused, so only
+    // sample during active playback. Reset the sample buffer when
+    // we're not playing so a pause→play cycle compares fresh.
+    if (playerState !== "playing") {
+      this._lastDurationSample = null;
+      return;
+    }
+
+    let detected = null;
+
+    if (this.sourceType === "direct_url") {
+      const v = this.el.querySelector("video");
+      if (v) {
+        if (v.duration === Infinity || (typeof v.duration === "number" && isNaN(v.duration))) {
+          detected = true;
+        } else if (typeof v.duration === "number" && v.duration > 0 && isFinite(v.duration)) {
+          detected = false;
+        }
+      }
+    } else if (this.sourceType === "youtube" || this.sourceType === "vimeo") {
+      const dur = this.player.getDuration?.();
+      if (typeof dur !== "number" || isNaN(dur)) return;
+
+      const now = performance.now();
+      const prev = this._lastDurationSample;
+      this._lastDurationSample = { dur, at: now };
+      if (!prev) return;
+
+      const elapsed = (now - prev.at) / 1000;
+      if (elapsed < 2) return;
+
+      const grew = dur - prev.dur;
+      // Live: duration tracks wall clock (give some slack for
+      // sample jitter — 0.5x to 1.5x the elapsed seconds).
+      // VOD: duration is stable — drifts < 0.5 second over our
+      // sample interval.
+      // Anything outside both bands (e.g., a metadata-late VOD
+      // jumping from 0 to 3600) stays inconclusive.
+      if (grew >= elapsed * 0.5 && grew <= elapsed * 1.5) {
+        detected = true;
+      } else if (grew < 0.5) {
+        detected = false;
+      }
+    }
+
+    if (detected !== null && detected !== this._isLive) {
+      this._isLive = detected;
+      this.pushEvent(LV_EVT.EV_VIDEO_LIVE_STATUS, { is_live: detected });
+      if (detected) {
+        // Stop fighting the live edge.
+        this.reconcile.stop();
+        this._endedFired = false;
+        this._endedAt = null;
+      }
+      // The server broadcast will round-trip back as LIVE_STATUS
+      // and _onServerLiveStatus will re-engage reconcile for the
+      // VOD case if we're playing — no need to do it here.
+    }
+  },
+
   _onReadyCount(data) {
     this._lastReadyCount = data;
     if (this._lastExtPlayerState) this._renderExtStatus();
@@ -959,6 +1098,14 @@ const VideoPlayer = {
     if (this.seekDetectorInterval) clearInterval(this.seekDetectorInterval);
     this.seekDetectorInterval = setInterval(() => {
       if (!this.player) return;
+      // For live content, seeks are local-only (live edge / DVR) and
+      // don't broadcast — every player is at its own live position.
+      // The ended-detection block below also no-ops for live since
+      // duration grows with wall clock and pos never reaches dur.
+      if (this._isLive) {
+        this.lastKnownPosition = this._getCurrentTime();
+        return;
+      }
       const pos = this._getCurrentTime();
       const playerState = this.player.getState?.();
       const isPaused = playerState === "paused";

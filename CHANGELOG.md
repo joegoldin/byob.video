@@ -3,6 +3,64 @@
 
 ---
 
+# v6.5.42
+
+### Live content support (YouTube live, Twitch)
+
+Live streams broke the time-based sync engine: server-broadcast
+seeks would knock peers off the live edge, drift correction
+would constantly fight the player's own live management, and
+position-based ended detection would never fire because
+duration grows with wall clock. The fix is a `is_live` flag
+that gates time-based sync on both server and client paths,
+plus runtime auto-detection so the flag can flip in either
+direction without user intervention.
+
+**MediaItem.is_live**: New struct field. URL parser seeds it
+from a path heuristic — `youtube.com/live/<id>` and
+`twitch.tv/<channel>` (any path except `/videos/`) start out
+as live. Live broadcasts living under `/watch?v=<id>` flip via
+runtime detection (below).
+
+**Server skips for live**: Seek `RoomServer.seek/3` calls
+short-circuit, `:state_heartbeat` and `:sync_correction` skip
+the broadcast. Play / pause continue to sync — that's all the
+state a live stream actually needs to share between peers.
+
+**Runtime auto-detection** (LV embed): poll `getDuration()`
+every 3s during playback. If duration grows at ~wall-clock
+rate (0.5x to 1.5x of elapsed seconds), live. If stable
+(grew < 0.5s), VOD. Inconclusive samples (e.g. metadata
+loading from 0 to 3600 in one tick) wait for the next
+sample. Pushes `video:live_status` to server when detected
+state changes; server broadcasts to peers via
+`{:live_status, ...}` so every player flips in lockstep.
+
+**Runtime auto-detection** (extension content script):
+`video.duration === Infinity || isNaN(duration)` is the HLS
+live signal — Twitch live streams expose Infinity, VODs
+finite. Same `video:live_status` channel push routes through
+to other peers.
+
+**Bidirectional switching**: when a live broadcast ends and
+duration stabilizes, detection flips `_isLive` back to false.
+The `if (this._isLive) return;` gate I added to the YT
+"ended" state-change handler stops blocking, position-based
+end detection re-engages, and the queue advances normally.
+
+**Twitch via extension popup**: Twitch URLs go through the
+existing `:extension_required` path — same popup flow, just
+with reconcile + drift suppression while live. No new source
+type.
+
+Server changes + LV-side changes ship in v6.5.42; the
+extension content-script changes ship in the same build but
+require an extension republish to take effect for users on
+twitch.tv. YouTube live works without an extension update
+(LV embed handles it).
+
+---
+
 # v6.5.41
 
 ### Only hook tabs opened from a byob room

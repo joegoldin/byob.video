@@ -30,6 +30,7 @@ defmodule Byob.Events do
   def in_video_ready, do: "video:ready"
   def in_video_unready, do: "video:unready"
   def in_video_drift, do: "video:drift"
+  def in_video_live_status, do: "video:live_status"
   def in_sync_ping, do: "sync:ping"
   def in_sync_request_state, do: "sync:request_state"
   def in_debug_log, do: "debug:log"
@@ -58,6 +59,7 @@ defmodule Byob.Events do
   def media_metadata, do: "media:metadata"
   def sponsor_segments, do: "sponsor:segments"
   def sb_settings, do: "sb:settings"
+  def live_status, do: "live:status"
 
   # ── LV handle_event (browser VideoPlayer → LiveView) ────────────────────
   def ev_video_play, do: "video:play"
@@ -66,6 +68,7 @@ defmodule Byob.Events do
   def ev_video_ended, do: "video:ended"
   def ev_video_drift_report, do: "video:drift_report"
   def ev_video_embed_blocked, do: "video:embed_blocked"
+  def ev_video_live_status, do: "video:live_status"
 
   # ── Presence event strings (inside room_presence payloads) ──────────────
   def presence_joined, do: "joined"

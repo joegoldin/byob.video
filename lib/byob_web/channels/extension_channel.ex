@@ -18,6 +18,7 @@ defmodule ByobWeb.ExtensionChannel do
   @in_video_ready Events.in_video_ready()
   @in_video_unready Events.in_video_unready()
   @in_video_drift Events.in_video_drift()
+  @in_video_live_status Events.in_video_live_status()
   @in_sync_ping Events.in_sync_ping()
   @in_sync_request_state Events.in_sync_request_state()
   @in_debug_log Events.in_debug_log()
@@ -236,6 +237,7 @@ defmodule ByobWeb.ExtensionChannel do
         server_time: now,
         current_url: current && current.url,
         current_source_type: current && Atom.to_string(current.source_type),
+        is_live: current && Map.get(current, :is_live, false),
         queue_size: length(state.queue)
       }}, socket}
   end
@@ -278,6 +280,11 @@ defmodule ByobWeb.ExtensionChannel do
     t2 = System.monotonic_time(:millisecond)
     t3 = System.monotonic_time(:millisecond)
     {:reply, {:ok, %{t1: t1, t2: t2, t3: t3}}, socket}
+  end
+
+  def handle_in(@in_video_live_status, %{"is_live" => is_live}, socket) do
+    RoomServer.update_live_status(socket.assigns.room_pid, is_live)
+    {:noreply, socket}
   end
 
   def handle_in(@in_debug_log, %{"message" => message} = payload, socket) do
@@ -346,6 +353,11 @@ defmodule ByobWeb.ExtensionChannel do
 
   def handle_info({:queue_ended, _data}, socket) do
     push(socket, Events.queue_ended(), %{})
+    {:noreply, socket}
+  end
+
+  def handle_info({:live_status, data}, socket) do
+    push(socket, Events.live_status(), data)
     {:noreply, socket}
   end
 
@@ -448,6 +460,7 @@ defmodule ByobWeb.ExtensionChannel do
       ready_count: ready_count,
       current_url: current && current.url,
       current_source_type: current && Atom.to_string(current.source_type),
+      is_live: current && Map.get(current, :is_live, false),
       queue_size: length(state.queue)
     }
   end
@@ -465,7 +478,8 @@ defmodule ByobWeb.ExtensionChannel do
       url: item.url,
       source_type: Atom.to_string(item.source_type),
       source_id: item.source_id,
-      title: item.title
+      title: item.title,
+      is_live: Map.get(item, :is_live, false)
     }
   end
 end

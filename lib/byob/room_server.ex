@@ -101,6 +101,10 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:update_current_media, attrs})
   end
 
+  def update_live_status(pid, is_live) do
+    GenServer.call(pid, {:update_live_status, is_live})
+  end
+
   def update_current_url(pid, user_id, url) do
     GenServer.call(pid, {:update_current_url, user_id, url})
   end
@@ -426,6 +430,45 @@ defmodule Byob.RoomServer do
     {:reply, :ok, state}
   end
 
+  def handle_call({:update_live_status, is_live}, _from, state) do
+    is_live = !!is_live
+
+    case state.current_index do
+      nil ->
+        {:reply, :ok, state}
+
+      idx ->
+        case Enum.at(state.queue, idx) do
+          nil ->
+            {:reply, :ok, state}
+
+          item ->
+            current = Map.get(item, :is_live, false)
+
+            if current == is_live do
+              {:reply, :ok, state}
+            else
+              updated = %{item | is_live: is_live}
+              queue = List.replace_at(state.queue, idx, updated)
+
+              history =
+                Enum.map(state.history, fn entry ->
+                  if entry.item.id == item.id do
+                    %{entry | item: %{entry.item | is_live: is_live}}
+                  else
+                    entry
+                  end
+                end)
+
+              state = %{state | queue: queue, history: history}
+              broadcast(state, {:live_status, %{is_live: is_live, item_id: item.id}})
+              broadcast(state, {:queue_updated, %{queue: queue, current_index: idx}})
+              {:reply, :ok, state}
+            end
+        end
+    end
+  end
+
   def handle_call({:update_current_media, attrs}, _from, state) do
     case state.current_index do
       nil ->
@@ -692,36 +735,44 @@ defmodule Byob.RoomServer do
     now = System.monotonic_time(:millisecond)
     last = Map.get(state.last_seek_at, user_id)
 
-    if last != nil and now - last < @sync_broadcast_debounce_ms do
-      {:reply, {:error, :debounced}, state}
-    else
-      old_pos = current_position(state)
+    cond do
+      current_media_is_live?(state) ->
+        # Live content (YT live, Twitch) — there's no meaningful
+        # position to sync, and forcing other players to seek
+        # would knock them off the live edge. Drop the seek.
+        {:reply, :ok, state}
 
-      state = %{
-        state
-        | current_time: position,
-          last_sync_at: now,
-          last_seek_at: Map.put(state.last_seek_at, user_id, now)
-      }
+      last != nil and now - last < @sync_broadcast_debounce_ms ->
+        {:reply, {:error, :debounced}, state}
 
-      # Only log meaningful seeks (>3s jump, not from 0:00)
-      diff = abs(position - old_pos)
+      true ->
+        old_pos = current_position(state)
 
-      state =
-        if diff > 3 and old_pos > 1 do
-          log_activity(
-            state,
-            :seeked,
-            user_id,
-            "#{format_seconds(old_pos)} → #{format_seconds(position)}"
-          )
-        else
+        state = %{
           state
-        end
+          | current_time: position,
+            last_sync_at: now,
+            last_seek_at: Map.put(state.last_seek_at, user_id, now)
+        }
 
-      SyncLog.seek(state.room_id, user_id, current_media_url(state), position)
-      broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
-      {:reply, :ok, state}
+        # Only log meaningful seeks (>3s jump, not from 0:00)
+        diff = abs(position - old_pos)
+
+        state =
+          if diff > 3 and old_pos > 1 do
+            log_activity(
+              state,
+              :seeked,
+              user_id,
+              "#{format_seconds(old_pos)} → #{format_seconds(position)}"
+            )
+          else
+            state
+          end
+
+        SyncLog.seek(state.room_id, user_id, current_media_url(state), position)
+        broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
+        {:reply, :ok, state}
     end
   end
 
@@ -1184,15 +1235,20 @@ defmodule Byob.RoomServer do
     position = current_position(state)
     SyncLog.heartbeat(state.room_id, state.play_state, position)
 
-    broadcast(
-      state,
-      {:state_heartbeat,
-       %{
-         play_state: state.play_state,
-         current_time: position,
-         server_time: now
-       }}
-    )
+    # Live content has no meaningful position. Heartbeats with a
+    # bogus current_time would force clients to drift-correct
+    # toward whatever value we send, so skip the time payload.
+    unless current_media_is_live?(state) do
+      broadcast(
+        state,
+        {:state_heartbeat,
+         %{
+           play_state: state.play_state,
+           current_time: position,
+           server_time: now
+         }}
+      )
+    end
 
     Process.send_after(self(), :state_heartbeat, @state_heartbeat_interval_ms)
     {:noreply, state}
@@ -1201,7 +1257,11 @@ defmodule Byob.RoomServer do
   def handle_info(:sync_correction, %{play_state: :playing} = state) do
     now = System.monotonic_time(:millisecond)
     position = current_position(state)
-    broadcast(state, {:sync_correction, %{expected_time: position, server_time: now}})
+
+    unless current_media_is_live?(state) do
+      broadcast(state, {:sync_correction, %{expected_time: position, server_time: now}})
+    end
+
     state = %{state | sync_correction_ref: Process.send_after(self(), :sync_correction, @sync_correction_interval_ms)}
     {:noreply, state}
   end
@@ -1724,6 +1784,17 @@ defmodule Byob.RoomServer do
       idx ->
         item = Enum.at(state.queue, idx)
         if item, do: item.title || item.url, else: nil
+    end
+  end
+
+  defp current_media_is_live?(state) do
+    case state.current_index do
+      nil ->
+        false
+
+      idx ->
+        item = Enum.at(state.queue, idx)
+        item && Map.get(item, :is_live, false)
     end
   end
 
