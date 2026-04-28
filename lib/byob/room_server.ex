@@ -829,43 +829,60 @@ defmodule Byob.RoomServer do
   # Logs :finished, kicks off a 5 s autoplay countdown, and schedules the
   # actual advance. Subsequent :video_ended events for the same index are
   # silently ignored because pending_advance_ref is already set.
-  def handle_call(
-        {:video_ended, index},
-        _from,
-        %{current_index: index, pending_advance_ref: nil} = state
-      ) do
-    state =
-      case Enum.at(state.queue, index) do
-        %{} = finished ->
-          title = finished.title || finished.url
-          log_activity(state, :finished, nil, title)
+  def handle_call({:video_ended, ref_value}, _from, state) do
+    # ref_value is either an item id (binary) or a queue index
+    # (integer, kept for backward compat during deploy when older
+    # clients haven't reloaded yet). Item id is the right key —
+    # current_index is always 0 after each advance, so the previous
+    # "match by index" amounted to "any :ended whose pending_advance
+    # _ref slot is empty". A stale :ended from a backgrounded tab
+    # (whose 500 ms tick was throttled past A's natural end and
+    # fired post-advance) would slot right in and trigger ANOTHER
+    # 5 s countdown, advancing B → C and making B look skipped.
+    cond do
+      state.pending_advance_ref != nil ->
+        {:reply, :stale, state}
 
-        _ ->
-          state
-      end
+      state.current_index == nil ->
+        {:reply, :stale, state}
 
-    now = System.monotonic_time(:millisecond)
-    ref = Process.send_after(self(), :advance_pending, @autoplay_countdown_ms)
-    state = %{state | pending_advance_ref: ref, play_state: :paused}
+      true ->
+        current = Enum.at(state.queue, state.current_index)
+        match? =
+          cond do
+            is_binary(ref_value) -> current && current.id == ref_value
+            is_integer(ref_value) -> ref_value == state.current_index
+            true -> false
+          end
 
-    # has_next tells clients (esp. the extension) whether this countdown is
-    # actually going to advance to something. If nothing's next, the extension
-    # suppresses its overlay countdown — the user keeps watching whatever
-    # they've navigated to on the third-party site. The main LV countdown
-    # always shows regardless.
-    has_next = index + 1 < length(state.queue)
+        if match? do
+          state =
+            case current do
+              %{} = finished ->
+                title = finished.title || finished.url
+                log_activity(state, :finished, nil, title)
 
-    broadcast(
-      state,
-      {:autoplay_countdown,
-       %{duration_ms: @autoplay_countdown_ms, server_time: now, has_next: has_next}}
-    )
+              _ ->
+                state
+            end
 
-    {:reply, :ok, state}
-  end
+          now = System.monotonic_time(:millisecond)
+          timer_ref = Process.send_after(self(), :advance_pending, @autoplay_countdown_ms)
+          state = %{state | pending_advance_ref: timer_ref, play_state: :paused}
 
-  def handle_call({:video_ended, _stale_index}, _from, state) do
-    {:reply, :stale, state}
+          has_next = state.current_index + 1 < length(state.queue)
+
+          broadcast(
+            state,
+            {:autoplay_countdown,
+             %{duration_ms: @autoplay_countdown_ms, server_time: now, has_next: has_next}}
+          )
+
+          {:reply, :ok, state}
+        else
+          {:reply, :stale, state}
+        end
+    end
   end
 
   def handle_call(:skip, _from, state) do

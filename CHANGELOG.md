@@ -3,6 +3,72 @@
 
 ---
 
+# v6.5.43
+
+### Validate `:video_ended` by item id, not queue index
+
+Intermittent symptom: with two videos queued behind a playing
+one, finishing the current would *occasionally* skip the first
+in queue and play the second. Reproducible if a second tab was
+backgrounded while the first played to its end.
+
+Root cause was that `current_index` is always 0 server-side
+after each `advance_queue` (it always pulls the just-finished
+item out and sets the next item to index 0), and the client's
+`data-current-index` attribute is also set to 0 by the
+`_onVideoChange` handler. So the `current_index: index` clause
+guard at room_server.ex `:video_ended` matched on every
+`:ended` regardless of which item the client was *actually*
+reporting on. As long as `pending_advance_ref` was nil at the
+time the message was processed, the server happily started a
+fresh 5 s countdown.
+
+The race that triggered the skip:
+
+1. A finishes. Tab 1 (foreground) pushes `:video_ended`,
+   server schedules advance for `t = 5 s`.
+2. Tab 2 was backgrounded — its 500 ms `setInterval` is
+   throttled, so the seek-detector tick that would have
+   noticed A reaching `dur - 1` never fires before
+   `t = 5 s`.
+3. `t = 5 s`: server fires `:advance_pending` → queue
+   advances to B, `pending_advance_ref` is cleared.
+4. `t = 6 s`: Tab 2's tick *finally* runs, sees A still at
+   its final position (the iframe didn't auto-progress),
+   pushes a stale `:video_ended`. Server's index check
+   trivially matches (both still 0) and `pending_advance_ref`
+   is now nil → another 5 s countdown is scheduled.
+5. `t = 11 s`: that countdown fires, queue advances B → C.
+
+User sees: A finishes → B plays for ~6 seconds → C takes
+over. From that vantage it looks like the first item in
+queue (B) was skipped.
+
+Fix is server-side validation by item id and client-side
+sending it:
+
+- `Byob.MediaItem` already had a per-item `id`. The video
+  player hook now stores `_currentItemId` whenever it loads
+  a video and sends `{ item_id: this._currentItemId }` in
+  every `:video:ended` push (replacing the always-stale
+  `index`).
+- `RoomServer.handle_call({:video_ended, ref_value})`
+  accepts either an item id (binary) or a queue index
+  (integer, kept for clients that haven't reloaded yet).
+  Match-by-id requires the *current* item's id to equal
+  the reported id; a stale `:ended` from a tab still
+  watching an already-advanced-past item resolves to a
+  different id and is rejected as stale.
+- Extension content script tracks `currentItemId` from
+  `command:initial-state` / `command:synced` /
+  `command:video-change` and sends it with `video:ended`
+  too, plumbed through the channel.
+
+Server / LV / extension all need the new build for the fix
+to land everywhere.
+
+---
+
 # v6.5.42
 
 ### Live content support (YouTube live, Twitch)

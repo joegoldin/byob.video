@@ -69,18 +69,31 @@ defmodule ByobWeb.ExtensionChannel do
     {:noreply, socket}
   end
 
+  def handle_in(@in_video_ended, %{"item_id" => item_id}, socket) when is_binary(item_id) do
+    RoomServer.video_ended(socket.assigns.room_pid, item_id)
+    SyncLog.ext_event(socket.assigns.room_id, "ended", socket.assigns.user_id)
+    {:noreply, socket}
+  end
+
   def handle_in(@in_video_ended, %{"index" => index}, socket) do
+    # Backward-compat for older clients
     RoomServer.video_ended(socket.assigns.room_pid, index)
     SyncLog.ext_event(socket.assigns.room_id, "ended", socket.assigns.user_id)
     {:noreply, socket}
   end
 
   def handle_in(@in_video_ended, _payload, socket) do
-    # Extension doesn't know the index — use server's current_index
+    # Extension didn't include an id — resolve from server state by
+    # the actual item's id (NOT current_index, which is always 0
+    # after each advance and so trivially matches every :ended).
     state = RoomServer.get_state(socket.assigns.room_pid)
 
-    if state.current_index do
-      RoomServer.video_ended(socket.assigns.room_pid, state.current_index)
+    case state.current_index && Enum.at(state.queue, state.current_index) do
+      %{id: item_id} ->
+        RoomServer.video_ended(socket.assigns.room_pid, item_id)
+
+      _ ->
+        :ok
     end
 
     {:noreply, socket}
@@ -237,6 +250,7 @@ defmodule ByobWeb.ExtensionChannel do
         server_time: now,
         current_url: current && current.url,
         current_source_type: current && Atom.to_string(current.source_type),
+        current_item_id: current && current.id,
         is_live: current && Map.get(current, :is_live, false),
         queue_size: length(state.queue)
       }}, socket}
@@ -460,6 +474,7 @@ defmodule ByobWeb.ExtensionChannel do
       ready_count: ready_count,
       current_url: current && current.url,
       current_source_type: current && Atom.to_string(current.source_type),
+      current_item_id: current && current.id,
       is_live: current && Map.get(current, :is_live, false),
       queue_size: length(state.queue)
     }

@@ -292,6 +292,13 @@ const VideoPlayer = {
     // overrides it from the player's actual duration behavior.
     this._isLive = !!mediaItem?.is_live;
     this._lastDurationSample = null;
+    // Tracking the playing item by its server-assigned id (rather
+    // than queue index) lets a stale `:ended` from a backgrounded
+    // tab whose tick fired post-advance be rejected by the server.
+    // current_index is always 0 server-side after each advance,
+    // so the previous index-based check accepted any :ended whose
+    // pending_advance ref slot was empty.
+    this._currentItemId = mediaItem?.id || null;
     this._lastTitle = mediaItem?.title || url;
     this._lastThumb = mediaItem?.thumbnail_url ||
       (sourceType === "youtube" && sourceId ? `https://img.youtube.com/vi/${sourceId}/hqdefault.jpg` : null);
@@ -457,9 +464,8 @@ const VideoPlayer = {
         } else if (stateName === "ended") {
           this.expectedPlayState = null;
           this.reconcile.stop();
-          const currentIndex = this.el.dataset.currentIndex;
-          if (currentIndex != null) {
-            this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { index: parseInt(currentIndex) });
+          if (this._currentItemId) {
+            this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { item_id: this._currentItemId });
           }
         }
       },
@@ -592,9 +598,8 @@ const VideoPlayer = {
       // Only send ended if the position-based detector hasn't already
       if (!this._endedFired) {
         this._endedFired = true;
-        const currentIndex = this.el.dataset.currentIndex;
-        if (currentIndex != null) {
-          this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { index: parseInt(currentIndex) });
+        if (this._currentItemId) {
+          this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { item_id: this._currentItemId });
         }
       }
     }
@@ -1147,9 +1152,8 @@ const VideoPlayer = {
         this._endedAt = Date.now();
         this.expectedPlayState = null;
         this.reconcile.stop();
-        const currentIndex = this.el.dataset.currentIndex;
-        if (currentIndex != null) {
-          this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { index: parseInt(currentIndex) });
+        if (this._currentItemId) {
+          this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { item_id: this._currentItemId });
         }
       };
 

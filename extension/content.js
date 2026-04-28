@@ -90,6 +90,7 @@
   let synced = false;
   let needsGesture = true;
   let isLive = false; // current item live status (URL hint + runtime detection)
+  let currentItemId = null; // server-assigned id of the room's current media item
   let timeReportInterval = null;
   let reconcileInterval = null;
   let commandGuard = null;         // suppress outgoing events after a server command
@@ -556,7 +557,7 @@
 
       if (synced && !_endedReported && playing && isFinite(dur) && dur > MIN_ENDED_DURATION_S && pos >= dur - VIDEO_ENDED_TAIL_S) {
         _endedReported = true;
-        if (port) port.postMessage({ type: EVT.VIDEO_ENDED });
+        if (port) port.postMessage({ type: EVT.VIDEO_ENDED, item_id: currentItemId });
       }
     }, STATE_REPORT_TICK_MS);
   }
@@ -957,6 +958,7 @@
     if (msg.type === EVT.COMMAND_INITIAL_STATE) {
       if (msg.current_url) setSyncedUrl(msg.current_url);
       if (msg.is_live != null) isLive = !!msg.is_live;
+      if (msg.current_item_id != null) currentItemId = msg.current_item_id;
       tryAutoSync();
       return;
     }
@@ -989,6 +991,7 @@
 
       if (msg.current_url) setSyncedUrl(msg.current_url);
       if (msg.is_live != null) isLive = !!msg.is_live;
+      if (msg.current_item_id != null) currentItemId = msg.current_item_id;
 
       hideJoinToast();
       _log("synced! expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
@@ -1028,6 +1031,11 @@
         isLive = !!msg.is_live;
         _lastPushedLive = isLive;
       }
+      if (msg.item_id != null) currentItemId = msg.item_id;
+      // Reset the local _endedReported guard when the room moves on.
+      // Otherwise an extension tab that already ended the previous
+      // video would refuse to send :ended for the next one.
+      _endedReported = false;
 
       // navigate=true: the new video is extension-required, so the BG would
       // otherwise close this tab and force a re-open. Reuse it instead —

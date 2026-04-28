@@ -160,6 +160,7 @@ let currentSyncedUrl = null;
 let currentSourceType = null;
 let currentQueueSize = 0;
 let currentIsLive = false;
+let currentItemId = null;
 
 // NTP-style clock sync state.
 // serverMonotonicMs ≈ Date.now() + clockOffset
@@ -285,12 +286,14 @@ function handleContentMessage(msg, port, tabId) {
           if (resp.current_source_type) currentSourceType = resp.current_source_type;
           if (resp.queue_size != null) currentQueueSize = resp.queue_size;
           if (resp.is_live != null) currentIsLive = !!resp.is_live;
+          if (resp.current_item_id != null) currentItemId = resp.current_item_id;
           port.postMessage({
             type: EVT.COMMAND_INITIAL_STATE,
             play_state: resp.play_state,
             current_time: resp.current_time,
             server_time: resp.server_time,
             current_url: resp.current_url,
+            current_item_id: resp.current_item_id,
             queue_size: resp.queue_size,
             is_live: !!resp.is_live,
           });
@@ -307,6 +310,7 @@ function handleContentMessage(msg, port, tabId) {
           if (resp.current_source_type) currentSourceType = resp.current_source_type;
           if (resp.queue_size != null) currentQueueSize = resp.queue_size;
           if (resp.is_live != null) currentIsLive = !!resp.is_live;
+          if (resp.current_item_id != null) currentItemId = resp.current_item_id;
           // Broadcast command:synced directly — the content script will
           // seek + play/pause itself based on the play_state/current_time.
           // (Stage-2 simplification: no preceding CMD:play/pause dance.)
@@ -316,6 +320,7 @@ function handleContentMessage(msg, port, tabId) {
             current_time: resp.current_time,
             server_time: resp.server_time,
             current_url: resp.current_url,
+            current_item_id: resp.current_item_id,
             queue_size: resp.queue_size,
             is_live: !!resp.is_live,
           };
@@ -338,7 +343,10 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case EVT.VIDEO_ENDED:
-      if (channel) channel.push(EVT.CHAN_VIDEO_ENDED, {});
+      if (channel) {
+        const payload = msg.item_id ? { item_id: msg.item_id } : {};
+        channel.push(EVT.CHAN_VIDEO_ENDED, payload);
+      }
       break;
 
     case EVT.VIDEO_STATE:
@@ -542,6 +550,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
       currentSyncedUrl = mi.url;
       currentSourceType = mi.source_type;
       currentIsLive = !!mi.is_live;
+      currentItemId = mi.id || null;
     }
 
     autoplayCountdownActive = false;
@@ -565,6 +574,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
         source_id: mi.source_id,
         title: mi.title,
         is_live: !!mi.is_live,
+        item_id: mi.id || null,
         navigate: true,
       });
     } else {

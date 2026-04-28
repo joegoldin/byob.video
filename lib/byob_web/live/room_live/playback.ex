@@ -38,7 +38,14 @@ defmodule ByobWeb.RoomLive.Playback do
     {:noreply, socket}
   end
 
+  def handle_ended(%{"item_id" => item_id}, socket) when is_binary(item_id) do
+    RoomServer.video_ended(socket.assigns.room_pid, item_id)
+    {:noreply, socket}
+  end
+
   def handle_ended(%{"index" => index}, socket) do
+    # Backward-compat path for clients still on v6.5.42 or older
+    # that haven't reloaded since the deploy.
     RoomServer.video_ended(socket.assigns.room_pid, index)
     {:noreply, socket}
   end
