@@ -3,6 +3,28 @@
 
 ---
 
+# v6.5.40
+
+### Drop `tabs` permission (Chrome Web Store rejection)
+
+The `tabs` permission was added in v6.5.30 alongside the
+`BYOB_FOCUS_EXTERNAL` self-heal path that calls
+`chrome.tabs.get(tabId)` from the service worker. The only
+field that call reads is `tab.windowId`, which is a non-
+sensitive Tab property and is available without the `tabs`
+permission. None of the other `chrome.tabs.*` calls in
+background.js (`onRemoved`, `remove`, `update`) require
+`tabs` either, and no code path reads `url`, `title`,
+`favIconUrl`, or `pendingUrl` from a Tab object.
+
+Chrome Web Store rejected v6.5.30 on this exact basis
+(violation Purple Potassium). Dropped from both manifests
+to comply.
+
+Extension republish for both stores; no server changes.
+
+---
+
 # v6.5.39
 
 ### Warm clockSync immediately on LV reconnect

@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "byob - Bring Your Own Binge",
-  "version": "6.5.39",
+  "version": "6.5.40",
   "description": "Syncs video playback with byob.video rooms",
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage"],
   "host_permissions": ["<all_urls>"],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src ws: wss: http: https:;"
