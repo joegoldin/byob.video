@@ -3,6 +3,36 @@
 
 ---
 
+# v6.5.44
+
+### Tab-title notification badge while backgrounded
+
+When the room tab is in the background (other tab focused, or
+window minimised) and a notable event happens — someone joins
+or leaves, a video is queued, the queue advances, a roulette
+or vote winner is decided — the document title is now prefixed
+with `(N) ` so the count shows up in the OS / browser tab list.
+On switching back to the tab, the count resets to 0 and the
+title goes back to "byob | bring your own binge".
+
+Implementation: server pushes a new `notify` event from
+`handle_room_presence` (joined / left) and from
+`handle_activity_log_entry` for action ∈ `[:added, :now_playing,
+:roulette_winner, :vote_winner]`. Excluded from notifications
+on purpose: `:play / :pause / :seeked / :renamed /
+:round_cancelled / :finished / :skipped / :played` — those fire
+constantly during normal viewing and would spam the title.
+
+Client-side `TabNotifier` hook (mounted on a hidden div in
+the room LV) tracks `document.hidden` via `visibilitychange`,
+counts unread `notify` events while hidden, and re-renders
+`document.title`. Reset is automatic on the next visibility
+flip.
+
+Server / LV / main-page-JS only — no extension republish.
+
+---
+
 # v6.5.43
 
 ### Validate `:video_ended` by item id, not queue index

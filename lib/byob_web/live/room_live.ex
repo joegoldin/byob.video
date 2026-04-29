@@ -523,6 +523,7 @@ defmodule ByobWeb.RoomLive do
       users={@users}
     />
     <Components.autoplay_help_modal />
+    <div id="byob-tab-notifier" phx-hook="TabNotifier" class="hidden"></div>
 
     <div
       id="byob-nicknames-root"

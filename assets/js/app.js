@@ -329,6 +329,43 @@ const liveSocket = new LiveSocket("/live", Socket, {
       beforeUpdate() { this._wasOpen = this.el.open; },
       updated() { if (this._wasOpen && !this.el.open) this.el.showModal(); }
     },
+    // Tab-title notification badge. While the tab is hidden, count
+    // server-pushed `notify` events (joins / leaves / queue adds /
+    // round winners) and prefix document.title with `(N) `. Reset
+    // on visibilitychange to visible.
+    TabNotifier: {
+      mounted() {
+        this._count = 0;
+        this._origTitle = document.title.replace(/^\(\d+\)\s+/, "");
+        this._onVisibilityChange = () => {
+          if (!document.hidden) this._reset();
+        };
+        document.addEventListener("visibilitychange", this._onVisibilityChange);
+        this.handleEvent(LV_EVT.NOTIFY, () => {
+          if (!document.hidden) return;
+          this._count++;
+          this._render();
+        });
+      },
+      destroyed() {
+        if (this._onVisibilityChange) document.removeEventListener("visibilitychange", this._onVisibilityChange);
+        this._reset();
+      },
+      _render() {
+        // Re-derive the original from the current title — LV may have
+        // updated it for other reasons since mount.
+        const stripped = document.title.replace(/^\(\d+\)\s+/, "");
+        if (stripped) this._origTitle = stripped;
+        document.title = this._count > 0
+          ? `(${this._count}) ${this._origTitle}`
+          : this._origTitle;
+      },
+      _reset() {
+        if (this._count === 0) return;
+        this._count = 0;
+        this._render();
+      },
+    },
     PreserveDetails: {
       beforeUpdate() { this._wasOpen = this.el.open; },
       updated() { this.el.open = this._wasOpen; }

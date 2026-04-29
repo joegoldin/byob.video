@@ -60,6 +60,7 @@ defmodule Byob.Events do
   def sponsor_segments, do: "sponsor:segments"
   def sb_settings, do: "sb:settings"
   def live_status, do: "live:status"
+  def notify, do: "notify"
 
   # ── LV handle_event (browser VideoPlayer → LiveView) ────────────────────
   def ev_video_play, do: "video:play"

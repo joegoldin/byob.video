@@ -44,7 +44,16 @@ defmodule ByobWeb.RoomLive.PubSub do
         true -> "#{username} left the room"
       end
 
-    {:noreply, push_event(socket, Events.toast(), %{text: text})}
+    socket = push_event(socket, Events.toast(), %{text: text})
+
+    socket =
+      if event in [Events.presence_joined(), Events.presence_left()] do
+        push_event(socket, Events.notify(), %{text: text})
+      else
+        socket
+      end
+
+    {:noreply, socket}
   end
 
   def handle_queue_updated(%{queue: queue, current_index: current_index}, socket) do
@@ -203,9 +212,19 @@ defmodule ByobWeb.RoomLive.PubSub do
   def handle_activity_log_entry(entry, socket) do
     log = Enum.take([entry | socket.assigns.activity_log], 50)
     socket = assign(socket, activity_log: log)
+    text = ByobWeb.RoomLive.Components.format_log_entry(entry)
     # Push toast to client
+    socket = push_event(socket, Events.toast(), %{text: text})
+
+    # Notification-worthy: queue churn + round winners. Excludes
+    # play / pause / seek / renamed / round_cancelled — those fire
+    # constantly during normal use and would spam the tab title.
     socket =
-      push_event(socket, Events.toast(), %{text: ByobWeb.RoomLive.Components.format_log_entry(entry)})
+      if entry.action in [:added, :now_playing, :roulette_winner, :vote_winner] do
+        push_event(socket, Events.notify(), %{text: text})
+      else
+        socket
+      end
 
     {:noreply, socket}
   end
