@@ -28,7 +28,7 @@ defmodule Byob.Pool.Sources.Trending do
 
   defp do_fetch(api_key) do
     params = [
-      part: "snippet,contentDetails",
+      part: "snippet,contentDetails,status",
       chart: "mostPopular",
       regionCode: @region,
       maxResults: @max_results,
@@ -63,6 +63,7 @@ defmodule Byob.Pool.Sources.Trending do
       channel: meta[:author_name],
       duration_s: meta[:duration],
       thumbnail_url: meta[:thumbnail_url],
+      embeddable: Map.get(meta, :embeddable, true),
       score: rank
     }
   end

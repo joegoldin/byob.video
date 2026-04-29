@@ -3,6 +3,49 @@
 
 ---
 
+# v6.5.45
+
+### Validate roulette / vote candidates are embeddable + have a thumbnail
+
+Pool entries (used as roulette / voting candidates) could land
+in a round without a thumbnail, or — worse — flip the player
+into the embed-blocked fallback when the spinner / vote winner
+ended up being a video YouTube no longer allows external
+playback for. Both happened because the pool sources didn't
+require either field at upsert and the pick path didn't re-
+validate.
+
+Two layers of defence:
+
+**At upsert.** `Byob.Pool.valid_entry?` now requires a non-
+empty `thumbnail_url` and rejects entries whose `embeddable`
+flag is explicitly `false`. The trending source now requests
+the `status` part from the YT Data API so it actually knows
+the answer (curated + subreddit either have status from
+elsewhere or already build a fallback thumbnail URL).
+
+**At pick.** `start_round` over-fetches 3× the target and
+walks each candidate through `Byob.YouTube.Videos.fetch/1`
+in parallel (`Task.async_stream`, max 12 concurrent, 3 s
+timeout). Cached lookups are essentially free; uncached are
+HTTP but parallel, so total latency stays sub-second for
+typical pool sizes. Any candidate the API returns
+`embeddable: false` for, or that we can't pull a thumbnail
+URL for from any source, is dropped before the round
+broadcasts. Missing pool fields (duration / title / thumb)
+get backfilled from the API response in the same pass.
+
+Graceful degradation: if the API itself is down (quota /
+network error), candidates that already have a thumbnail
+in the pool row are kept rather than dropping the entire
+round to "no candidates available". The worst case under
+that path is a non-embeddable winner, which the existing
+LV embed-blocked fallback UI handles.
+
+Server-only / no extension republish.
+
+---
+
 # v6.5.44
 
 ### Tab-title notification badge while backgrounded

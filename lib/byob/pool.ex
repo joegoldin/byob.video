@@ -140,10 +140,14 @@ defmodule Byob.Pool do
     chosen ++ picked
   end
 
-  defp valid_entry?(%{source_type: st, external_id: id, title: t})
+  defp valid_entry?(%{source_type: st, external_id: id, title: t, thumbnail_url: thumb} = e)
        when st in @sources and is_binary(id) and is_binary(t) and byte_size(id) > 0 and
-              byte_size(t) > 0,
-       do: true
+              byte_size(t) > 0 and is_binary(thumb) and byte_size(thumb) > 0 do
+    # Don't admit entries flagged non-embeddable. Sources that don't
+    # request the `status` part default to `embeddable: true`, so this
+    # only filters when we explicitly know the answer.
+    Map.get(e, :embeddable, true) != false
+  end
 
   defp valid_entry?(_), do: false
 end

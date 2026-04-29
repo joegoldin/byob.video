@@ -1034,42 +1034,58 @@ defmodule Byob.RoomServer do
         :roulette -> 12
       end
 
-    case Byob.Pool.pick_candidates(queue_ids, total_target) do
-      {:ok, candidates} ->
-        candidate_maps =
-          Enum.map(candidates, fn row ->
-            %{
-              external_id: row.external_id,
-              title: row.title,
-              channel: row.channel,
-              duration_s: row.duration_s,
-              thumbnail_url: row.thumbnail_url,
-              source_type: row.source_bucket || row.source_type
+    # Over-fetch and validate via the cached YT Data API so we never
+    # hand the user a non-embeddable winner or a thumbnail-less tile
+    # in the spinner / vote grid. Cached lookups are essentially free;
+    # uncached are HTTP but parallel so total latency stays sub-second
+    # for typical pool sizes.
+    case Byob.Pool.pick_candidates(queue_ids, total_target * 3) do
+      {:ok, raw_candidates} ->
+        case validate_pool_candidates(raw_candidates) |> Enum.take(total_target) do
+          [] ->
+            {:reply, {:error, :no_candidates}, state}
+
+          candidates ->
+            candidate_maps =
+              Enum.map(candidates, fn row ->
+                %{
+                  external_id: row.external_id,
+                  title: row.title,
+                  channel: row.channel,
+                  duration_s: row.duration_s,
+                  thumbnail_url: row.thumbnail_url,
+                  source_type: row.source_bucket || row.source_type
+                }
+              end)
+
+            round = Round.new(mode, user_id, candidate_maps)
+
+            duration =
+              case mode do
+                :voting -> Round.vote_duration_ms()
+                :roulette -> Round.roulette_duration_ms()
+              end
+
+            expire_ref = Process.send_after(self(), {:round_expire, round.id}, duration)
+
+            state = %{
+              state
+              | round: round,
+                round_expire_ref: expire_ref,
+                round_last_broadcast_ms: 0
             }
-          end)
 
-        round = Round.new(mode, user_id, candidate_maps)
+            state =
+              log_activity(
+                state,
+                if(mode == :voting, do: :vote_started, else: :roulette_started),
+                user_id,
+                nil
+              )
 
-        duration =
-          case mode do
-            :voting -> Round.vote_duration_ms()
-            :roulette -> Round.roulette_duration_ms()
-          end
-
-        expire_ref = Process.send_after(self(), {:round_expire, round.id}, duration)
-
-        state = %{state | round: round, round_expire_ref: expire_ref, round_last_broadcast_ms: 0}
-
-        state =
-          log_activity(
-            state,
-            if(mode == :voting, do: :vote_started, else: :roulette_started),
-            user_id,
-            nil
-          )
-
-        broadcast(state, {:round_started, snapshot_round(round)})
-        {:reply, {:ok, round}, state}
+            broadcast(state, {:round_started, snapshot_round(round)})
+            {:reply, {:ok, round}, state}
+        end
 
       {:error, :no_candidates} ->
         {:reply, {:error, :no_candidates}, state}
@@ -1361,6 +1377,50 @@ defmodule Byob.RoomServer do
           err -> err
         end
     end
+  end
+
+  # Walk the pool candidates in parallel, dropping any that the YT
+  # Data API flags as non-embeddable or that we can't pull a thumbnail
+  # for. Backfill missing pool fields (some sources skip duration /
+  # thumbnail). When the API itself is down (quota / network), keep
+  # entries that already have a thumbnail — the worst case is a
+  # non-embeddable winner that the user-facing fallback handles, vs.
+  # serving no candidates at all.
+  defp validate_pool_candidates(candidates) do
+    candidates
+    |> Task.async_stream(
+      fn c ->
+        case Byob.YouTube.Videos.fetch(c.external_id) do
+          {:ok, %{embeddable: false}} ->
+            :reject
+
+          {:ok, meta} ->
+            thumb = c.thumbnail_url || meta[:thumbnail_url]
+
+            if thumb do
+              {:keep,
+               %{
+                 c
+                 | thumbnail_url: thumb,
+                   duration_s: c.duration_s || meta[:duration],
+                   title: c.title || meta[:title]
+               }}
+            else
+              :reject
+            end
+
+          {:error, _} ->
+            if c.thumbnail_url, do: {:keep, c}, else: :reject
+        end
+      end,
+      max_concurrency: 12,
+      timeout: 3_000,
+      on_timeout: :kill_task
+    )
+    |> Enum.flat_map(fn
+      {:ok, {:keep, c}} -> [c]
+      _ -> []
+    end)
   end
 
   defp snapshot(state) do
