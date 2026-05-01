@@ -3,6 +3,25 @@
 
 ---
 
+# v6.8.4
+
+### Diagnostic logging in SyncDecision L-observation
+
+Production logs after v6.8.3 show learned_L=0 across 10 consecutive
+seeks for one peer — the L observation should fire after the second
+post-seek drift report (~1.5-2 s window) and update `learned_L`.
+Math says it should. Log says it doesn't. Adding visibility:
+
+`maybe_observe_l` now emits Logger.info with `sample`, `drift`,
+`last_overshoot`, and the resulting `learned_L` (or rejection
+reason) every time it processes a drift report after a seek. Will
+show in `fly logs | grep L-observe` whether the observation is
+firing at all, and if so what numbers it's seeing.
+
+Server-only / no extension republish.
+
+---
+
 # v6.8.3
 
 ### Stuck-peer handling: drop streak cap, use median for clock adjust

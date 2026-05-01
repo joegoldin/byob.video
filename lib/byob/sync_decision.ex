@@ -232,33 +232,57 @@ defmodule Byob.SyncDecision do
   #                    ≈ overshoot - L_seek (if overshoot was applied symmetrically)
   # So L_seek ≈ overshoot - drift_after_seek.
   defp maybe_observe_l(state, data, now_ms) do
-    if state.observation_pending and
-         state.last_seek_at > 0 and
-         now_ms - state.last_seek_at >= @l_observation_after_seek_ms do
-      sample = state.last_overshoot_ms - (data.drift_ms || 0)
+    require Logger
+    user_short = data |> Map.get(:user_id, "?") |> to_string() |> String.slice(0..7)
 
-      cond do
-        sample < @l_observation_min_sample_ms ->
-          # Drift went positive (we overshot too far) or stayed near 0 —
-          # consume the observation but don't pollute the EMA with it.
-          %{state | observation_pending: false}
+    cond do
+      not state.observation_pending ->
+        state
 
-        sample > @l_observation_max_sample_ms ->
-          # Wild outlier (probably an unrelated event during the window).
-          %{state | observation_pending: false}
+      state.last_seek_at <= 0 ->
+        state
 
-        true ->
-          new_l =
-            if state.learned_l_ms == 0 do
-              sample
-            else
-              @l_ema_alpha * sample + (1 - @l_ema_alpha) * state.learned_l_ms
-            end
+      now_ms - state.last_seek_at < @l_observation_after_seek_ms ->
+        state
 
-          %{state | learned_l_ms: new_l, observation_pending: false}
-      end
-    else
-      state
+      true ->
+        sample = state.last_overshoot_ms - (data.drift_ms || 0)
+
+        cond do
+          sample < @l_observation_min_sample_ms ->
+            Logger.info(
+              "[sync_decision] user=#{user_short} L-observe rejected (low) " <>
+                "sample=#{Float.round(sample * 1.0, 1)}ms drift=#{data.drift_ms}ms " <>
+                "last_overshoot=#{Float.round(state.last_overshoot_ms * 1.0, 1)}ms"
+            )
+
+            %{state | observation_pending: false}
+
+          sample > @l_observation_max_sample_ms ->
+            Logger.info(
+              "[sync_decision] user=#{user_short} L-observe rejected (high) " <>
+                "sample=#{Float.round(sample * 1.0, 1)}ms drift=#{data.drift_ms}ms " <>
+                "last_overshoot=#{Float.round(state.last_overshoot_ms * 1.0, 1)}ms"
+            )
+
+            %{state | observation_pending: false}
+
+          true ->
+            new_l =
+              if state.learned_l_ms == 0 do
+                sample
+              else
+                @l_ema_alpha * sample + (1 - @l_ema_alpha) * state.learned_l_ms
+              end
+
+            Logger.info(
+              "[sync_decision] user=#{user_short} L-observe sample=#{Float.round(sample * 1.0, 1)}ms " <>
+                "drift=#{data.drift_ms}ms last_overshoot=#{Float.round(state.last_overshoot_ms * 1.0, 1)}ms " <>
+                "learned_L=#{Float.round(new_l * 1.0, 1)}ms"
+            )
+
+            %{state | learned_l_ms: new_l, observation_pending: false}
+        end
     end
   end
 
