@@ -73,6 +73,22 @@ export class Reconcile {
     };
   }
 
+  // Compute drift from the player's CURRENT position on demand. Used
+  // by the post-seek immediate drift report — `lastDriftMs` only
+  // updates on the 100 ms tick, which can be stale when called right
+  // after a seek lands and would otherwise report the pre-seek drift
+  // (huge), spuriously triggering a SyncDecision cascade.
+  measureDriftMs() {
+    if (!this.clockSync || !this.clockSync.isReady()) return this.lastDriftMs;
+    const now = this.clockSync.serverNow();
+    const elapsed = (now - this.serverTime) / 1000;
+    const expectedPosition = this.serverPosition + elapsed;
+    const localPosition = this.player.getCurrentTime();
+    const driftMs = (localPosition - expectedPosition) * 1000;
+    this.lastDriftMs = driftMs;
+    return driftMs;
+  }
+
   // Legacy shims kept so callers don't break. These all return 0 / no-op
   // because the server owns the equivalent state now.
   getOffsetMs() { return 0; }

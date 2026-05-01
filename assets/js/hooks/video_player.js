@@ -1672,8 +1672,13 @@ const VideoPlayer = {
     const observedL = this._lastObservedL;
     this._lastObservedL = 0;
     this._seekIssuedAt = 0;
+    // Always recompute drift from the current player position. The
+    // reconcile loop's `lastDriftMs` only refreshes every 100 ms, so
+    // an out-of-cadence post-seek report could otherwise ship the
+    // PRE-seek value and trigger a spurious SyncDecision cascade.
+    const driftMs = this.reconcile.measureDriftMs?.() ?? this.reconcile.lastDriftMs ?? 0;
     this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
-      drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
+      drift_ms: Math.round(driftMs),
       offset_ms: 0, // legacy passthrough (extension still computes one)
       rtt_ms: Math.round(this.clockSync.getMedianRttMs?.() || 0),
       noise_floor_ms: Math.round(this.reconcile.noiseFloorEmaMs || 0),

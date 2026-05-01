@@ -3,6 +3,29 @@
 
 ---
 
+# v6.8.20
+
+### Fix spurious cascade caused by stale post-seek drift report
+
+The v6.8.19 immediate post-seek drift report was reading
+`reconcile.lastDriftMs` — which only updates on the 100 ms reconcile
+tick. When pushed 50 ms after the seek landed, that value was
+typically from the tick BEFORE the seek (large pre-seek drift),
+which made `SyncDecision` think the seek had landed nowhere near
+the target and fire another compensating seek immediately. The
+sequence repeated itself, producing the 4-streak cascades the user
+was still seeing in the panel.
+
+Fix: new `Reconcile.measureDriftMs()` computes drift from
+`player.getCurrentTime()` on demand, refreshes `lastDriftMs`, and
+returns the fresh value. `_pushDriftReport()` always uses it.
+Cadence-driven reports gain nothing (they happened to land on a
+fresh tick) but the post-seek out-of-cadence report now ships
+accurate data, so SyncDecision evaluates the actual residual
+instead of the pre-seek value.
+
+---
+
 # v6.8.19
 
 ### Stop the seek dance + faster cascade + bands-diagram polish
