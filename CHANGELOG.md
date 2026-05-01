@@ -3,6 +3,34 @@
 
 ---
 
+# v6.6.4
+
+### Tolerance ceiling raised — accept what each client can actually deliver
+
+User feedback on v6.6.3: "make this whole thing dynamic so if clients
+are somehow 2 s apart and we can never sync them because jitter is
+that bad, accept it". The 1000 ms ceiling was forcing constant
+seeking on links that genuinely couldn't hold tighter sync.
+
+`MAX_TOLERANCE_MS` raised 1000 → 30 000. Effectively no hard cap;
+tolerance now scales freely with observed jitter. Pathological
+clients (e.g. cellular spike → 2 s jitter) get a 8 s tolerance band,
+peers can drift 16 s apart without correction, and we *stop fighting*.
+The 30 s value exists only to short-circuit runaway EMA values;
+nothing real reaches it.
+
+Floor stays at 600 ms (still bounded by typical YT/iOS seek-completion
+residual until adaptive-L learning lands in the server-driven rewrite).
+
+Tradeoff: peer-to-peer divergence on bad links is now bounded only by
+their actual jitter. Worse-looking numbers in pathological cases, but
+the alternative was visible audio stutter as we kept slamming seeks
+into a link that couldn't keep up. User experience strictly better.
+
+Server-only / no extension republish.
+
+---
+
 # v6.6.3
 
 ### Hotfix: revert v6.6.2 overshoot — was oscillating

@@ -39,8 +39,14 @@ const NOISE_K_TOLERANCE = 4;             // tolerance = 4 × jitter (4σ headroo
 // 600 ms floor keeps us in-band post-seek without re-seeking forever. The
 // proper fix (adaptive L learning) lives in the upcoming server-driven
 // rewrite; this is the conservative tolerance that works without it.
+//
+// No hard upper cap — if a peer's jitter is 2 s, fighting it with seeks
+// makes things worse, not better. Tolerance scales freely with observed
+// noise so the system *accepts* what each client can actually achieve.
+// 30 s "ceiling" exists only to short-circuit pathological floats /
+// runaway EMA values; in practice nothing real reaches it.
 const MIN_TOLERANCE_MS = 600;
-const MAX_TOLERANCE_MS = 1000;
+const MAX_TOLERANCE_MS = 30_000;
 const POST_SEEK_TOLERANCE_BUMP_MS = 300; // bump after a seek to absorb the −L residual
 const POST_SEEK_QUIET_MS = 5000;
 const SEEK_CONFIRM_TICKS = 3;            // 300 ms sustained over tolerance before acting
