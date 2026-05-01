@@ -485,18 +485,43 @@ defmodule ByobWeb.RoomLive do
   # Room-server-driven decision-state update. Updates the local clients-
   # map entry so the panel can render server-authoritative tolerance /
   # streak / cooldown / learned_L for the named user.
+  #
+  # Also re-pushes `sync:client_stats` to the JS layer with the merged
+  # values — the original push from handle_info({:sync_client_stats, …})
+  # ran BEFORE room_server made its decision, so it carried `tolerance_ms
+  # = 0` and the bands diagram fell back to its 100 ms default. This
+  # second push fixes the diagram with the actual server-authoritative
+  # tolerance / streak / cooldown.
   def handle_info({:user_decision_state, user_id, decision}, socket) do
     clients = Map.get(socket.assigns.sync_stats, :clients, %{})
     key = "#{user_id}:browser"
 
-    clients =
+    {clients, socket} =
       case Map.get(clients, key) do
         nil ->
-          # No drift report seen yet for this user; skip the merge.
-          clients
+          {clients, socket}
 
         entry ->
-          Map.put(clients, key, Map.merge(entry, decision))
+          merged = Map.merge(entry, decision)
+          new_clients = Map.put(clients, key, merged)
+
+          socket =
+            Phoenix.LiveView.push_event(socket, Events.sync_client_stats(), %{
+              key: key,
+              user_id: user_id,
+              drift_ms: Map.get(merged, :drift_ms, 0),
+              offset_ms: Map.get(merged, :offset_ms, 0),
+              rtt_ms: Map.get(merged, :rtt_ms, 0),
+              noise_floor_ms: Map.get(merged, :noise_floor_ms, 0),
+              room_jitter_ms: room_jitter_from_clients(clients),
+              tolerance_ms: Map.get(merged, :tolerance_ms, 0),
+              seek_streak: Map.get(merged, :seek_streak, 0),
+              cooldown_remaining_ms: Map.get(merged, :cooldown_remaining_ms, 0),
+              learned_l_ms: Map.get(merged, :learned_l_ms, 0),
+              play_state: Map.get(merged, :play_state, "playing")
+            })
+
+          {new_clients, socket}
       end
 
     sync_stats = Map.put(socket.assigns.sync_stats, :clients, clients)
@@ -608,6 +633,18 @@ defmodule ByobWeb.RoomLive do
 
   def handle_info(_msg, socket) do
     {:noreply, socket}
+  end
+
+  defp room_jitter_from_clients(clients) do
+    now_s = System.system_time(:second)
+
+    clients
+    |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
+    |> Enum.map(fn {_, c} -> Map.get(c, :noise_floor_ms, 0) end)
+    |> case do
+      [] -> 0
+      list -> Enum.max(list)
+    end
   end
 
   # Render

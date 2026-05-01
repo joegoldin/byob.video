@@ -3,6 +3,35 @@
 
 ---
 
+# v6.8.8
+
+### Fix bands diagram showing stale tolerance / streak
+
+After v6.8.5 moved SyncDecision into room_server, the LV's
+`handle_info({:sync_client_stats, ...})` was pushing the JS event
+*before* room_server's decision had run. The push carried
+`tolerance_ms = 0` (defaulted to 100 ms client-side), `seek_streak =
+0`, etc. — bands diagram couldn't tell where the user actually was
+relative to tolerance.
+
+The decision-state arrived ~ms later as a separate
+`:user_decision_state` broadcast, which only updated server-rendered
+panel rows (read from clients map) but never re-pushed to JS.
+
+Symptom: panel says "Drift tolerance ±300 ms" but the bands diagram
+plots drift -109 ms in the red "Re-syncing now" zone (because it
+thinks tolerance is 100). Streak shows 5 in the panel but the
+diagram doesn't see the live updates.
+
+Fix: when LV receives `:user_decision_state`, also push a fresh
+`sync:client_stats` JS event with the merged values. JS now sees
+the server-authoritative tolerance / streak / cooldown / learned_L
+on every update.
+
+Server-only / no extension republish.
+
+---
+
 # v6.8.7
 
 ### More L-observation diagnostic logging
