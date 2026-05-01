@@ -261,6 +261,7 @@ defmodule ByobWeb.RoomLive.Components do
   attr :sync_stats, :any, default: nil
   attr :users, :any, default: %{}
   attr :user_id, :string, default: nil
+  attr :play_state, :atom, default: :paused
 
   def settings_modal(assigns) do
     ~H"""

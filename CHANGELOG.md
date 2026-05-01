@@ -3,6 +3,27 @@
 
 ---
 
+# v6.5.53
+
+### Hotfix: pass play_state to settings_modal (KeyError → reload loop)
+
+v6.5.52's new "Server position" row in the stats panel reads
+`@play_state` to decide whether to extrapolate the freshest peer's
+position forward to render time. But `settings_modal` doesn't
+declare `:play_state` as an attr, so accessing `@play_state`
+inside it raised `KeyError` on every re-render of the modal in
+production. Each `:sync_client_stats` (1 Hz / peer) blew up the
+LV process; the auto-reload-on-disconnect timer in `app.js` then
+reloaded the page every 30 s, in a loop.
+
+Fix: declare `attr :play_state, :atom, default: :paused` on
+`settings_modal/1` and pass `play_state={@play_state}` from
+`room_live`.
+
+Server-only / no extension republish.
+
+---
+
 # v6.5.52
 
 ### Drift tolerance honors room-wide drift spread, not just jitter

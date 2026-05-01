@@ -586,6 +586,7 @@ defmodule ByobWeb.RoomLive do
       sync_stats={@sync_stats}
       users={@users}
       user_id={@user_id}
+      play_state={@play_state}
     />
     <Components.autoplay_help_modal />
     <div id="byob-tab-notifier" phx-hook="TabNotifier" class="hidden"></div>
