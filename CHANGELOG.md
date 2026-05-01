@@ -3,6 +3,52 @@
 
 ---
 
+# v6.8.19
+
+### Stop the seek dance + faster cascade + bands-diagram polish
+
+**User scrubs no longer drag the room clock toward slow peers.**
+After a user-initiated seek, `RoomServer.handle_call({:seek, …})`
+stamps `last_user_seek_at_global = now`. The periodic
+`:adjust_room_clock` skips its drift-driven shift while inside
+`@user_seek_clock_freeze_ms` (5 s). Result: when iPhone (slow
+`L_processing`) scrubs, its post-seek `-L_iphone` drift while it
+settles can no longer drag the canonical clock toward it. Other
+peers stay anchored where they originally landed; iPhone catches
+up via SyncDecision compensation; **no dance** between them.
+
+**Faster cascade — immediate drift report when a sync seek lands.**
+`_onPlayerStateChange` now schedules a 50 ms-deferred
+`_pushDriftReport()` after the post-seek L measurement. SyncDecision
+sees the post-seek drift in `~L_actual + 50 + transit` instead of
+`~L_actual + (up to 500 ms cadence wait) + transit`. Combined with
+the v6.8.18 cooldown drop and `sustained_required = 1`, three
+cascade seeks for an iPhone-class peer now compress to ~2.4 s
+(formerly ~5 s); fast peers under 1 s. Drift-report payload
+extracted into `_pushDriftReport()` so the cadence interval and
+the post-seek path share one source of truth.
+
+### Bands diagram
+
+- **Display-max cap.** `displayMax` now caps at `tolerance × 2.5`
+  even if a peer is much further off. End labels show `≤±cap` and
+  the status line appends `· peer max ±Xms` so the actual
+  worst-peer drift isn't lost. Without this, one 4 s-off peer was
+  squashing the in-tolerance bands into an illegible center sliver.
+- **No more weird "yellow lines" between bands when green is
+  active.** Dividers are now drawn only next to the active band
+  (jitter → 2 dividers, tolerated → 4, seek → 2). Dim-on-dim
+  yellow→red boundaries no longer get a bright line drawn over
+  them.
+- **Green "in sync" zone is 3× jitter.** New
+  `IN_SYNC_JITTER_FACTOR = 3` constant. Status text still shows
+  the raw jitter EMA; the visualised band (and the
+  `active === "jitter"` decision) uses 3 × that, clamped to
+  tolerance. Casual sub-noise drift now reads as comfortably
+  in-sync instead of pinned to a thin center strip.
+
+---
+
 # v6.8.18
 
 ### Ready-then-play handshake + sub-1.5 s convergence

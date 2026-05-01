@@ -60,7 +60,16 @@ defmodule Byob.RoomServer do
     # `media_loaded_for` maps user_id → item_id (cleared on each change).
     # `ready_check_timer` is the timeout fallback (8 s default).
     media_loaded_for: %{},
-    ready_check_timer: nil
+    ready_check_timer: nil,
+    # Wall-clock timestamp (monotonic ms) of the most recent
+    # user-initiated seek, regardless of who issued it. While the room
+    # is within @user_seek_clock_freeze_ms of this, `:adjust_room_clock`
+    # skips its drift-driven shift — otherwise the originator's natural
+    # post-seek drift (player still settling at the new position) would
+    # drag the canonical clock toward them and force every other peer
+    # to seek again to stay aligned. Five seconds is enough for even a
+    # slow phone to settle.
+    last_user_seek_at_global: 0
   ]
 
   @autoplay_countdown_ms 5_000
@@ -77,6 +86,12 @@ defmodule Byob.RoomServer do
   # we broadcast :sync_play anyway. Long enough for cold YT loads on
   # mobile, short enough that one stuck peer doesn't strand the room.
   @ready_check_timeout_ms 8_000
+  # How long after a user-initiated seek to keep the room clock
+  # frozen. The originator's player is still settling at the new
+  # position during this window; their drift contribution would
+  # otherwise pull the room clock toward them and force every other
+  # peer to seek again. 5 s covers iPhone-class L_processing.
+  @user_seek_clock_freeze_ms 5_000
 
   # Room-wide clock adjustment: minimize all peers' |drift| toward 0 by
   # shifting the canonical reference. Strategy depends on sign uniformity:
@@ -306,6 +321,7 @@ defmodule Byob.RoomServer do
             clock_adjust_ref: nil,
             media_loaded_for: %{},
             ready_check_timer: nil,
+            last_user_seek_at_global: 0,
             users: Enum.into(saved.users, %{}, fn {k, v} -> {k, %{v | connected: false}} end)
           })
 
@@ -829,7 +845,12 @@ defmodule Byob.RoomServer do
           state
           | current_time: position,
             last_sync_at: now,
-            last_seek_at: Map.put(state.last_seek_at, user_id, now)
+            last_seek_at: Map.put(state.last_seek_at, user_id, now),
+            # Freeze clock-adjust for @user_seek_clock_freeze_ms so the
+            # originator's natural -L_processing drift while their
+            # player settles doesn't drag the room clock toward them
+            # (which would force every other peer to re-seek).
+            last_user_seek_at_global: now
         }
 
         # Only log meaningful seeks (>3s jump, not from 0:00)
@@ -1519,12 +1540,23 @@ defmodule Byob.RoomServer do
       |> Enum.filter(fn {_, %{updated_at: t}} -> now - t < @drift_sample_stale_ms end)
       |> Enum.map(fn {_, %{drift_ms: d}} -> d end)
 
+    user_seek_recent? =
+      state.last_user_seek_at_global > 0 and
+        now - state.last_user_seek_at_global < @user_seek_clock_freeze_ms
+
     state =
       cond do
         length(active_drifts) < 2 ->
           state
 
         state.play_state != :playing ->
+          state
+
+        user_seek_recent? ->
+          # A user just scrubbed; the originator's player is settling
+          # and their large negative drift would otherwise drag the
+          # room clock toward them, forcing every other peer to seek
+          # again to stay aligned with the shifted reference.
           state
 
         true ->

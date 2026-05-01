@@ -142,37 +142,15 @@ const VideoPlayer = {
     this._resizeHandler = () => this._sizePlayer();
     window.addEventListener("resize", this._resizeHandler);
 
-    // Report drift + learned offset so the "Stats for nerds" panel can show
-    // this browser's local player alongside extension clients. 1s cadence is
-    // plenty (panel prunes > 5s stale).
-    this._driftReportInterval = setInterval(() => {
-      if (!this.player || !this.isReady) return;
-      if (!this.clockSync?.isReady?.()) return;
-      // Live content has no meaningful position drift — let the
-      // player handle live-edge sync internally and skip the report
-      // so peers see "no drift data" rather than misleading numbers.
-      if (this._isLive) return;
-      const state = this.player.getState?.();
-      // Server-authoritative model: client only sends raw measurements.
-      // Tolerance / seek_streak / cooldown live in `Byob.SyncDecision` on
-      // the server now, computed per-user from the room's full picture.
-      // observed_l_ms: most recent measured seek-to-playing latency.
-      // Sent once per measurement, then cleared so a stale value
-      // doesn't get re-applied. _seekIssuedAt is cleared too so any
-      // PLAYING events past this point (e.g. a much-later un-pause)
-      // don't get charged against the seek that just settled.
-      const observedL = this._lastObservedL;
-      this._lastObservedL = 0;
-      this._seekIssuedAt = 0;
-      this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
-        drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
-        offset_ms: 0, // legacy passthrough (extension still computes one)
-        rtt_ms: Math.round(this.clockSync.getMedianRttMs?.() || 0),
-        noise_floor_ms: Math.round(this.reconcile.noiseFloorEmaMs || 0),
-        observed_l_ms: Math.round(observedL),
-        playing: state === "playing",
-      });
-    }, DRIFT_REPORT_INTERVAL_MS);
+    // Report drift + observed L on a regular cadence so the panel
+    // and SyncDecision have fresh data. The same helper is also
+    // invoked immediately on seek-land (see _pushDriftReport callers
+    // in _onPlayerStateChange) so server-driven cascades don't have
+    // to wait for the next 500 ms tick.
+    this._driftReportInterval = setInterval(
+      () => this._pushDriftReport(),
+      DRIFT_REPORT_INTERVAL_MS
+    );
 
     // Auto-detect live vs VOD. The URL parser sets is_live on a
     // best-effort basis (youtube.com/live/<id>, twitch.tv/<channel>),
@@ -604,6 +582,18 @@ const VideoPlayer = {
         const elapsed = performance.now() - this._seekIssuedAt;
         if (elapsed >= 50 && elapsed < 3000) {
           this._lastObservedL = elapsed;
+          // Push an out-of-cadence drift report so SyncDecision can
+          // fire the next compensating seek immediately instead of
+          // waiting up to 500 ms for the regular interval. Most
+          // useful on slow-L devices (iPhone YT IFrame) where each
+          // saved cadence wait compounds across cascading seeks.
+          // Tiny defer (50 ms) lets the player's getCurrentTime()
+          // reflect the post-seek position before we measure drift.
+          if (this._postSeekReportTimer) clearTimeout(this._postSeekReportTimer);
+          this._postSeekReportTimer = setTimeout(() => {
+            this._postSeekReportTimer = null;
+            this._pushDriftReport();
+          }, 50);
         }
       }
     }
@@ -1666,6 +1656,30 @@ const VideoPlayer = {
     if (!overlay) return;
     overlay.style.opacity = "0";
     setTimeout(() => overlay.remove(), 200);
+  },
+
+  // Push a single drift report to the server. Called both by the
+  // regular cadence interval AND immediately when a sync seek lands
+  // (so SyncDecision can fire the next compensating seek without
+  // waiting for the next cadence tick — typically ~250 ms shaved off
+  // each cascade iteration). `observed_l_ms` and `_seekIssuedAt` are
+  // cleared after sending so a stale value doesn't get re-applied.
+  _pushDriftReport() {
+    if (!this.player || !this.isReady) return;
+    if (!this.clockSync?.isReady?.()) return;
+    if (this._isLive) return;
+    const state = this.player.getState?.();
+    const observedL = this._lastObservedL;
+    this._lastObservedL = 0;
+    this._seekIssuedAt = 0;
+    this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
+      drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
+      offset_ms: 0, // legacy passthrough (extension still computes one)
+      rtt_ms: Math.round(this.clockSync.getMedianRttMs?.() || 0),
+      noise_floor_ms: Math.round(this.reconcile.noiseFloorEmaMs || 0),
+      observed_l_ms: Math.round(observedL),
+      playing: state === "playing",
+    });
   },
 
   _pause() {

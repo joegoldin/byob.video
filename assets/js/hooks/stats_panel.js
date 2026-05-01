@@ -270,16 +270,29 @@ function renderDriftBands(host, data) {
   // can't exceed the inner area.
   const roomJitter = Math.max(0, data.room_jitter_ms || 0);
   const localJitter = Math.max(0, data.noise_floor_ms || 0);
-  const jitterBand = Math.max(1, Math.min(Math.max(roomJitter, localJitter), tolerance));
+  // Raw jitter EMA used for status text; the visualised in-sync band
+  // expands to 3× that so casual drift inside the noise floor reads
+  // as comfortably "in sync" instead of pinned to a thin center
+  // strip. Clamped to tolerance so green can't spill into yellow.
+  const rawJitter = Math.max(1, Math.max(roomJitter, localJitter));
+  const IN_SYNC_JITTER_FACTOR = 3;
+  const jitterBand = Math.min(rawJitter * IN_SYNC_JITTER_FACTOR, tolerance);
   const cooldownRemaining = data.cooldown_remaining_ms || 0;
   const seekStreak = data.seek_streak || 0;
 
   // Linear ms → % mapping over [-displayMax, +displayMax]. The scale
   // floor is 2× tolerance so the seek bands always have visible width;
-  // we expand to the worst peer drift in the room when that exceeds
-  // 2× tolerance, so the bar-ends always represent something real.
+  // we expand toward the worst peer drift / local drift but cap at
+  // DISPLAY_MAX_FACTOR × tolerance so a single 4-second-off peer
+  // doesn't squash the in-tolerance bands into an illegible sliver
+  // at the center. When the actual extent exceeds the cap, the end
+  // labels show "≥cap" and the drift overflow arrow handles the rest.
+  const DISPLAY_MAX_FACTOR = 2.5;
   const roomMaxDrift = Math.max(0, data.room_max_drift_ms || 0);
-  const displayMax = Math.max(tolerance * 2, roomMaxDrift, Math.abs(drift));
+  const cappedMax = tolerance * DISPLAY_MAX_FACTOR;
+  const desiredMax = Math.max(tolerance * 2, roomMaxDrift, Math.abs(drift));
+  const displayMax = Math.min(cappedMax, desiredMax);
+  const displayMaxClamped = desiredMax > cappedMax;
   const xFor = (ms) => {
     const clamped = Math.max(-displayMax, Math.min(displayMax, ms));
     return 50 + (clamped / displayMax) * 50;
@@ -311,16 +324,21 @@ function renderDriftBands(host, data) {
 
   const divider = (x) =>
     `<line x1="${x}" y1="0" x2="${x}" y2="34" stroke="rgba(255,255,255,0.22)" stroke-width="0.4"/>`;
+  // Only draw the dividers that flank the ACTIVE band. Dividers
+  // between two dim bands (e.g. yellow/red when green is active)
+  // visually read as random bright lines and add no information,
+  // since the band colors already mark their own boundaries.
   const dividers =
-    divider(xToleranceL) +
-    divider(xJitterL) +
-    divider(xJitterR) +
-    divider(xToleranceR);
+    active === "jitter"
+      ? divider(xJitterL) + divider(xJitterR)
+      : active === "tolerated"
+        ? divider(xToleranceL) + divider(xJitterL) + divider(xJitterR) + divider(xToleranceR)
+        : divider(xToleranceL) + divider(xToleranceR);
 
   const centerLine = `<line x1="50" y1="2" x2="50" y2="32" stroke="rgba(255,255,255,0.08)" stroke-width="0.3" stroke-dasharray="1 1"/>`;
 
   const tickX = xFor(drift);
-  const overflowed = absDrift > tolerance * 2;
+  const overflowed = absDrift > displayMax;
   const overflowArrow = overflowed
     ? `<polygon points="${drift > 0 ? "99,2 99,8 95,5" : "1,2 1,8 5,5"}" fill="white"/>`
     : "";
@@ -348,6 +366,10 @@ function renderDriftBands(host, data) {
     stateColor = "#f87171";
   }
   if (seekStreak > 0) statusBits.push(`streak ${seekStreak}`);
+  // When the chart's display extent was clamped, surface the actual
+  // worst-peer drift here so the value isn't lost from the bar-end
+  // labels.
+  if (displayMaxClamped) statusBits.push(`peer max ±${Math.round(roomMaxDrift)}ms`);
 
   host.innerHTML =
     `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">` +
@@ -370,13 +392,21 @@ function renderDriftBands(host, data) {
     // the scale max — usually the worst peer drift in the room.
     renderRepulsedLabels(
       [
-        { x: 0, text: `−${Math.round(displayMax)}`, color: "rgba(255,255,255,0.55)" },
+        {
+          x: 0,
+          text: `${displayMaxClamped ? "≤" : ""}−${Math.round(displayMax)}`,
+          color: "rgba(255,255,255,0.55)",
+        },
         { x: xToleranceL, text: `−${tolerance}` },
         { x: xJitterL, text: `−${jitterBand}` },
         { x: 50, text: "0", color: "rgba(255,255,255,0.4)" },
         { x: xJitterR, text: `+${jitterBand}` },
         { x: xToleranceR, text: `+${tolerance}` },
-        { x: 100, text: `+${Math.round(displayMax)}`, color: "rgba(255,255,255,0.55)" },
+        {
+          x: 100,
+          text: `${displayMaxClamped ? "≤" : ""}+${Math.round(displayMax)}`,
+          color: "rgba(255,255,255,0.55)",
+        },
       ],
       3 // minGap % (just enough to keep labels from physically overlapping)
     ) +
