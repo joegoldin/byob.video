@@ -32,6 +32,10 @@ defmodule Byob.RoomServerTest do
     test "marks user as disconnected", %{pid: pid} do
       {:ok, _} = RoomServer.join(pid, "user1", "SwiftHawk42")
       :ok = RoomServer.leave(pid, "user1")
+      # Leave is deferred by @leave_grace_ms (5 s) so brief reconnects
+      # don't clobber state. Force-finalize so the test can assert the
+      # post-grace behavior without sleeping.
+      send(pid, {:finalize_leave, "user1"})
       state = RoomServer.get_state(pid)
       assert state.users["user1"].connected == false
     end
@@ -240,6 +244,9 @@ defmodule Byob.RoomServerTest do
       ref = Process.monitor(pid)
       {:ok, _} = RoomServer.join(pid, "user1", "Test")
       :ok = RoomServer.leave(pid, "user1")
+      # Force-finalize the deferred leave so the empty-room timeout
+      # (50 ms in setup) actually engages within the assert window.
+      send(pid, {:finalize_leave, "user1"})
 
       assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 200
     end

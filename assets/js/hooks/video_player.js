@@ -156,10 +156,12 @@ const VideoPlayer = {
       // the server now, computed per-user from the room's full picture.
       // observed_l_ms: most recent measured seek-to-playing latency.
       // Sent once per measurement, then cleared so a stale value
-      // doesn't get re-applied. Server uses it as the L for the next
-      // overshoot.
+      // doesn't get re-applied. _seekIssuedAt is cleared too so any
+      // PLAYING events past this point (e.g. a much-later un-pause)
+      // don't get charged against the seek that just settled.
       const observedL = this._lastObservedL;
       this._lastObservedL = 0;
+      this._seekIssuedAt = 0;
       this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
         drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
         offset_ms: 0, // legacy passthrough (extension still computes one)
@@ -585,16 +587,20 @@ const VideoPlayer = {
     // landed, so leave it up to keep the user informed.
     if (stateName === "playing") {
       this._hideSyncingOverlay();
-      // L_processing measurement: time from sync seek dispatch to
-      // first PLAYING transition. Captured BEFORE the suppression
-      // check below swallows the event for sync-issued seeks.
-      // 5 s clamp covers the "no playing event" edge case (seek
-      // landed while paused, or never landed) — stale samples are
-      // discarded by the server's [50, 5000] ms band check anyway.
+      // L_processing measurement. Captured BEFORE the suppression
+      // check below (which swallows the event for sync-issued seeks).
+      //
+      // YouTube's typical post-seek pattern is PLAYING → BUFFERING →
+      // PLAYING — the FIRST PLAYING fires when the player thinks it's
+      // about to render frames at the new position; the SECOND fires
+      // when it actually is. We update on every PLAYING within the
+      // post-seek window so the LATEST timestamp wins (i.e. the
+      // accurate, "actually rendering frames" one). _seekIssuedAt is
+      // not cleared here — it's cleared in the next drift report,
+      // after we ship the measurement to the server.
       if (this._seekIssuedAt > 0) {
         const elapsed = performance.now() - this._seekIssuedAt;
-        this._seekIssuedAt = 0;
-        if (elapsed >= 0 && elapsed < 5000) {
+        if (elapsed >= 50 && elapsed < 3000) {
           this._lastObservedL = elapsed;
         }
       }

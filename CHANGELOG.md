@@ -3,6 +3,32 @@
 
 ---
 
+# v6.8.15
+
+### Faster L convergence — seeded default + accurate measurement
+
+Two changes to make sync converge in 1-2 seeks instead of 3-4:
+
+**Seed `learned_l_ms` to 300 ms by default** (typical browser
+seek-to-playing latency). The very first sync seek now overshoots
+reasonably instead of landing exactly on `expected` and being
+guaranteed to drift behind by L. For most users this means the
+first seek is the only seek; outliers refine via EMA in 1-2 more.
+
+**Measure L on the LATEST PLAYING within the seek window, not the
+first.** YouTube's post-seek pattern is `PLAYING → BUFFERING →
+PLAYING` — the first PLAYING fires before frames actually render,
+underestimating L and causing the server to under-overshoot the
+next seek. We now update `_lastObservedL` on every PLAYING within
+3 s of the seek dispatch and ship the latest one in the next drift
+report (which also clears `_seekIssuedAt`).
+
+EMA α bumped 0.4 → 0.7 so subsequent samples dominate, and the
+"first sample replaces" branch in `maybe_update_l/2` is gone (no
+longer needed once the default isn't 0).
+
+---
+
 # v6.8.14
 
 ### Client-measured L_processing — drop the inference machinery

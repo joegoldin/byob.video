@@ -49,12 +49,19 @@ defmodule Byob.SyncDecision do
   # over 5 s means the player stalled, not a clean seek).
   @l_observation_min_sample_ms 50
   @l_observation_max_sample_ms 5_000
-  @l_ema_alpha 0.4
+  @l_ema_alpha 0.7
+
+  # Seed L with a sensible default so the FIRST sync seek already
+  # overshoots reasonably (rather than landing exactly on `expected`
+  # and being guaranteed to drift behind by L_actual). Most browser
+  # players resume playback ~150-400 ms after `seekTo()`, so 300
+  # converges most users in a single seek; outliers refine via EMA.
+  @default_learned_l_ms 300
 
   defstruct over_tolerance_count: 0,
             seek_streak: 0,
             last_seek_at: 0,
-            learned_l_ms: 0
+            learned_l_ms: @default_learned_l_ms
 
   @type t :: %__MODULE__{
           over_tolerance_count: non_neg_integer(),
@@ -238,19 +245,15 @@ defmodule Byob.SyncDecision do
   end
 
   # Client measured L_processing for its own most recent sync seek and
-  # included it in this drift report. Smooth it into `learned_l_ms`.
-  # First sample replaces the (zero) initial value; subsequent samples
-  # are EMA-blended.
+  # included it in this drift report. EMA-smooth it into `learned_l_ms`
+  # at @l_ema_alpha — the seeded default (@default_learned_l_ms) lets
+  # the first sample blend immediately rather than fully replacing,
+  # which damps cold-seek outliers (initial seek can be ~2× warm).
   defp maybe_update_l(state, data) do
     sample = Map.get(data, :observed_l_ms, 0) || 0
 
     if sample >= @l_observation_min_sample_ms and sample <= @l_observation_max_sample_ms do
-      new_l =
-        if state.learned_l_ms == 0 do
-          sample
-        else
-          @l_ema_alpha * sample + (1 - @l_ema_alpha) * state.learned_l_ms
-        end
+      new_l = @l_ema_alpha * sample + (1 - @l_ema_alpha) * state.learned_l_ms
 
       require Logger
       user_short = data |> Map.get(:user_id, "?") |> to_string() |> String.slice(0..7)
