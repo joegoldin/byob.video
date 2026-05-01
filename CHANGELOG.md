@@ -3,6 +3,55 @@
 
 ---
 
+# v6.5.46
+
+### Smoother sync for high-RTT-variance peers (cross-coast 3+ users)
+
+Three users on different coasts reported "weird skipping" while
+watching together. Tracing the drift-correction loop turned up
+two compounding holes in the existing hysteresis:
+
+**`driftHistory` was being wiped every second.** The 5-sample
+rolling median is supposed to absorb per-tick jitter, but
+`setServerState` cleared the history on every call — and the
+server broadcasts `:sync_correction` once a second to refresh
+each client's reference point. With 100 ms ticks, the median
+was being computed on 1–4 samples for half of every cycle. A
+single bad RTT sample after the reset could dominate the
+median and trip the hard-seek path.
+
+**The hard-seek path acted on a single tick.** Drift > 2 s on
+one tick → resync → seek. Cross-coast links have higher RTT
+variance, so spikes near the threshold are common and were
+landing as visible "skips".
+
+Three fixes in `assets/js/sync/reconcile.js`:
+
+* `setServerState` now takes `{ resetHistory }`. Default
+  `true` preserves existing semantics for play / pause / seek.
+  Periodic refreshes (`sync_correction`, `state_heartbeat`)
+  pass `false`, leaving the median filter warm so it can
+  actually smooth jitter between corrections.
+* New `HARD_SEEK_CONFIRM_TICKS = 3` gate: the hard-seek flow
+  only triggers after 300 ms of sustained over-threshold
+  drift. Single jitter spikes get filtered. Once a resync has
+  confirmed real drift, the seek still happens immediately on
+  the next tick (no second wait).
+* `HARD_SEEK_THRESHOLD_MS` 2000 → 3000 (and
+  `HARD_SEEK_THRESHOLD_WHILE_CORRECTING_MS` 3000 → 4000).
+  Rate correction (±10 %) handles 3 s of drift in ~30 s
+  anyway; this gives variable-latency peers more headroom
+  before falling back to a hard seek.
+
+Net: jitter spikes no longer cause skips, and the rolling-
+median hysteresis can finally do its job. Trade-off is ~300 ms
+extra latency before recovering from a *real* desync —
+invisible compared to a skip.
+
+Server-only / no extension republish.
+
+---
+
 # v6.5.45
 
 ### Validate roulette / vote candidates are embeddable + have a thumbnail

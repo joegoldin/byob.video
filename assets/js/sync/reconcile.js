@@ -8,9 +8,16 @@
 // Stability mechanics:
 //   * driftHistory rolling median kills instantaneous jitter
 //   * directionStable gate requires N consistent-sign samples before flipping rate
+//   * Hard-seek confirm window: drift must exceed threshold for N consecutive
+//     ticks before we even trigger the resync flow. A single jitter spike
+//     (common on high-RTT-variance links, e.g. cross-coast) gets filtered.
 //   * Post-seek quiet window (widened dead-zone for 5 s) prevents re-trigger on bounce
 //   * Before hard seek, we request a mini-burst resync. If drift is still huge after
 //     the fresh offset lands, we seek. Otherwise the rate-correction path handles it.
+//   * setServerState only clears history on genuine state transitions (play /
+//     pause / seek). Periodic reference refreshes (sync_correction every 1 s,
+//     state_heartbeat every 5 s) leave history intact so the median filter
+//     stays warm — otherwise it'd be wiped before it can smooth anything.
 //
 // Adaptive offset:
 //   Each client has a structural latency (decode + render + measurement bias).
@@ -27,8 +34,9 @@ const POST_SEEK_QUIET_MS = 5000;
 const RATE_TIME_CONSTANT_S = 5; // drift/timeConstant scales into the rate delta
 const RATE_MIN = 0.9;
 const RATE_MAX = 1.1;
-const HARD_SEEK_THRESHOLD_MS = 2000;
-const HARD_SEEK_THRESHOLD_WHILE_CORRECTING_MS = 3000;
+const HARD_SEEK_THRESHOLD_MS = 3000;
+const HARD_SEEK_THRESHOLD_WHILE_CORRECTING_MS = 4000;
+const HARD_SEEK_CONFIRM_TICKS = 3;
 const DIRECTION_STABILITY_SAMPLES = 3;
 const OFFSET_EMA_ALPHA = 0.02;       // ~50 samples (5s @ 100ms) to track
 const OFFSET_CAP_MS = 500;           // refuse to learn beyond this (transient protection)
@@ -48,6 +56,7 @@ export class Reconcile {
     this.pausedUntil = 0; // temporarily disable reconcile
     this.resyncInFlight = false;
     this.lastResyncAt = 0;
+    this.hardSeekCandidateTicks = 0; // consecutive ticks above hard-seek threshold
     this.driftHistory = []; // rolling list of most-recent drifts (ms)
     this.offsetEmaMs = 0;   // learned structural latency (ms)
     this.offsetSamples = 0; // count of stable samples contributing to EMA
@@ -55,13 +64,20 @@ export class Reconcile {
     this.lastRawDriftMs = 0;
   }
 
-  setServerState(position, serverTime, clockSync) {
+  // resetHistory: pass false for periodic reference refreshes (sync_correction,
+  // state_heartbeat) where the drift signal is continuous across the update.
+  // Default true preserves the original semantics for genuine state transitions
+  // (play / pause / seek), where prior drift samples no longer apply.
+  setServerState(position, serverTime, clockSync, { resetHistory = true } = {}) {
     this.serverPosition = position;
     this.serverTime = serverTime;
     this.clockSync = clockSync;
-    // State moved; drift history is stale. Keep offsetEma — it's a property of
-    // the player pipeline, not of any particular server reference.
-    this.driftHistory = [];
+    if (resetHistory) {
+      // State moved; drift history is stale. Keep offsetEma — it's a property
+      // of the player pipeline, not of any particular server reference.
+      this.driftHistory = [];
+      this.hardSeekCandidateTicks = 0;
+    }
   }
 
   // Current learned offset (for UI / reporting).
@@ -93,6 +109,7 @@ export class Reconcile {
     this.isRateCorrecting = false;
     this.currentRateSign = 0;
     this.driftHistory = [];
+    this.hardSeekCandidateTicks = 0;
     this.offsetEmaMs = 0;
     this.offsetSamples = 0;
     try {
@@ -152,14 +169,27 @@ export class Reconcile {
     this.lastRawDriftMs = rawDriftMs;
 
     // -----------------------------------------------------------------
-    // Hard-seek path: confirm with a fresh clock sync before snapping, but
-    // only once. If drift is still hard-seek-worthy after a recent resync,
-    // it's real drift — seek and stop looping.
+    // Hard-seek path: require N consecutive over-threshold ticks before we
+    // even start the resync flow. A single jitter spike (common on high-
+    // RTT-variance links — e.g. cross-coast peers) gets filtered. Once we
+    // do trigger a resync and drift is still threshold-worthy after, it's
+    // real drift — seek and stop looping.
     // -----------------------------------------------------------------
     if (absMedian >= hardSeekThreshold) {
       const recentlyResynced = Date.now() - this.lastResyncAt < 3000;
 
-      if (!recentlyResynced && this.clockSync.resync) {
+      // Resync just happened and drift is still huge → real drift, seek now.
+      if (recentlyResynced) {
+        this._applyHardSeek(expectedPosition);
+        return;
+      }
+
+      this.hardSeekCandidateTicks++;
+      if (this.hardSeekCandidateTicks < HARD_SEEK_CONFIRM_TICKS) {
+        return; // wait for sustained drift before acting
+      }
+
+      if (this.clockSync.resync) {
         this.resyncInFlight = true;
         this.clockSync
           .resync(3)
@@ -174,6 +204,9 @@ export class Reconcile {
       this._applyHardSeek(expectedPosition);
       return;
     }
+
+    // Drift dropped back under threshold — start the confirm counter over.
+    this.hardSeekCandidateTicks = 0;
 
     // -----------------------------------------------------------------
     // Rate-correction path: proportional rate, direction-stable gate.
@@ -216,6 +249,7 @@ export class Reconcile {
     this.currentRateSign = 0;
     this.lastHardSeekAt = Date.now();
     this.driftHistory = [];
+    this.hardSeekCandidateTicks = 0;
   }
 
   // True if the most recent DIRECTION_STABILITY_SAMPLES drifts all have the

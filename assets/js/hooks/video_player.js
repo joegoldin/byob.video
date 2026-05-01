@@ -685,10 +685,13 @@ const VideoPlayer = {
   },
 
   _onSyncCorrection(data) {
+    // Periodic reference refresh (1s cadence) — keep drift history warm so
+    // the median filter can actually smooth jitter between corrections.
     this.reconcile.setServerState(
       data.expected_time,
       data.server_time,
-      this.clockSync
+      this.clockSync,
+      { resetHistory: false }
     );
   },
 
@@ -715,9 +718,10 @@ const VideoPlayer = {
       this.expectedPlayState = expected;
     }
 
-    // Always refresh the drift-correction reference point.
+    // Always refresh the drift-correction reference point. Periodic refresh
+    // (5s cadence) — preserve drift history so the median filter stays warm.
     if (typeof data.current_time === "number" && typeof data.server_time === "number") {
-      this.reconcile.setServerState(data.current_time, data.server_time, this.clockSync);
+      this.reconcile.setServerState(data.current_time, data.server_time, this.clockSync, { resetHistory: false });
     }
   },
 
