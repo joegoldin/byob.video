@@ -795,22 +795,34 @@ defmodule ByobWeb.RoomLive.Components do
             </details>
           </div>
         </details>
-        <%!-- Reset dismissed popups --%>
+        <%!-- Hidden help: tips the user dismissed in earlier sessions
+             that they can opt back into. Hook auto-hides the whole
+             block when no keys are set. --%>
         <div
           id="dismissed-popups"
           phx-hook="DismissedPopups"
           phx-update="ignore"
           class="mt-4 pt-4 border-t border-base-300"
         >
-          <p class="text-xs text-base-content/50 mb-2 text-center">
-            Cleared popups
-          </p>
-          <ul class="text-xs text-base-content/60 mb-2 space-y-0.5 list-disc list-inside">
-            <li data-storage-key="byob_autoplay_help_dismissed">Autoplay-blocked help</li>
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-xs text-base-content/50">Hidden help</span>
+            <button
+              data-reset-all
+              type="button"
+              class="text-xs text-base-content/60 hover:text-base-content underline-offset-2 hover:underline"
+            >
+              Show all
+            </button>
+          </div>
+          <ul class="text-xs text-base-content/60 space-y-1">
+            <li
+              data-storage-key="byob_autoplay_help_dismissed"
+              class="flex items-center gap-2"
+            >
+              <span class="hero-eye-slash w-3 h-3 flex-shrink-0 opacity-60" />
+              <span>Autoplay-blocked help</span>
+            </li>
           </ul>
-          <button data-reset-all type="button" class="btn btn-sm btn-ghost w-full">
-            Re-enable
-          </button>
         </div>
         <%!-- Attribution --%>
         <div class="mt-4 pt-4 border-t border-base-300 text-xs text-base-content/40 space-y-1">

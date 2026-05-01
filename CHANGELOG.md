@@ -3,6 +3,26 @@
 
 ---
 
+# v6.8.26
+
+### "Hidden help" section in settings is cleaner
+
+The dismissed-popups list at the bottom of the settings panel was
+visually awkward: a centered "Cleared popups" header, a single
+bulleted list item, and a full-width "Re-enable" button. Now:
+
+- Renamed "Cleared popups" → "Hidden help" (clearer about what it is)
+- Header row has the label on the left and a small "Show all" text
+  link on the right (instead of a giant button below)
+- Each row uses a subtle `eye-slash` icon next to the label instead
+  of a markdown bullet
+- Tighter spacing throughout
+
+Auto-hide behavior unchanged (whole section disappears when nothing
+is dismissed).
+
+---
+
 # v6.8.25
 
 ### Per-user status indicators in the Users list
