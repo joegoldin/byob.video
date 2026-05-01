@@ -3,6 +3,38 @@
 
 ---
 
+# v6.6.2
+
+### Drift-compensating seek overshoot — converges in one shot
+
+User report on v6.6.1: "ios client sees that it's out of sync, attempts
+to sync, but always seeks to the time that is out of sync by our drift."
+
+Right diagnosis. A seek isn't instantaneous: by the time the player
+lands at the target, the server clock has advanced by ~L seconds
+(the seek processing window). When drift = −L (we're L behind
+*because of* that lag), seeking straight to `expectedPosition` lands
+us at `expected_at_seek_start` while the server is now at
+`expected_at_seek_start + L`. We end up L behind again. Same drift,
+re-seek, same lag, same residual — infinite loop, audible as a
+stutter on the lagging client.
+
+Fix: `seek_target = expected − drift`. Symmetric. For drift = −800 ms
+we seek to `expected + 800 ms`; for the rare positive case we seek to
+`expected − drift`. By the time the seek lands, real position equals
+expected_at_completion. Drift converges to 0 in one shot for the
+common case; the rare "ahead due to clockSync error" case slightly
+overcorrects but the next iteration's small negative drift self-damps
+through the same formula.
+
+Restored `MAX_SEEK_STREAK` from 1 → 3 since each seek now actually
+converges instead of leaving residual L. Streak still resets after
+10 s of quiet.
+
+Server-only / no extension republish.
+
+---
+
 # v6.6.1
 
 ### Hotfix: stop seek-loop on iOS, stop spurious pause broadcasts

@@ -47,8 +47,11 @@ const SEEK_CONFIRM_TICKS = 3;            // 300 ms sustained over tolerance befo
 const SEEK_COOLDOWN_BASE_MS = 1000;      // first cooldown after a seek
 const SEEK_COOLDOWN_MAX_MS = 5000;       // cap — never wait longer than this
 const SEEK_STREAK_RESET_MS = 10_000;     // 10 s quiet → cooldown ladder resets
-const SEEK_POST_PAUSE_MS = 2000;         // post-seek: pause reconcile to let the player settle
-const MAX_SEEK_STREAK = 3;               // seeks not landing → stop trying this session
+const SEEK_POST_PAUSE_MS = 3000;         // post-seek: pause reconcile to let the player settle
+// Allow multiple seeks per burst because each one converges fast with the
+// overshoot below. Cap exists for the pathological "seeks fundamentally
+// not taking effect" case where overshoot can't help.
+const MAX_SEEK_STREAK = 3;
 
 export class Reconcile {
   constructor(playerAdapter) {
@@ -205,10 +208,23 @@ export class Reconcile {
     // Sustained drift confirmed. Cooldown gate.
     if (this._cooldownRemainingMs() > 0) return;
 
-    // Seek. Pause reconcile so the seek has a quiet window to actually
-    // land — `getCurrentTime` on iOS YouTube embeds can lag the seek
-    // by 1-2 s, and without this pause we'd race the seek and seek-loop.
-    this.player.seekTo(expectedPosition);
+    // Seek with drift-compensating overshoot.
+    //
+    // A seek isn't instantaneous: by the time the player lands at the
+    // target, the server clock has advanced by ~L seconds (the seek
+    // processing window). Drift = local − expected = −L when we're
+    // behind because of that lag. Seeking straight to `expectedPosition`
+    // would land us at `expected_at_seek_start` while server is now at
+    // `expected_at_seek_start + L` — same drift, infinite loop.
+    //
+    // Symmetric formula: `seek_target = expected − drift`. For drift =
+    // −800 ms we add 800; for drift = +800 ms we subtract 800. Either
+    // way we land at expected_at_completion. The rare "ahead" case
+    // (clockSync error, etc.) self-damps because if we overshoot the
+    // other way the next iteration sees a small negative drift and the
+    // same formula corrects.
+    const seekTarget = Math.max(0, expectedPosition - driftMs / 1000);
+    this.player.seekTo(seekTarget);
     this.lastSeekAt = Date.now();
     this.seekStreak++;
     this.seekCandidateTicks = 0;
