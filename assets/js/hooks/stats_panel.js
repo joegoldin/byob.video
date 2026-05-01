@@ -24,8 +24,7 @@ const LOCAL_CHART_H = 80;
 const SPARK_W = 80;
 const SPARK_H = 20;
 
-const COLOR_RTT = "#60a5fa";    // blue
-const COLOR_DRIFT = "#fbbf24";  // amber
+const COLOR_DRIFT = "#fbbf24";  // amber (local user)
 
 // Display-only fallback before the first real `tolerance_ms` arrives
 // from the server (within 1 s of the panel opening). Match the floor
@@ -160,9 +159,9 @@ function renderSparkline(host, values, seekFlags) {
 }
 
 // Multi-peer chart: every connected client's drift on a shared time
-// axis (signed, centered at 0), plus the LOCAL user's RTT for context.
-// Drift y-axis auto-scales to the worst |drift| across all peers so a
-// single big-drift peer doesn't crush the others into a flat line at 0.
+// axis (signed, centered at 0). Drift y-axis auto-scales to the worst
+// |drift| across all peers so a single big-drift peer doesn't crush
+// the others into a flat line at 0.
 //
 // Each peer gets a stable HSL hue derived from their user_id; the local
 // user is drawn last (on top) in the existing amber so it remains
@@ -176,12 +175,6 @@ function renderLocalChart(host, rings, localUserId) {
     if (aLocal !== bLocal) return aLocal - bLocal;
     return ak < bk ? -1 : ak > bk ? 1 : 0;
   });
-
-  // Find local ring (for RTT line + amber drift highlight).
-  const localEntry = entries.find(
-    ([_, r]) => localUserId && r.userId === localUserId
-  );
-  const localRing = localEntry ? localEntry[1] : null;
 
   // Global drift max so per-peer lines share a y-axis. Floor at 50 ms
   // so a quiet room doesn't draw drift jitter as huge spikes.
@@ -205,21 +198,8 @@ function renderLocalChart(host, rings, localUserId) {
     })
     .join("");
 
-  // Local RTT line (single peer — only meaningful for this client).
-  let rttLine = "";
-  if (localRing && localRing.rtt.length > 0) {
-    const points = scalePositive(localRing.rtt, LOCAL_CHART_W, LOCAL_CHART_H);
-    rttLine = `<polyline points="${points}" fill="none" stroke="${COLOR_RTT}" stroke-width="1.2" vector-effect="non-scaling-stroke" opacity="0.7"/>`;
-  }
-
-  // Legend: local RTT first, then a drift swatch per peer with current value.
+  // Legend: a drift swatch per peer with current value.
   const legendItems = [];
-  if (localRing && localRing.rtt.length > 0) {
-    const last = Math.round(localRing.rtt[localRing.rtt.length - 1]);
-    legendItems.push(
-      `<span style="color:${COLOR_RTT}">■</span> RTT: <span style="color:${COLOR_RTT}">${last}ms</span>`
-    );
-  }
   for (const [key, ring] of entries) {
     if (ring.drift.length === 0) continue;
     const isLocal = localUserId && ring.userId === localUserId;
@@ -237,7 +217,6 @@ function renderLocalChart(host, rings, localUserId) {
     `<svg width="100%" height="${LOCAL_CHART_H}" viewBox="0 0 ${LOCAL_CHART_W} ${LOCAL_CHART_H}" preserveAspectRatio="none" style="display:block;background:rgba(0,0,0,0.15);border-radius:4px">` +
     // Grid baseline at 50% — the 0-drift axis.
     `<line x1="0" y1="${LOCAL_CHART_H / 2}" x2="${LOCAL_CHART_W}" y2="${LOCAL_CHART_H / 2}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>` +
-    rttLine +
     driftLines +
     `</svg>` +
     `<div style="font-size:10px;margin-top:2px;opacity:0.85;display:flex;flex-wrap:wrap;gap:4px 12px">${legend}</div>`;
@@ -263,17 +242,6 @@ function scaleSignedTo(values, w, h, max) {
     .map((v, i) => {
       const x = (i / (RING_SIZE - 1)) * w;
       const y = h / 2 - (v / m) * (h / 2 - 1);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-}
-
-function scalePositive(values, w, h) {
-  const max = Math.max(20, ...values);
-  return values
-    .map((v, i) => {
-      const x = (i / (RING_SIZE - 1)) * w;
-      const y = h - 1 - (v / max) * (h - 2);
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");

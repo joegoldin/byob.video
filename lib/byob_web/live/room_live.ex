@@ -23,6 +23,7 @@ defmodule ByobWeb.RoomLive do
   @ev_video_embed_blocked Events.ev_video_embed_blocked()
   @ev_video_drift_report Events.ev_video_drift_report()
   @ev_video_live_status Events.ev_video_live_status()
+  @ev_video_loaded Events.ev_video_loaded()
   @ev_sync_ping Events.in_sync_ping()
 
   def mount(%{"id" => room_id}, _session, socket) do
@@ -203,6 +204,7 @@ defmodule ByobWeb.RoomLive do
   def handle_event(@ev_video_play, params, socket), do: Playback.handle_play(params, socket)
   def handle_event(@ev_video_pause, params, socket), do: Playback.handle_pause(params, socket)
   def handle_event(@ev_video_seek, params, socket), do: Playback.handle_seek(params, socket)
+  def handle_event(@ev_video_loaded, params, socket), do: Playback.handle_loaded(params, socket)
 
   def handle_event(@ev_video_drift_report, params, socket) do
     # Local (browser) player reports its adjusted drift and learned offset so
@@ -865,8 +867,12 @@ defmodule ByobWeb.RoomLive do
     }
   end
 
-  def serialize_media_item(%{media_item: item, index: index}) do
-    %{media_item: serialize_item(item), index: index}
+  def serialize_media_item(%{media_item: item, index: index} = data) do
+    %{
+      media_item: serialize_item(item),
+      index: index,
+      play_state: Map.get(data, :play_state, :playing) |> to_string()
+    }
   end
 
   def serialize_item(%Byob.MediaItem{} = item) do

@@ -120,6 +120,11 @@ defmodule Byob.RoomServerTest do
     test "play now starts playing when nothing is playing", %{pid: pid} do
       {:ok, _} = RoomServer.join(pid, "user1", "Test")
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :now)
+      # Ready-then-play: the room holds at :paused until every connected
+      # user reports `video:loaded`. Simulate the test user loading.
+      state = RoomServer.get_state(pid)
+      assert state.play_state == :paused
+      RoomServer.video_loaded(pid, "user1", hd(state.queue).id)
       state = RoomServer.get_state(pid)
       assert state.current_index == 0
       assert state.play_state == :playing
@@ -179,8 +184,11 @@ defmodule Byob.RoomServerTest do
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=b", :queue)
 
       :ok = RoomServer.skip(pid)
+      # Ready-then-play: skip starts a fresh ready check on the next
+      # item, so simulate the load before asserting :playing.
       state = RoomServer.get_state(pid)
-      # advance_queue removes the played item, next becomes index 0
+      RoomServer.video_loaded(pid, "user1", hd(state.queue).id)
+      state = RoomServer.get_state(pid)
       assert state.current_index == 0
       assert state.play_state == :playing
       assert length(state.queue) == 1
@@ -243,6 +251,10 @@ defmodule Byob.RoomServerTest do
       :ok = RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=c", :queue)
 
       :ok = RoomServer.play_index(pid, 2)
+      # Ready-then-play: play_index starts a fresh ready check on the
+      # newly-promoted item.
+      state = RoomServer.get_state(pid)
+      RoomServer.video_loaded(pid, "user1", hd(state.queue).id)
       state = RoomServer.get_state(pid)
       # play_index moves the target item to front, removes old now-playing
       assert state.current_index == 0

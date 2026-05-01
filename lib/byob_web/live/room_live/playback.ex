@@ -25,6 +25,13 @@ defmodule ByobWeb.RoomLive.Playback do
     {:noreply, socket}
   end
 
+  def handle_loaded(%{"item_id" => item_id}, socket) when is_binary(item_id) do
+    RoomServer.video_loaded(socket.assigns.room_pid, socket.assigns.user_id, item_id)
+    {:noreply, socket}
+  end
+
+  def handle_loaded(_, socket), do: {:noreply, socket}
+
   def handle_embed_blocked(_params, socket) do
     Analytics.track(
       "video_embed_blocked",

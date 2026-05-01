@@ -42,6 +42,7 @@
     VIDEO_REQUEST_SYNC: "video:request-sync",
     VIDEO_UPDATE_URL: "video:update_url",
     VIDEO_DRIFT: "video:drift",
+    VIDEO_LOADED: "video:loaded",
 
     // background.js → content.js (port message)
     COMMAND_PLAY: "command:play",
@@ -92,6 +93,7 @@
   let needsGesture = true;
   let isLive = false; // current item live status (URL hint + runtime detection)
   let currentItemId = null; // server-assigned id of the room's current media item
+  let _loadedReported = false; // per-item: have we sent video:loaded yet
   let timeReportInterval = null;
   let reconcileInterval = null;
   let commandGuard = null;         // suppress outgoing events after a server command
@@ -697,6 +699,14 @@
     updateSyncBarStatus("loading");
   }
   function onVideoCanPlay() {
+    // Always tell the server "I'm loaded for this item" once per item —
+    // releases the server's ready-then-play hold for this peer. Tagged
+    // with currentItemId so the server can ignore stale loads if the
+    // video already changed again.
+    if (port && currentItemId && !_loadedReported) {
+      _loadedReported = true;
+      port.postMessage({ type: EVT.VIDEO_LOADED, item_id: currentItemId });
+    }
     if (!isBuffering) return;
     isBuffering = false;
     hideBufferingOverlay();
@@ -951,7 +961,10 @@
     if (msg.type === EVT.COMMAND_INITIAL_STATE) {
       if (msg.current_url) setSyncedUrl(msg.current_url);
       if (msg.is_live != null) isLive = !!msg.is_live;
-      if (msg.current_item_id != null) currentItemId = msg.current_item_id;
+      if (msg.current_item_id != null && msg.current_item_id !== currentItemId) {
+        currentItemId = msg.current_item_id;
+        _loadedReported = false;
+      }
       tryAutoSync();
       return;
     }
@@ -984,7 +997,10 @@
 
       if (msg.current_url) setSyncedUrl(msg.current_url);
       if (msg.is_live != null) isLive = !!msg.is_live;
-      if (msg.current_item_id != null) currentItemId = msg.current_item_id;
+      if (msg.current_item_id != null && msg.current_item_id !== currentItemId) {
+        currentItemId = msg.current_item_id;
+        _loadedReported = false;
+      }
 
       hideJoinToast();
       _log("synced! expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
@@ -1030,7 +1046,10 @@
         isLive = !!msg.is_live;
         _lastPushedLive = isLive;
       }
-      if (msg.item_id != null) currentItemId = msg.item_id;
+      if (msg.item_id != null && msg.item_id !== currentItemId) {
+        currentItemId = msg.item_id;
+        _loadedReported = false;
+      }
       // Reset the local _endedReported guard when the room moves on.
       // Otherwise an extension tab that already ended the previous
       // video would refuse to send :ended for the next one.

@@ -3,6 +3,111 @@
 
 ---
 
+# v6.8.18
+
+### Ready-then-play handshake + sub-1.5 s convergence
+
+**Critical follow-up fix to v6.8.18 ready-then-play (the original
+commit didn't actually pause).** `_onVideoChange` was setting
+`_pendingState` AFTER `_loadVideo`, but `_loadVideo` reads
+`_pendingState` to compute `shouldPlay`. The new video therefore
+inherited the PREVIOUS video's pending state (always `"playing"` for
+back-to-back changes) and auto-played, defeating the entire hold.
+Fix: `_pendingState` is set BEFORE `_loadVideo`.
+
+### Faster cascading-seek convergence
+
+The user reported "5 seeks to settle one event". Root cause: drift
+report cadence + cooldown ladder = ~2 s between SyncDecision-driven
+follow-up seeks, multiplied by N peers.
+
+- **`@seek_cooldown_base_ms` 1000 → 500** (max 15s → 5s). Streak
+  ladder: 500 / 1000 / 2000 / 4000 / 5000. With
+  `sustained_required = 1` in the post-seek window, the next
+  SyncDecision seek can fire on the very next drift report.
+- **`DRIFT_REPORT_INTERVAL_MS` 1000 → 500** (2 Hz). Server gets
+  fresh post-seek samples in ~500 ms instead of 1 s. Cost is one
+  extra WebSocket message per peer per second — negligible.
+
+Net: 3-seek convergence now lands in ~1.5 s instead of ~5 s.
+
+### "Re-syncing…" overlay no longer flickers between cascading seeks
+
+Each `_showSyncingOverlay` stamps `_lastSyncingShownAt`;
+`_hideSyncingOverlay` (called from "playing" state) defers the actual
+hide until 1500 ms past the latest show. Cascading sync seeks within
+that window keep the overlay continuously visible. New
+`_hideSyncingOverlayNow` bypasses the gate (used by the 5 s safety
+timeout and other "really hide it" call sites).
+
+### Peer-drift chart drops the local RTT line
+
+The multi-peer chart from earlier in the session was overlaying a
+blue local-RTT line; per request it's now drift-only. Title
+relabelled "Peer drift (60s)". Dropped the now-unused `COLOR_RTT`
+constant and `scalePositive` helper.
+
+---
+
+### Ready-then-play handshake — eliminate load-delay drift
+
+Starting a new video used to drop every peer ~`L_load` (1-3 s)
+behind expected by the time their player rendered the first frame,
+which then cost a SyncDecision compensating seek per peer per video
+change. With 3 clients that's 2-3 extra seeks just to settle a fresh
+video.
+
+New flow: when a video changes, the room holds at `:paused` and
+broadcasts `:video_changed` with `play_state: :paused`. Each client
+loads the new media and emits `video:loaded` with the item_id once
+the player is ready. Once every connected user has reported in (or
+`@ready_check_timeout_ms` = 8 s elapses), the room transitions to
+`:playing` and broadcasts `:sync_play` at position 0. Everyone
+starts simultaneously — **no load-delay drift to compensate.**
+
+**Server (`RoomServer`):**
+- New state fields: `media_loaded_for: %{user_id => item_id}`,
+  `ready_check_timer: ref`
+- New cast `:video_loaded` → `record_media_loaded/3`
+- `broadcast_video_changed/3` now forces `:paused`, resets
+  `media_loaded_for`, schedules timeout, includes `play_state` in
+  the broadcast payload
+- `maybe_finish_ready_check/1` fires `:sync_play` once every
+  connected user has loaded the current item
+- `:ready_check_timeout` `handle_info` plays anyway after 8 s so a
+  stuck peer doesn't strand the room
+
+**Wire-through:**
+- `Byob.Events.in_video_loaded/0` + `ev_video_loaded/0` ("video:loaded")
+- `EV_VIDEO_LOADED` in `event_names.js`
+- `Playback.handle_loaded/2` in browser LV
+- `handle_in(@in_video_loaded, …)` in extension channel
+- Extension content.js + background.js: `VIDEO_LOADED` /
+  `CHAN_VIDEO_LOADED` plumbing; emits from `onVideoCanPlay` once
+  per item via `_loadedReported` flag (reset when `currentItemId`
+  changes)
+
+**Client:**
+- Browser `_onVideoChange` reads `play_state` from broadcast (was
+  hardcoded `"playing"`), so the player loads but doesn't auto-play
+  during the ready check
+- Browser `_onPlayerStateChange` emits `EV_VIDEO_LOADED` on first
+  stable state post-load, tagged with `_currentItemId`
+
+**Press-to-play unaffected.** Pre-gesture joiners load in the
+background regardless of the overlay; their `video:loaded` fires
+when the embed initializes, so they contribute to the ready check
+even before clicking. When `:sync_play` arrives they either play
+(if they've gestured) or sit on the existing "Click to join the
+room" overlay — same behavior as before.
+
+**Tests:** Three room_server tests that asserted `play_state ==
+:playing` immediately after a video change now simulate
+`video_loaded` for the test user before checking, since the room
+correctly holds at `:paused` until the ready check resolves.
+
+---
+
 # v6.8.17
 
 ### Faster scrub convergence — 1 seek per peer in the typical case

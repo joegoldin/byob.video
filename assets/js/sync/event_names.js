@@ -35,6 +35,7 @@ export const LV_EVT = Object.freeze({
   EV_VIDEO_PLAY: "video:play",
   EV_VIDEO_PAUSE: "video:pause",
   EV_VIDEO_SEEK: "video:seek",
+  EV_VIDEO_LOADED: "video:loaded",
   EV_VIDEO_ENDED: "video:ended",
   EV_VIDEO_EMBED_BLOCKED: "video:embed_blocked",
   EV_VIDEO_DRIFT_REPORT: "video:drift_report",

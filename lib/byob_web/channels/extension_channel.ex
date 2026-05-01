@@ -17,6 +17,7 @@ defmodule ByobWeb.ExtensionChannel do
   @in_video_tab_closed Events.in_video_tab_closed()
   @in_video_ready Events.in_video_ready()
   @in_video_unready Events.in_video_unready()
+  @in_video_loaded Events.in_video_loaded()
   @in_video_drift Events.in_video_drift()
   @in_video_live_status Events.in_video_live_status()
   @in_sync_ping Events.in_sync_ping()
@@ -260,6 +261,13 @@ defmodule ByobWeb.ExtensionChannel do
     RoomServer.update_current_url(socket.assigns.room_pid, socket.assigns.user_id, url)
     {:noreply, socket}
   end
+
+  def handle_in(@in_video_loaded, %{"item_id" => item_id}, socket) when is_binary(item_id) do
+    RoomServer.video_loaded(socket.assigns.room_pid, socket.assigns.user_id, item_id)
+    {:noreply, socket}
+  end
+
+  def handle_in(@in_video_loaded, _payload, socket), do: {:noreply, socket}
 
   def handle_in(@in_video_drift, %{"drift_ms" => drift_ms} = payload, socket) do
     tab_id = payload["tab_id"] || "?"

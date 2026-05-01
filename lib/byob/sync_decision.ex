@@ -40,8 +40,13 @@ defmodule Byob.SyncDecision do
 
   @sustained_reports 2
 
-  @seek_cooldown_base_ms 1_000
-  @seek_cooldown_max_ms 15_000
+  # Aggressive cooldown so cascading SyncDecision corrections after a
+  # seek can fire on the very next drift report (which lands ~500 ms
+  # later at 2 Hz). Streak ladder: 500 / 1000 / 2000 / 4000 / 5000
+  # (capped). With sustained_required = 1 in the post-seek quiet
+  # window, that gets a 3-seek convergence under 1.5 s instead of 5 s.
+  @seek_cooldown_base_ms 500
+  @seek_cooldown_max_ms 5_000
   @seek_streak_reset_ms 10_000
 
   # L sample acceptance band — anything outside this is almost certainly

@@ -19,6 +19,7 @@ const EVT = Object.freeze({
   VIDEO_ENDED: "video:ended",
   VIDEO_READY: "video:ready",
   VIDEO_DRIFT: "video:drift",
+  VIDEO_LOADED: "video:loaded",
   VIDEO_LIVE_STATUS: "video:live_status",
   VIDEO_REQUEST_SYNC: "video:request-sync",
   VIDEO_UPDATE_URL: "video:update_url",
@@ -46,6 +47,7 @@ const EVT = Object.freeze({
   CHAN_VIDEO_READY: "video:ready",
   CHAN_VIDEO_UNREADY: "video:unready",
   CHAN_VIDEO_DRIFT: "video:drift",
+  CHAN_VIDEO_LOADED: "video:loaded",
   CHAN_VIDEO_LIVE_STATUS: "video:live_status",
   CHAN_VIDEO_TAB_OPENED: "video:tab_opened",
   CHAN_VIDEO_TAB_CLOSED: "video:tab_closed",
@@ -356,6 +358,12 @@ function handleContentMessage(msg, port, tabId) {
     case EVT.VIDEO_READY:
       if (channel && tabId != null) {
         channel.push(EVT.CHAN_VIDEO_READY, { tab_id: String(tabId) });
+      }
+      break;
+
+    case EVT.VIDEO_LOADED:
+      if (channel && msg.item_id) {
+        channel.push(EVT.CHAN_VIDEO_LOADED, { item_id: msg.item_id });
       }
       break;
 

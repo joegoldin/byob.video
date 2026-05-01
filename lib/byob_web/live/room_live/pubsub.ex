@@ -126,11 +126,17 @@ defmodule ByobWeb.RoomLive.PubSub do
         _ -> socket.assigns.history
       end
 
+    # play_state from the broadcast — :paused while the ready-then-play
+    # handshake is in flight, then :playing arrives via :sync_play once
+    # all peers report `video:loaded`. Fallback to :playing for safety
+    # if the field isn't set (older servers / unrelated callers).
+    play_state = Map.get(data, :play_state, :playing)
+
     socket =
       assign(socket,
         current_media: data.media_item,
         current_index: data.index,
-        play_state: :playing,
+        play_state: play_state,
         history: history,
         comments: nil,
         comments_video_id: nil,

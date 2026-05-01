@@ -11,7 +11,10 @@ import { showToast, showSkipToast } from "../ui/toasts";
 import { showQueueFinished } from "../ui/queue_finished";
 import { LV_EVT } from "../sync/event_names";
 
-const DRIFT_REPORT_INTERVAL_MS = 1000;
+// 2 Hz so SyncDecision can act on a fresh post-seek drift sample
+// within ~500 ms instead of waiting a full second. Cost is one extra
+// WebSocket message per second per peer — negligible.
+const DRIFT_REPORT_INTERVAL_MS = 500;
 const PAUSE_ON_LOAD_POLL_MS = 100;
 const PAUSE_ON_LOAD_MAX_ATTEMPTS = 10;
 const VIDEO_CHANGE_RETRY_1_MS = 1000;
@@ -622,6 +625,13 @@ const VideoPlayer = {
     // commands like loadVideoById) still mark the player as ready.
     if (!this._playerSettled && (stateName === "playing" || stateName === "paused")) {
       this._playerSettled = true;
+      // Tell the server we're loaded for the current item — this
+      // releases the server's ready-then-play hold for this peer.
+      // Tagged with item_id so the server can ignore stale loads if
+      // the video already changed again.
+      if (this._currentItemId) {
+        this.pushEvent(LV_EVT.EV_VIDEO_LOADED, { item_id: this._currentItemId });
+      }
       // If we were loading-for-pause, the pause has landed — don't push it
       if (this._loadingPaused && stateName === "paused") {
         this._loadingPaused = false;
@@ -915,12 +925,24 @@ const VideoPlayer = {
     // from the previous episode.
     this._lastExtPlayerState = null;
     this._renderExtStatus();
-    this._loadVideo(item.source_type, item.source_id, item.url, item);
+    // Server tells us the play_state to apply on load. With the
+    // ready-then-play handshake, video changes initially set this to
+    // "paused" and we wait for the explicit `sync:play` once every
+    // peer signals `video:loaded`. Older servers (or callers that
+    // didn't include the field) fall back to "playing".
+    //
+    // CRITICAL: set _pendingState BEFORE _loadVideo. _loadVideo reads
+    // _pendingState to compute shouldPlay (and start position). If we
+    // set it after, the player picks up the PREVIOUS video's pending
+    // state — for video changes that's always "playing", which makes
+    // the new video auto-play and defeats the ready-then-play hold.
+    const pendingPlayState = data.play_state === "paused" ? "paused" : "playing";
     this._pendingState = {
-      play_state: "playing",
+      play_state: pendingPlayState,
       current_time: 0,
       server_time: this.clockSync.serverNow(),
     };
+    this._loadVideo(item.source_type, item.source_id, item.url, item);
   },
 
   _onQueueEnded() {
@@ -1566,9 +1588,19 @@ const VideoPlayer = {
     if (this.el.querySelector(".byob-click-to-play")) return;
     if (this.el.querySelector(".byob-join-ready")) return;
 
+    // Stamp the moment of this show — the deferred hide uses this to
+    // keep the overlay visible for at least SYNCING_MIN_LIFETIME_MS
+    // past the latest show. Cascading sync seeks within that window
+    // therefore see the overlay as one continuous element instead of
+    // flickering between hides and shows.
+    this._lastSyncingShownAt = performance.now();
+    if (this._syncingHideTimer) {
+      clearTimeout(this._syncingHideTimer);
+      this._syncingHideTimer = null;
+    }
+
     let overlay = this.el.querySelector(".byob-syncing");
     if (overlay) {
-      // Already showing — just update the label and refresh the timer.
       const labelEl = overlay.querySelector("[data-byob-syncing-label]");
       if (labelEl && labelEl.textContent !== text) labelEl.textContent = text;
     } else {
@@ -1595,14 +1627,40 @@ const VideoPlayer = {
       this.el.appendChild(overlay);
     }
 
+    // Safety auto-hide so a stuck convergence doesn't leave the
+    // overlay visible forever. 5 s covers ~3 cascading seeks.
     if (this._syncingTimer) clearTimeout(this._syncingTimer);
-    this._syncingTimer = setTimeout(() => this._hideSyncingOverlay(), 3000);
+    this._syncingTimer = setTimeout(() => this._hideSyncingOverlayNow(), 5000);
   },
 
+  // Public hide — defers the actual removal so a cascading sync seek
+  // arriving within MIN_LIFETIME of the last show keeps the overlay
+  // continuously visible. Use this from "playing" state changes.
   _hideSyncingOverlay() {
+    const SYNCING_MIN_LIFETIME_MS = 1500;
+    const elapsed = performance.now() - (this._lastSyncingShownAt || 0);
+    if (elapsed >= SYNCING_MIN_LIFETIME_MS) {
+      this._hideSyncingOverlayNow();
+      return;
+    }
+    if (this._syncingHideTimer) return; // already pending
+    this._syncingHideTimer = setTimeout(
+      () => this._hideSyncingOverlay(),
+      SYNCING_MIN_LIFETIME_MS - elapsed
+    );
+  },
+
+  // Bypass the lifetime gate. Used by the safety timeout and the
+  // call sites that genuinely want the overlay gone immediately
+  // (e.g. video unloaded, click-to-play taking over).
+  _hideSyncingOverlayNow() {
     if (this._syncingTimer) {
       clearTimeout(this._syncingTimer);
       this._syncingTimer = null;
+    }
+    if (this._syncingHideTimer) {
+      clearTimeout(this._syncingHideTimer);
+      this._syncingHideTimer = null;
     }
     const overlay = this.el.querySelector(".byob-syncing");
     if (!overlay) return;

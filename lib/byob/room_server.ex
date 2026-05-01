@@ -52,7 +52,15 @@ defmodule Byob.RoomServer do
     # transport switches, each with its own streak counter racing the
     # other and stomping each other's seeks).
     # %{user_id => Byob.SyncDecision.t()}
-    user_sync_states: %{}
+    user_sync_states: %{},
+    # Ready-then-play tracking. When a video changes we hold the room in
+    # :paused, wait for every connected user to load the new media, and
+    # only THEN broadcast :sync_play. Eliminates the load-delay drift
+    # that used to cost a SyncDecision seek per peer per video change.
+    # `media_loaded_for` maps user_id → item_id (cleared on each change).
+    # `ready_check_timer` is the timeout fallback (8 s default).
+    media_loaded_for: %{},
+    ready_check_timer: nil
   ]
 
   @autoplay_countdown_ms 5_000
@@ -65,6 +73,10 @@ defmodule Byob.RoomServer do
   @persist_interval_ms 5_000
   @rate_limit_reset_interval_ms 5_000
   @sync_broadcast_debounce_ms 500
+  # Max time to wait for all clients to signal `video:loaded` before
+  # we broadcast :sync_play anyway. Long enough for cold YT loads on
+  # mobile, short enough that one stuck peer doesn't strand the room.
+  @ready_check_timeout_ms 8_000
 
   # Room-wide clock adjustment: minimize all peers' |drift| toward 0 by
   # shifting the canonical reference. Strategy depends on sign uniformity:
@@ -159,6 +171,13 @@ defmodule Byob.RoomServer do
 
   def seek(pid, user_id, position) do
     GenServer.call(pid, {:seek, user_id, position})
+  end
+
+  # Client-side player has finished loading the given media item and is
+  # ready to play. Server tracks per-user load state for the current
+  # ready check; once everyone has reported in, broadcasts :sync_play.
+  def video_loaded(pid, user_id, item_id) do
+    GenServer.cast(pid, {:video_loaded, user_id, item_id})
   end
 
   def add_to_queue(pid, user_id, url, mode) do
@@ -285,6 +304,8 @@ defmodule Byob.RoomServer do
             user_sync_states: %{},
             drift_samples: %{},
             clock_adjust_ref: nil,
+            media_loaded_for: %{},
+            ready_check_timer: nil,
             users: Enum.into(saved.users, %{}, fn {k, v} -> {k, %{v | connected: false}} end)
           })
 
@@ -1206,6 +1227,14 @@ defmodule Byob.RoomServer do
     end
   end
 
+  # Ready-then-play: a client finished loading the new media. If the
+  # item_id matches what we're waiting on, mark them and check if we
+  # have a quorum to start playback.
+  @impl true
+  def handle_cast({:video_loaded, user_id, item_id}, state) do
+    {:noreply, record_media_loaded(state, user_id, item_id)}
+  end
+
   @impl true
   def handle_info(:check_empty, state) do
     connected_count = Enum.count(state.users, fn {_, u} -> u.connected end)
@@ -1271,6 +1300,18 @@ defmodule Byob.RoomServer do
     state = %{state | event_counts: %{}}
     state = schedule_rate_limit_reset(state)
     {:noreply, state}
+  end
+
+  # Ready-check timeout: at least one peer never reported `video:loaded`
+  # within the window. Play anyway so a stuck peer doesn't strand the
+  # room. They'll catch up via SyncDecision after they finally load.
+  def handle_info({:ready_check_timeout, item_id}, state) do
+    if current_media_id(state) == item_id and state.ready_check_timer != nil do
+      {:noreply, finish_ready_check(state, :timeout)}
+    else
+      # Stale (item changed) or already finished — ignore.
+      {:noreply, state}
+    end
   end
 
   def handle_info(:persist, state) do
@@ -1780,13 +1821,122 @@ defmodule Byob.RoomServer do
     }
   end
 
-  # Wraps the `:video_changed` broadcast with a SyncDecision reset.
-  # Every video transition resets per-user streak / cooldown so the next
-  # video starts with a clean slate (preserving learned_L).
+  # Wraps the `:video_changed` broadcast with a SyncDecision reset and
+  # the ready-then-play handshake. We force the room to :paused and
+  # broadcast :video_changed; clients load the new media and emit
+  # `video:loaded` when their player is ready. Once every connected
+  # user has loaded (or @ready_check_timeout_ms elapses), we broadcast
+  # :sync_play and resume. This eliminates the load-delay drift that
+  # otherwise costs a SyncDecision seek per peer per video change.
   defp broadcast_video_changed(state, item, index) do
     state = reset_user_sync_states(state)
-    broadcast(state, {:video_changed, %{media_item: item, index: index}})
+
+    # Force paused while we wait for everyone to load, even if the
+    # caller had set :playing intent. We remember the wanted state in
+    # the timer; today every video-change caller wants :playing, so
+    # we hard-code that path.
+    state = %{state | play_state: :paused}
+
+    state = cancel_ready_check(state)
+    state = %{state | media_loaded_for: %{}}
+
+    timer_ref =
+      Process.send_after(self(), {:ready_check_timeout, item.id}, @ready_check_timeout_ms)
+
+    state = %{state | ready_check_timer: timer_ref}
+
+    broadcast(state, {:video_changed, %{media_item: item, index: index, play_state: :paused}})
+
     state
+  end
+
+  # Mark `user_id` as having loaded `item_id` for the current ready
+  # check. If every connected user has now loaded, fire :sync_play.
+  defp record_media_loaded(state, user_id, item_id) do
+    current_id = current_media_id(state)
+
+    cond do
+      current_id == nil ->
+        state
+
+      current_id != item_id ->
+        # Stale load report (user finished loading a video that's already
+        # been replaced). Drop it.
+        state
+
+      state.ready_check_timer == nil ->
+        # No active check — either timed out or the room never started one.
+        # Just record the fact without triggering anything.
+        Map.update!(state, :media_loaded_for, &Map.put(&1, user_id, item_id))
+
+      true ->
+        loaded = Map.put(state.media_loaded_for, user_id, item_id)
+        state = %{state | media_loaded_for: loaded}
+        maybe_finish_ready_check(state)
+    end
+  end
+
+  # If all currently-connected users have loaded the current item,
+  # cancel the timer and start playback.
+  defp maybe_finish_ready_check(state) do
+    item_id = current_media_id(state)
+    connected_ids = connected_user_ids(state)
+
+    all_loaded? =
+      connected_ids != [] and
+        Enum.all?(connected_ids, fn uid ->
+          Map.get(state.media_loaded_for, uid) == item_id
+        end)
+
+    if all_loaded? do
+      finish_ready_check(state, :all_loaded)
+    else
+      state
+    end
+  end
+
+  defp finish_ready_check(state, reason) do
+    state = cancel_ready_check(state)
+    now = System.monotonic_time(:millisecond)
+
+    state = %{state | play_state: :playing, current_time: 0.0, last_sync_at: now}
+
+    require Logger
+
+    Logger.info(
+      "[ready_check] room=#{state.room_id} reason=#{reason} " <>
+        "loaded=#{map_size(state.media_loaded_for)}/#{length(connected_user_ids(state))}"
+    )
+
+    broadcast(state, {:sync_play, %{time: 0.0, server_time: now, user_id: nil}})
+    state
+  end
+
+  defp cancel_ready_check(%{ready_check_timer: nil} = state), do: state
+
+  defp cancel_ready_check(%{ready_check_timer: ref} = state) do
+    Process.cancel_timer(ref)
+    %{state | ready_check_timer: nil}
+  end
+
+  defp current_media_id(state) do
+    case current_media_item(state) do
+      %{id: id} -> id
+      _ -> nil
+    end
+  end
+
+  defp current_media_item(state) do
+    case state.current_index do
+      nil -> nil
+      idx -> Enum.at(state.queue, idx)
+    end
+  end
+
+  defp connected_user_ids(state) do
+    state.users
+    |> Enum.filter(fn {_, u} -> Map.get(u, :connected, false) end)
+    |> Enum.map(fn {uid, _} -> uid end)
   end
 
   # Choose how much to shift the canonical clock to minimize peers' |drift|.
