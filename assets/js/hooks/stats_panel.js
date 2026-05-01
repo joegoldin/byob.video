@@ -207,11 +207,20 @@ function renderLocalChart(host, rings, localUserId) {
     const last = Math.round(ring.drift[ring.drift.length - 1]);
     const name = isLocal ? `${ring.username} (you)` : ring.username;
     const sign = last > 0 ? "+" : "";
+    // Each peer gets its own row — `white-space:nowrap` keeps the
+    // swatch / name / value grouped, and the row layout means a long
+    // username (or a peer count > 2) doesn't leave one entry orphaned
+    // on a wrapped second line. flex/space-between pushes the value
+    // to the right so all values align.
     legendItems.push(
-      `<span style="color:${color}">■</span> ${name}: <span style="color:${color}">${sign}${last}ms</span>`
+      `<div style="display:flex;align-items:center;gap:6px;white-space:nowrap">` +
+        `<span style="color:${color};flex:0 0 auto">■</span>` +
+        `<span style="flex:1 1 auto;overflow:hidden;text-overflow:ellipsis">${name}</span>` +
+        `<span style="color:${color};flex:0 0 auto;font-variant-numeric:tabular-nums">${sign}${last}ms</span>` +
+      `</div>`
     );
   }
-  const legend = legendItems.join(" &nbsp; ");
+  const legend = legendItems.join("");
 
   host.innerHTML =
     `<svg width="100%" height="${LOCAL_CHART_H}" viewBox="0 0 ${LOCAL_CHART_W} ${LOCAL_CHART_H}" preserveAspectRatio="none" style="display:block;background:rgba(0,0,0,0.15);border-radius:4px">` +
@@ -219,7 +228,7 @@ function renderLocalChart(host, rings, localUserId) {
     `<line x1="0" y1="${LOCAL_CHART_H / 2}" x2="${LOCAL_CHART_W}" y2="${LOCAL_CHART_H / 2}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>` +
     driftLines +
     `</svg>` +
-    `<div style="font-size:10px;margin-top:2px;opacity:0.85;display:flex;flex-wrap:wrap;gap:4px 12px">${legend}</div>`;
+    `<div style="font-size:10px;margin-top:2px;opacity:0.85;display:flex;flex-direction:column;gap:1px">${legend}</div>`;
 }
 
 // Hash user_id to a stable HSL hue. Same id → same color across reloads.

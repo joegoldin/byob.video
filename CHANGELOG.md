@@ -3,6 +3,19 @@
 
 ---
 
+# v6.8.22
+
+### Peer-drift legend lays out one row per peer
+
+Wrapped flex layout was orphaning a peer onto its own line when the
+sum of names+values overflowed. Switched to `flex-direction:column`
+so each peer is its own row: color swatch (left, fixed) → username
+(middle, takes remaining space, ellipsis on overflow) → drift value
+(right, fixed, `tabular-nums` so columns align). `white-space:nowrap`
+keeps each row's pieces glued together regardless of width.
+
+---
+
 # v6.8.21
 
 ### Fix ready-then-play stranding autoplay-blocked peers
