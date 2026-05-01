@@ -235,14 +235,28 @@ defmodule Byob.SyncDecision do
     require Logger
     user_short = data |> Map.get(:user_id, "?") |> to_string() |> String.slice(0..7)
 
+    elapsed = if state.last_seek_at > 0, do: now_ms - state.last_seek_at, else: nil
+
     cond do
       not state.observation_pending ->
+        if state.last_seek_at > 0 do
+          Logger.info(
+            "[sync_decision] user=#{user_short} L-observe skip: not pending " <>
+              "(elapsed=#{elapsed}ms streak=#{state.seek_streak} learned_L=#{Float.round(state.learned_l_ms * 1.0, 1)}ms)"
+          )
+        end
+
         state
 
       state.last_seek_at <= 0 ->
         state
 
       now_ms - state.last_seek_at < @l_observation_after_seek_ms ->
+        Logger.info(
+          "[sync_decision] user=#{user_short} L-observe skip: too soon " <>
+            "(elapsed=#{elapsed}ms < #{@l_observation_after_seek_ms}ms streak=#{state.seek_streak})"
+        )
+
         state
 
       true ->

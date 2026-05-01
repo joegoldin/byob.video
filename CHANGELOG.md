@@ -3,6 +3,26 @@
 
 ---
 
+# v6.8.7
+
+### More L-observation diagnostic logging
+
+`fly logs | grep L-observe` returned nothing after v6.8.5 — meaning
+`maybe_observe_l` is hitting an early-return branch every time
+(observation_pending=false, or window not yet expired). The
+diagnostic in v6.8.4 only logged the *body* path. Bumping the
+early-return branches to Logger.info too:
+
+- `L-observe skip: not pending (elapsed=… streak=… learned_L=…)`
+- `L-observe skip: too soon (elapsed=… < 1500 ms)`
+
+So the next deploy will tell us *exactly* why observation isn't
+running and we can pick the right fix.
+
+Server-only / no extension republish.
+
+---
+
 # v6.8.6
 
 ### Seek cooldown cap raised 5 s → 15 s
