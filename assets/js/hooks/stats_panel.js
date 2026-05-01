@@ -52,19 +52,32 @@ const StatsPanel = {
 
     let ring = this.rings.get(key);
     if (!ring) {
-      ring = { drift: [], rtt: [], offset: [] };
+      ring = {
+        drift: [],
+        rtt: [],
+        offset: [],
+        // Parallel boolean array: true at indices where a seek fired
+        // for this peer (detected by seek_streak going up).
+        seekFlags: [],
+        lastSeekStreak: 0,
+      };
       this.rings.set(key, ring);
     }
+    const streak = data.seek_streak || 0;
+    const isSeek = streak > ring.lastSeekStreak;
+    ring.lastSeekStreak = streak;
+
     pushRing(ring.drift, data.drift_ms || 0);
     pushRing(ring.rtt, data.rtt_ms || 0);
     pushRing(ring.offset, data.offset_ms || 0);
+    pushRing(ring.seekFlags, isSeek);
 
     // Per-peer sparkline (drift only — that's what users care about per row).
     const spark = document.querySelector(
       `[data-byob-spark-key="${cssEscape(key)}"]`
     );
     if (spark) {
-      renderSparkline(spark, ring.drift);
+      renderSparkline(spark, ring.drift, ring.seekFlags);
     }
 
     // Local multi-line chart + correction-bands diagram. The bands diagram
@@ -89,25 +102,44 @@ function pushRing(arr, value) {
 // Inline-SVG single-line sparkline. Re-renders the whole `<svg>` content
 // on each update; cheap at 60 points and 1 Hz. Y-axis is centered at 0
 // (drift sign carries meaning); width/height fixed.
-function renderSparkline(host, values) {
+//
+// `seekFlags` is a parallel boolean array — wherever true, a small white
+// dot is drawn at that drift point so the user can see when seeks fired
+// over the last 60 s. Helps explain why drift suddenly returned to ~0.
+function renderSparkline(host, values, seekFlags) {
   if (values.length === 0) {
     host.innerHTML = "";
     return;
   }
 
   const max = Math.max(50, ...values.map((v) => Math.abs(v)));
-  const points = values
-    .map((v, i) => {
-      const x = (i / (RING_SIZE - 1)) * SPARK_W;
-      const y = SPARK_H / 2 - (v / max) * (SPARK_H / 2 - 1);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
+  const xy = values.map((v, i) => {
+    const x = (i / (RING_SIZE - 1)) * SPARK_W;
+    const y = SPARK_H / 2 - (v / max) * (SPARK_H / 2 - 1);
+    return [x, y];
+  });
+
+  const points = xy.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
 
   // Color the line by the most recent sample's severity (matches the
   // numeric drift column above it).
   const last = Math.abs(values[values.length - 1]);
   const stroke = last > 1000 ? "#f87171" : last > 250 ? "#fbbf24" : "#34d399";
+
+  let dots = "";
+  if (Array.isArray(seekFlags)) {
+    for (let i = 0; i < seekFlags.length && i < xy.length; i++) {
+      if (seekFlags[i]) {
+        const [x, y] = xy[i];
+        // White dot with thin colored outline so it's visible against
+        // the line. Small (r=1.4 in viewBox units, scaled by viewBox).
+        dots +=
+          `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="1.4" ` +
+          `fill="white" stroke="${stroke}" stroke-width="0.6" ` +
+          `vector-effect="non-scaling-stroke"/>`;
+      }
+    }
+  }
 
   // width=100% lets the sparkline stretch to fill its flex-1 container; the
   // viewBox provides a stable coordinate system so polyline points don't
@@ -116,6 +148,7 @@ function renderSparkline(host, values) {
     `<svg width="100%" height="${SPARK_H}" viewBox="0 0 ${SPARK_W} ${SPARK_H}" preserveAspectRatio="none" style="display:block">` +
     `<line x1="0" y1="${SPARK_H / 2}" x2="${SPARK_W}" y2="${SPARK_H / 2}" stroke="rgba(255,255,255,0.1)" stroke-width="1"/>` +
     `<polyline points="${points}" fill="none" stroke="${stroke}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>` +
+    dots +
     `</svg>`;
 }
 
@@ -194,54 +227,38 @@ function scalePositive(values, w, h) {
     .join(" ");
 }
 
-// Horizontal "where on the dial are you" diagram. Three zones, proportional
-// sections so the inner jitter band is always visible regardless of how
-// small jitter is in absolute terms:
+// Horizontal "where on the dial are you" diagram. FULLY proportional —
+// each band's width is in true 1:1 ratio with the ms range it represents.
+// Display range covers ±(2 × tolerance), mapped linearly to 0-100 %:
 //
-//   [seek][— tolerated —][== jitter ==][— tolerated —][seek]
-//   15%        20%             30%           20%       15%
+//   green  half-width  = jitter / (2 × tolerance) × 50 %
+//   yellow half-width  = (tolerance − jitter) / (2 × tolerance) × 50 %
+//   red    half-width  = tolerance / (2 × tolerance) × 50 % = 25 %
 //
-//   • green (center, ±jitter)         — within measurement noise
-//   • yellow (between, jitter→tol)    — out of sync but still tolerated
-//   • red (outer, > tolerance)        — seek territory (will hard-seek
-//                                        once sustained 300 ms, gated by
-//                                        the exponential cooldown)
+// So tolerance edges always sit at 25 % / 75 %; jitter edges land
+// proportionally inside; the outer 25 % on each side is "seek territory"
+// (drift beyond ±2 × tolerance clamps to the edge with an overflow arrow).
 //
-// Drift maps linearly within whichever section it falls in. So drift=±jitter
-// hits the green/yellow boundary; drift=±tolerance hits the yellow/red
-// boundary; bigger overflows to the chart edges with an arrow.
+// When jitter ≈ tolerance, green fills the whole inner area. When jitter
+// ≪ tolerance, green is a thin center strip with most of the inner
+// area as yellow.
 function renderDriftBands(host, data) {
   const drift = data.drift_ms || 0;
   const tolerance = Math.max(1, data.tolerance_ms || FALLBACK_TOLERANCE_MS);
-  // The green "in sync" band sizes to ROOM jitter consensus, not local
-  // jitter — that's the value driving the tolerance and what "in sync"
-  // actually means relative to the whole room's calibration. Falls back
-  // to local noise floor (single-user rooms) and never exceeds tolerance.
+  // Green "in sync" band sized by ROOM jitter (consensus). Falls back to
+  // local noise floor for single-user rooms; clamped at tolerance so green
+  // can't exceed the inner area.
   const roomJitter = Math.max(0, data.room_jitter_ms || 0);
   const localJitter = Math.max(0, data.noise_floor_ms || 0);
   const jitterBand = Math.max(1, Math.min(Math.max(roomJitter, localJitter), tolerance));
   const cooldownRemaining = data.cooldown_remaining_ms || 0;
   const seekStreak = data.seek_streak || 0;
 
-  // Section boundaries (% of width). Symmetric around 50%.
-  //   0–15  : red (negative seek)
-  //   15–35 : yellow (negative tolerated)
-  //   35–65 : green (in jitter)
-  //   65–85 : yellow (positive tolerated)
-  //   85–100: red (positive seek)
+  // Linear ms → % mapping over [-displayMax, +displayMax].
+  const displayMax = tolerance * 2;
   const xFor = (ms) => {
-    const sign = ms < 0 ? -1 : 1;
-    const abs = Math.abs(ms);
-    let halfFrac;
-    if (abs <= jitterBand) {
-      halfFrac = (abs / jitterBand) * 0.15;
-    } else if (abs <= tolerance) {
-      halfFrac = 0.15 + ((abs - jitterBand) / (tolerance - jitterBand)) * 0.20;
-    } else {
-      const beyond = Math.min((abs - tolerance) / tolerance, 1);
-      halfFrac = 0.35 + beyond * 0.15;
-    }
-    return 50 + sign * halfFrac * 100;
+    const clamped = Math.max(-displayMax, Math.min(displayMax, ms));
+    return 50 + (clamped / displayMax) * 50;
   };
 
   const absDrift = Math.abs(drift);
@@ -250,6 +267,11 @@ function renderDriftBands(host, data) {
   else if (absDrift <= tolerance) active = "tolerated";
   else active = "seek";
 
+  const xJitterL = xFor(-jitterBand);
+  const xJitterR = xFor(jitterBand);
+  const xToleranceL = xFor(-tolerance); // = 25
+  const xToleranceR = xFor(tolerance);  // = 75
+
   const band = (x1, x2, color, isActive) => {
     const w = Math.max(0, x2 - x1);
     const opacity = isActive ? "0.7" : "0.16";
@@ -257,15 +279,19 @@ function renderDriftBands(host, data) {
   };
 
   const segs =
-    band(0, 15, "#f87171", active === "seek") +
-    band(15, 35, "#fbbf24", active === "tolerated") +
-    band(35, 65, "#34d399", active === "jitter") +
-    band(65, 85, "#fbbf24", active === "tolerated") +
-    band(85, 100, "#f87171", active === "seek");
+    band(0, xToleranceL, "#f87171", active === "seek") +
+    band(xToleranceL, xJitterL, "#fbbf24", active === "tolerated") +
+    band(xJitterL, xJitterR, "#34d399", active === "jitter") +
+    band(xJitterR, xToleranceR, "#fbbf24", active === "tolerated") +
+    band(xToleranceR, 100, "#f87171", active === "seek");
 
   const divider = (x) =>
     `<line x1="${x}" y1="0" x2="${x}" y2="34" stroke="rgba(255,255,255,0.22)" stroke-width="0.4"/>`;
-  const dividers = divider(15) + divider(35) + divider(65) + divider(85);
+  const dividers =
+    divider(xToleranceL) +
+    divider(xJitterL) +
+    divider(xJitterR) +
+    divider(xToleranceR);
 
   const centerLine = `<line x1="50" y1="2" x2="50" y2="32" stroke="rgba(255,255,255,0.08)" stroke-width="0.3" stroke-dasharray="1 1"/>`;
 
@@ -314,19 +340,19 @@ function renderDriftBands(host, data) {
     `</svg>` +
     // Threshold labels under the section boundaries.
     `<div style="position:relative;height:14px;margin-top:2px;font-size:9px;font-family:monospace;color:rgba(255,255,255,0.55)">` +
-    `<span style="position:absolute;left:15%;transform:translateX(-50%)">−${tolerance}</span>` +
-    `<span style="position:absolute;left:35%;transform:translateX(-50%)">−${jitterBand}</span>` +
+    `<span style="position:absolute;left:${xToleranceL.toFixed(1)}%;transform:translateX(-50%)">−${tolerance}</span>` +
+    `<span style="position:absolute;left:${xJitterL.toFixed(1)}%;transform:translateX(-50%)">−${jitterBand}</span>` +
     `<span style="position:absolute;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.4)">0</span>` +
-    `<span style="position:absolute;left:65%;transform:translateX(-50%)">+${jitterBand}</span>` +
-    `<span style="position:absolute;left:85%;transform:translateX(-50%)">+${tolerance}</span>` +
+    `<span style="position:absolute;left:${xJitterR.toFixed(1)}%;transform:translateX(-50%)">+${jitterBand}</span>` +
+    `<span style="position:absolute;left:${xToleranceR.toFixed(1)}%;transform:translateX(-50%)">+${tolerance}</span>` +
     `</div>` +
-    // Section captions.
+    // Section captions, centered under each band.
     `<div style="position:relative;height:12px;margin-top:1px;font-size:9px;font-family:monospace;color:rgba(255,255,255,0.35)">` +
-    `<span style="position:absolute;left:7.5%;transform:translateX(-50%);color:rgba(248,113,113,0.7)">seek</span>` +
-    `<span style="position:absolute;left:25%;transform:translateX(-50%)">tolerated</span>` +
+    `<span style="position:absolute;left:${(xToleranceL / 2).toFixed(1)}%;transform:translateX(-50%);color:rgba(248,113,113,0.7)">seek</span>` +
+    `<span style="position:absolute;left:${((xToleranceL + xJitterL) / 2).toFixed(1)}%;transform:translateX(-50%)">tolerated</span>` +
     `<span style="position:absolute;left:50%;transform:translateX(-50%);color:rgba(52,211,153,0.7)">in sync</span>` +
-    `<span style="position:absolute;left:75%;transform:translateX(-50%)">tolerated</span>` +
-    `<span style="position:absolute;left:92.5%;transform:translateX(-50%);color:rgba(248,113,113,0.7)">seek</span>` +
+    `<span style="position:absolute;left:${((xJitterR + xToleranceR) / 2).toFixed(1)}%;transform:translateX(-50%)">tolerated</span>` +
+    `<span style="position:absolute;left:${((xToleranceR + 100) / 2).toFixed(1)}%;transform:translateX(-50%);color:rgba(248,113,113,0.7)">seek</span>` +
     `</div>`;
 }
 

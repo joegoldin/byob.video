@@ -620,7 +620,7 @@ defmodule Byob.RoomServer do
         state = log_activity(state, :played, user_id, item.title || item.url)
 
         broadcast(state, {:queue_updated, %{queue: queue, current_index: idx}})
-        broadcast(state, {:video_changed, %{media_item: item, index: idx}})
+        state = broadcast_video_changed(state, item, idx)
         {:reply, {:ok, item}, state}
 
       _ ->
@@ -801,6 +801,10 @@ defmodule Byob.RoomServer do
           end
 
         SyncLog.seek(state.room_id, user_id, current_media_url(state), position)
+        # User-initiated seek means the canonical reference just jumped —
+        # any in-flight per-user SyncDecision streak / cooldown is now
+        # stale. Reset all peers' decision state (preserving learned_L).
+        state = reset_user_sync_states(state)
         broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
         {:reply, :ok, state}
     end
@@ -991,7 +995,7 @@ defmodule Byob.RoomServer do
     title = item.title || item.url
     state = log_activity(state, :played, user_id, title)
 
-    broadcast(state, {:video_changed, %{media_item: item, index: 0}})
+    state = broadcast_video_changed(state, item, 0)
     broadcast(state, {:queue_updated, %{queue: queue, current_index: 0}})
     {:reply, :ok, state}
   end
@@ -1679,6 +1683,32 @@ defmodule Byob.RoomServer do
     {user_state, new_user_state, seek_command, tolerance_ms, cooldown_ms}
   end
 
+  # Wipes per-session SyncDecision state for every user — streak,
+  # cooldown, observation_pending, last_seek_at — while preserving each
+  # user's `learned_l_ms` (device-specific seek-processing latency that
+  # outlives any single video). Called on user seeks and video changes:
+  # the canonical reference position just shifted, so any pending seek
+  # state is now stale.
+  defp reset_user_sync_states(state) do
+    %{
+      state
+      | user_sync_states:
+          Map.new(state.user_sync_states, fn {user_id, ds} ->
+            {user_id, Byob.SyncDecision.reset_for_new_video(ds)}
+          end),
+        drift_samples: %{}
+    }
+  end
+
+  # Wraps the `:video_changed` broadcast with a SyncDecision reset.
+  # Every video transition resets per-user streak / cooldown so the next
+  # video starts with a clean slate (preserving learned_L).
+  defp broadcast_video_changed(state, item, index) do
+    state = reset_user_sync_states(state)
+    broadcast(state, {:video_changed, %{media_item: item, index: index}})
+    state
+  end
+
   defp compute_median(values) do
     sorted = Enum.sort(values)
     n = length(sorted)
@@ -1924,8 +1954,7 @@ defmodule Byob.RoomServer do
         state = schedule_sync_correction(state)
         fetch_sponsor_segments(item)
         state = fetch_comments_for_current(state)
-        broadcast(state, {:video_changed, %{media_item: item, index: 0}})
-        state
+        broadcast_video_changed(state, item, 0)
       else
         %{state | queue: queue}
       end
@@ -1958,8 +1987,7 @@ defmodule Byob.RoomServer do
         state = schedule_sync_correction(state)
         fetch_sponsor_segments(item)
         state = fetch_comments_for_current(state)
-        broadcast(state, {:video_changed, %{media_item: item, index: 0}})
-        state
+        broadcast_video_changed(state, item, 0)
 
       idx ->
         # Remove old now-playing, put new item at front
@@ -1980,8 +2008,7 @@ defmodule Byob.RoomServer do
         state = schedule_sync_correction(state)
         fetch_sponsor_segments(item)
         state = fetch_comments_for_current(state)
-        broadcast(state, {:video_changed, %{media_item: item, index: 0}})
-        state
+        broadcast_video_changed(state, item, 0)
     end
   end
 
@@ -2027,7 +2054,7 @@ defmodule Byob.RoomServer do
       state = schedule_sync_correction(state)
       fetch_sponsor_segments(item)
       state = fetch_comments_for_current(state)
-      broadcast(state, {:video_changed, %{media_item: item, index: 0}})
+      state = broadcast_video_changed(state, item, 0)
       broadcast(state, {:queue_updated, %{queue: queue, current_index: 0}})
       state
     else

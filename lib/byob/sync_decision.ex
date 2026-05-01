@@ -96,6 +96,26 @@ defmodule Byob.SyncDecision do
   @spec new() :: t()
   def new, do: %__MODULE__{}
 
+  @doc """
+  Reset per-session decision state — streak, cooldown, observation —
+  but PRESERVE `learned_l_ms`. Called when the canonical playback
+  position changes for reasons other than gradual drift (video change,
+  user-initiated seek): the existing seek state is stale, but the
+  device's seek-processing latency is a hardware/network characteristic
+  that doesn't reset between videos.
+  """
+  @spec reset_for_new_video(t()) :: t()
+  def reset_for_new_video(state) do
+    %{
+      state
+      | over_tolerance_count: 0,
+        seek_streak: 0,
+        last_seek_at: 0,
+        last_overshoot_ms: 0,
+        observation_pending: false
+    }
+  end
+
   # Public getters for the threshold constants. Templates / panels reach
   # for these so they don't have to know about the private @attrs.
   def min_tolerance_ms, do: @min_tolerance_ms

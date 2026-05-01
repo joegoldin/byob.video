@@ -3,6 +3,56 @@
 
 ---
 
+# v6.8.10
+
+### Reset SyncDecision on video change + user seek; mark seeks on sparklines
+
+**Reset on video change / user seek (preserve learned_L).**
+
+When the canonical playback position jumps for *non-drift* reasons —
+queue advance, manual queue click, user-initiated seek — the per-
+user `SyncDecision` state (streak, cooldown, observation_pending,
+last_seek_at) is now stale: it was based on a position that no
+longer applies. Without resetting, you'd see leftover cooldowns
+from the old video / position blocking corrections in the new one.
+
+New `Byob.SyncDecision.reset_for_new_video/1` zeros out per-session
+fields but **preserves `learned_l_ms`** — that's a hardware/network
+characteristic of the user's device that doesn't change between
+videos. The device's seek-processing latency is the same whether
+they're on video 1 or video 5.
+
+Wired into `room_server`:
+- `:seek` handler — user-initiated seek resets all peers (everyone's
+  position-relative-to-canonical just changed).
+- New `broadcast_video_changed/3` helper resets state then broadcasts
+  `:video_changed`. Used at all 6 call sites (queue advance, play_index,
+  add_to_queue :now / :next first-video, autoplay roll, etc.).
+
+Drift_samples for clock adjustment also clear (stale samples for the
+old position).
+
+**Seek markers on per-peer sparklines.** Each per-peer drift
+sparkline in the connected-clients list now renders a small white
+dot at any sample where a seek fired (detected client-side via the
+`seek_streak` counter going up). Helps explain visually why drift
+suddenly returned to ~0 — a seek just happened. 60 s window same
+as the drift line.
+
+**Bands diagram is now fully proportional.** Previous version used
+fixed 15/20/30/20/15 % section widths, so green and yellow always
+looked the same regardless of the actual jitter / tolerance ratio.
+Now display range = ±(2 × tolerance) mapped linearly to 0-100 %:
+green half-width = `jitter / (2 × tolerance) × 50 %`, yellow fills
+the rest of the inner area, red is the outer 25 % on each side
+(seek territory). Tolerance edges always sit at 25 % / 75 %; jitter
+edges land at the actual ratio. Threshold labels and section
+captions now follow the moving boundaries.
+
+Server + JS / no extension republish.
+
+---
+
 # v6.8.9
 
 ### Stop Drift-tolerance label flicker; pull thresholds from constants
