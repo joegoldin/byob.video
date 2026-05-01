@@ -24,6 +24,11 @@
 const TICK_MS = 100;
 const NOISE_EMA_ALPHA = 0.1;     // ~1 s horizon
 const POST_SEEK_QUIET_MS = 5000; // don't update jitter EMA for 5 s after a seek
+// Any tick-to-tick |Δdrift| over this is treated as a position
+// discontinuity (seek of any kind), not measurement noise. Network
+// jitter on real links rarely exceeds 200 ms tick-to-tick; seeks are
+// always at least a few hundred ms.
+const JITTER_REJECT_DELTA_MS = 500;
 
 export class Reconcile {
   constructor(playerAdapter) {
@@ -141,12 +146,15 @@ export class Reconcile {
     const localPosition = this.player.getCurrentTime();
     const driftMs = (localPosition - expectedPosition) * 1000;
 
-    // Jitter EMA. Skip during the post-seek quiet window — the giant
-    // Δdrift from the seek itself isn't real noise and would inflate the
-    // EMA, widening the tolerance and starving subsequent corrections.
+    // Jitter EMA. Skip during the post-seek quiet window AND skip any
+    // single tickDelta that's clearly a seek (any source — server
+    // command, user scrubbing, LV-driven sync seek). Letting a 1-second-
+    // plus jump into the EMA inflates tolerance for tens of seconds
+    // afterward, which starves subsequent corrections.
     const inPostSeekQuiet = Date.now() - this.lastExecutedSeekAt < POST_SEEK_QUIET_MS;
-    if (this.noiseSamples > 0 && !inPostSeekQuiet) {
-      const tickDelta = Math.abs(driftMs - this.lastDriftMs);
+    const tickDelta = this.noiseSamples > 0 ? Math.abs(driftMs - this.lastDriftMs) : 0;
+    const looksLikeSeek = tickDelta > JITTER_REJECT_DELTA_MS;
+    if (this.noiseSamples > 0 && !inPostSeekQuiet && !looksLikeSeek) {
       this.noiseFloorEmaMs =
         NOISE_EMA_ALPHA * tickDelta + (1 - NOISE_EMA_ALPHA) * this.noiseFloorEmaMs;
     }

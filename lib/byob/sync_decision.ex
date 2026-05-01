@@ -171,23 +171,26 @@ defmodule Byob.SyncDecision do
     end
   end
 
-  # Compute seek target with overshoot for both seek-completion-time and
-  # one-way-trip-to-client delay. Both server clock and client clock are
-  # advancing by ~RTT/2 between issue-time and seek-land-time.
+  # Compute seek target with overshoot. `learned_l_ms` is the *total*
+  # round-trip compensation (one-way-send + seek-processing), learned
+  # directly from prior observations — DO NOT add rtt/2 separately or
+  # we double-count it (the prior overshoot already included rtt/2's
+  # worth of the round-trip, and the residual drift baked all of that
+  # into learned_l_ms).
+  #
+  # First seek (learned_l_ms = 0): target = expected. Residual drift
+  # = -(actual round-trip + seek processing); becomes our first sample.
+  # Second seek with learned_l_ms = correct: target lands at exactly
+  # expected_at_completion, drift converges to ~0.
   defp issue_seek(state, data, room, now_ms) do
     drift_ms = data.drift_ms || 0
-    rtt_ms = data.rtt_ms || 0
 
-    # Overshoot to compensate for seek processing (only if we're behind).
-    # First seek has learned_l_ms = 0 so we just rely on rtt/2 — the
-    # residual drift becomes our first L sample.
     overshoot_ms =
       if drift_ms < 0 do
-        state.learned_l_ms + rtt_ms / 2
+        state.learned_l_ms
       else
-        # Ahead: don't overshoot forward. Send command to expected, accept
-        # residual lag (will land slightly behind expected, but bounded).
-        rtt_ms / 2
+        # Ahead: don't overshoot forward. Just seek to expected.
+        0
       end
 
     target_position = max(0, room.expected_position + overshoot_ms / 1000)

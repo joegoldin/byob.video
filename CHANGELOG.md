@@ -3,6 +3,42 @@
 
 ---
 
+# v6.7.1
+
+### Hotfix: convergence (rtt double-count) and jitter-from-seeks
+
+User report on v6.7.0: "Re-syncing now" stuck on, drift not converging,
+seeks fucking up the jitter and drift values.
+
+**Bug 1: rtt/2 double-counted in seek target.** The server's seek
+target was `expected + (learned_L + rtt/2) / 1000`, but the L
+observation formula `L = last_overshoot − drift_after` already
+absorbs the round-trip into `learned_L`. Adding rtt/2 separately at
+seek-time meant we over-shot by that amount, drift went positive,
+next seek didn't overshoot (positive-drift case), drift went
+negative again, oscillation forever — the panel showed perpetual
+"Re-syncing now" while seeks fired but never converged.
+
+Fix: drop the explicit rtt/2 addition. `learned_L` is now the *total*
+round-trip compensation. First seek (learned_L = 0) goes to
+expected — residual drift is one full round-trip + seek-processing,
+which we observe and use as the second seek's overshoot. Drift
+converges to ~0 in two seeks.
+
+**Bug 2: seeks poisoned the jitter EMA.** Every seek caused a huge
+`Δdrift` between consecutive ticks (position jumped). The jitter EMA
+absorbed that as if it were measurement noise, inflating tolerance
+for tens of seconds — server then *stopped* deciding to seek, which
+looked like the system giving up.
+
+Fix: reject any single `|Δdrift| > 500 ms` from the EMA update. Real
+network jitter never spikes that high tick-to-tick; values that
+large are always seeks.
+
+Server-only / no extension republish.
+
+---
+
 # v6.7.0
 
 ### Server-authoritative sync with adaptive seek-latency learning
