@@ -3,6 +3,24 @@
 
 ---
 
+# v6.8.6
+
+### Seek cooldown cap raised 5 s → 15 s
+
+Cooldown ladder is now `1, 2, 4, 8, 15 s` (capped at 15). With the
+v6.8.5 fix making `learned_L` actually converge, repeated seeks
+should be the rare exception — when they DO happen the longer
+cap reduces stutter on chronically-failing peers (mobile in
+buffering loops, etc.).
+
+Streak still resets after 10 s of quiet, so a one-off seek doesn't
+get penalized — the cap only kicks in when seeks are firing
+back-to-back without resolving.
+
+Server-only / no extension republish.
+
+---
+
 # v6.8.5
 
 ### Move SyncDecision into room_server (singleton-per-room state)

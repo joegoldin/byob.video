@@ -44,7 +44,7 @@ defmodule Byob.SyncDecision do
   @sustained_reports 2
 
   @seek_cooldown_base_ms 1_000
-  @seek_cooldown_max_ms 5_000
+  @seek_cooldown_max_ms 15_000
   @seek_streak_reset_ms 10_000
   # No cap on streak: relying on the cooldown ladder (1/2/4/5 s capped at
   # 5 s) for rate-limiting. A previous cap at 3 left peers stuck whose
