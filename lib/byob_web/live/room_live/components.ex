@@ -266,7 +266,11 @@ defmodule ByobWeb.RoomLive.Components do
   def settings_modal(assigns) do
     ~H"""
     <dialog id="sb-settings-modal" class="modal" phx-hook="PreserveModal">
-      <div class="modal-box max-w-md relative">
+      <div
+        id="sb-settings-modal-box"
+        phx-hook="PreserveScroll"
+        class="modal-box max-w-md relative"
+      >
         <form method="dialog">
           <button class="btn btn-sm btn-circle btn-ghost absolute right-3 top-3">✕</button>
         </form>
@@ -387,6 +391,7 @@ defmodule ByobWeb.RoomLive.Components do
             dead_zone = Map.get(local_client, :dead_zone_ms, 0)
             hard_seek = Map.get(local_client, :hard_seek_ms, 0)
             noise_floor = Map.get(local_client, :noise_floor_ms, 0)
+            local_abs_drift = abs(Map.get(local_client, :drift_ms, 0))
             rate_correcting? = Map.get(local_client, :rate_correcting, false)
             dead_zone = if dead_zone > 0, do: dead_zone, else: 250
             hard_seek = if hard_seek > 0, do: hard_seek, else: 3000
@@ -447,9 +452,9 @@ defmodule ByobWeb.RoomLive.Components do
             <div class="flex justify-between">
               <span>Room max |drift|</span>
               <span class={
-                if room_max_drift > 250, do: "text-warning", else: "text-base-content/40"
+                if room_max_drift > local_abs_drift, do: "text-warning", else: "text-base-content/40"
               }>
-                {room_max_drift}ms
+                {room_max_drift}ms{if room_max_drift > local_abs_drift, do: " (peer)", else: ""}
               </span>
             </div>
             <%!-- Drift tolerance and hard-seek scale with the larger of

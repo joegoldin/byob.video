@@ -3,6 +3,34 @@
 
 ---
 
+# v6.5.54
+
+### Settings modal scroll position survives LV updates; (peer) tag on max-drift
+
+**Settings modal scroll preservation.** The modal-box re-renders on
+every drift report (1 Hz/peer), and without an explicit scroll
+guard the browser would clamp scrollTop on every update — visible
+as the panel jumping to the top whenever the user toggled a
+collapsed `<details>` and an LV diff happened to land in the same
+frame. Replaced the v6.5.48 `scrollIntoView` workaround in
+`PreserveDetails` (which mis-aligned tall panels to "top of
+viewport" the moment they exceeded modal-box height) with a new
+`PreserveScroll` hook on `<div class="modal-box">`: tracks
+scrollTop continuously via a passive scroll listener, snapshots
+in `beforeUpdate`, and restores in `updated` on the next frame so
+post-layout clamping is reverted. Toggling sections in the
+settings modal now leaves the user where they were.
+
+**"Room max |drift|" tags the driver.** The row was just a number;
+now it shows `(peer)` and highlights amber when a peer's `|drift|`
+exceeds the local user's — same updating-status treatment as
+"Room jitter (consensus)" so it's clear at a glance whether
+*you're* setting the bar or someone else is.
+
+Server-only / no extension republish.
+
+---
+
 # v6.5.53
 
 ### Hotfix: pass play_state to settings_modal (KeyError → reload loop)

@@ -368,34 +368,36 @@ const liveSocket = new LiveSocket("/live", Socket, {
       },
     },
     PreserveDetails: {
-      mounted() {
-        // Closing a long <details> can leave the surrounding scroll
-        // container clamped past its new content (modal-box specifically),
-        // making the click feel like the page jumped. Pin the summary in
-        // view on user toggles. Defer one frame so the browser has applied
-        // the open/close before we measure.
-        const summary = this.el.querySelector(":scope > summary");
-        if (summary) {
-          this._summaryHandler = () => {
-            requestAnimationFrame(() => {
-              try {
-                this.el.scrollIntoView({ block: "nearest", behavior: "instant" });
-              } catch (_) {
-                this.el.scrollIntoView();
-              }
-            });
-          };
-          summary.addEventListener("click", this._summaryHandler);
-        }
-      },
       beforeUpdate() { this._wasOpen = this.el.open; },
-      updated() { this.el.open = this._wasOpen; },
+      updated() { this.el.open = this._wasOpen; }
+    },
+    // Save and restore the element's scrollTop across LV updates AND across
+    // toggles of any descendant <details>. The modal-box re-renders on
+    // every drift report (1 Hz/peer) — without this, scrollTop reset to 0
+    // each tick, which made hidden-section toggles look like "scroll
+    // resets to top" because the user's first click happened to coincide
+    // with an LV update.
+    PreserveScroll: {
+      mounted() {
+        this._lastScrollTop = 0;
+        // Track user scroll continuously so we always have a fresh value
+        // to restore after an LV-driven re-render.
+        this._onScroll = () => { this._lastScrollTop = this.el.scrollTop; };
+        this.el.addEventListener("scroll", this._onScroll, { passive: true });
+      },
+      beforeUpdate() {
+        this._lastScrollTop = this.el.scrollTop;
+      },
+      updated() {
+        // Defer one frame: if the update changed content height, the
+        // browser may have clamped scrollTop. Restoring on the next frame
+        // catches the case where the new layout has settled.
+        const target = this._lastScrollTop;
+        requestAnimationFrame(() => { this.el.scrollTop = target; });
+      },
       destroyed() {
-        if (this._summaryHandler) {
-          const summary = this.el.querySelector(":scope > summary");
-          if (summary) summary.removeEventListener("click", this._summaryHandler);
-        }
-      }
+        if (this._onScroll) this.el.removeEventListener("scroll", this._onScroll);
+      },
     },
     // Settings → "Forget cleared popups". Each child item declares the
     // localStorage key it represents via data-storage-key. On mount, items
