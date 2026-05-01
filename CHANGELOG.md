@@ -3,6 +3,33 @@
 
 ---
 
+# v6.7.4
+
+### "Syncing…" overlay during corrective seeks
+
+When the client is mid-correction it now shows a translucent
+spinner overlay so it's clear that playback isn't fully settled
+yet. Three triggers:
+
+- **Joining…** — initial join's seek + the server's adaptive-L
+  follow-up seek (typically 2-3 s combined).
+- **Catching up…** — a peer just seeked and we're seeking to
+  match them.
+- **Re-syncing…** — server-driven seek command from
+  `Byob.SyncDecision`.
+
+Auto-hides on the next "playing" state from the player, or after
+a 3 s safety timeout. Re-showing while already visible just resets
+the timer, so the multi-seek L-learning sequence on join stays up
+continuously instead of flickering.
+
+`pointer-events: none` — purely informational, doesn't block
+interaction with the player below.
+
+Server-only / no extension republish.
+
+---
+
 # v6.7.3
 
 ### Stats panel polish

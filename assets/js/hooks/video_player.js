@@ -100,6 +100,7 @@ const VideoPlayer = {
       // BUFFERING → PLAYING flicker doesn't broadcast spurious sync
       // events to the room.
       this.suppression.suppress("playing");
+      this._showSyncingOverlay("Re-syncing…");
       this.reconcile.executeSeek?.(data?.position || 0, data?.server_time);
     });
     this.handleEvent(LV_EVT.SYNC_AUTOPLAY_COUNTDOWN, (data) => this._onAutoplayCountdown(data));
@@ -203,6 +204,7 @@ const VideoPlayer = {
   destroyed() {
     window.__byobPlaying = false;
     this._hideAutoplayCountdown();
+    this._hideSyncingOverlay();
     this.reconcile.stop();
     this.suppression.destroy();
     this.clockSync.stop();
@@ -266,6 +268,11 @@ const VideoPlayer = {
       // seek + reconcile entirely; play() lands us at live by default.
       if (!this._isLive) {
         this._seekTo(position);
+        // Show "Joining…" overlay during the initial seek + the
+        // server's adaptive-L-learning second seek (roughly 2-3 s).
+        // It auto-hides once the player transitions to playing or
+        // the safety timer fires.
+        this._showSyncingOverlay("Joining…");
       }
       this._play();
       if (!this._isLive) {
@@ -553,6 +560,13 @@ const VideoPlayer = {
       this.el.querySelector(".byob-click-to-play")?.remove();
     }
 
+    // The "Syncing…" overlay hides only when the player has actually
+    // resumed playing — buffering still means the seek hasn't fully
+    // landed, so leave it up to keep the user informed.
+    if (stateName === "playing") {
+      this._hideSyncingOverlay();
+    }
+
     // Buffering is transient — don't push to server, don't update
     // expectedPlayState. Also cancel any pending suppression settle:
     // YouTube typically fires PLAYING → BUFFERING → PLAYING after a
@@ -719,6 +733,7 @@ const VideoPlayer = {
   _onSyncSeek(data) {
     if (data.user_id === this.userId) return;
     this.suppression.suppress(null); // suppress next state change regardless
+    this._showSyncingOverlay("Catching up…");
     this._seekTo(data.time);
     this.reconcile.setServerState(
       data.time,
@@ -1509,6 +1524,64 @@ const VideoPlayer = {
   _isLocallyPlaying() {
     const s = this.player?.getState?.();
     return s === "playing" || s === "buffering";
+  },
+
+  // ── "Syncing…" overlay ────────────────────────────────────────────────
+  // Shown briefly when the player is mid-correction:
+  //   * Peer seeked (_onSyncSeek)
+  //   * Initial join's seek+play (_applyPendingState)
+  //   * Server commanded a seek (SYNC_SEEK_COMMAND handler)
+  // pointer-events: none — purely informational, doesn't block interaction.
+  // Auto-hides on next "playing" state change, or after 3 s safety timeout
+  // (whichever is first). Re-showing while already visible just resets the
+  // safety timer, so the multi-seek L-learning sequence on join displays
+  // continuously rather than flickering.
+  _showSyncingOverlay(text = "Syncing…") {
+    if (this.el.querySelector(".byob-click-to-play")) return;
+    if (this.el.querySelector(".byob-join-ready")) return;
+
+    let overlay = this.el.querySelector(".byob-syncing");
+    if (overlay) {
+      // Already showing — just update the label and refresh the timer.
+      const labelEl = overlay.querySelector("[data-byob-syncing-label]");
+      if (labelEl && labelEl.textContent !== text) labelEl.textContent = text;
+    } else {
+      if (!document.getElementById("byob-syncing-style")) {
+        const style = document.createElement("style");
+        style.id = "byob-syncing-style";
+        style.textContent = "@keyframes byob-spin { to { transform: rotate(360deg); } }";
+        document.head.appendChild(style);
+      }
+      overlay = document.createElement("div");
+      overlay.className = "byob-syncing";
+      overlay.style.cssText =
+        "position:absolute;inset:0;z-index:8;display:flex;align-items:center;justify-content:center;" +
+        "background:rgba(0,0,0,0.45);pointer-events:none;transition:opacity 200ms;";
+      overlay.innerHTML =
+        `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;color:white;` +
+        `text-shadow:0 1px 3px rgba(0,0,0,0.6);">` +
+        `<svg width="32" height="32" viewBox="0 0 24 24" style="animation:byob-spin 0.8s linear infinite">` +
+        `<circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" stroke-width="2" fill="none"/>` +
+        `<path d="M12 2 a10 10 0 0 1 10 10" stroke="white" stroke-width="2" fill="none" stroke-linecap="round"/>` +
+        `</svg>` +
+        `<span data-byob-syncing-label style="font-size:13px;font-weight:600">${text}</span>` +
+        `</div>`;
+      this.el.appendChild(overlay);
+    }
+
+    if (this._syncingTimer) clearTimeout(this._syncingTimer);
+    this._syncingTimer = setTimeout(() => this._hideSyncingOverlay(), 3000);
+  },
+
+  _hideSyncingOverlay() {
+    if (this._syncingTimer) {
+      clearTimeout(this._syncingTimer);
+      this._syncingTimer = null;
+    }
+    const overlay = this.el.querySelector(".byob-syncing");
+    if (!overlay) return;
+    overlay.style.opacity = "0";
+    setTimeout(() => overlay.remove(), 200);
   },
 
   _pause() {
