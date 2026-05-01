@@ -3,6 +3,68 @@
 
 ---
 
+# v6.8.12
+
+### Aggressive room-clock convergence + cooldown ceiling guarantee
+
+**Hard cap on `cooldown_remaining_ms`.** User saw a cooldown render
+as ~700 s on the panel — `last_seek_at > now_ms` on monotonic clock.
+Added a final `min(@seek_cooldown_max_ms)` so the function is bounded
+by construction regardless of input weirdness.
+
+**Root cause: runtime state was being persisted across restarts.**
+`drift_samples` and `user_sync_states` were getting saved to SQLite
+every 5 s along with the rest of the room state. Their internal
+timestamps (`last_seek_at`, `updated_at`) used `System.monotonic_time`
+— which RESETS across BEAM restarts. After a deploy, the new process
+loads stale entries with timestamps from the OLD runtime's baseline,
+so `now_ms − last_seek_at` came out wildly negative. That's the
+700 s cooldown. Same mechanism likely also stuck `observation_pending`
+in an unreachable state, which is why `maybe_observe_l` never fired
+its diagnostic logs and `learned_L` stayed at 0 forever.
+
+Fix: explicitly reset `user_sync_states`, `drift_samples`, and
+`clock_adjust_ref` in `init/1` so every new process starts with
+empty runtime state regardless of what was persisted.
+
+
+
+Old logic: every 10 s, shift by `0.3 × median × clamp(±200 ms)` —
+slow convergence (a 1 s room-wide drift took ~40 s to mostly fix).
+The user wanted "if all clients are over 1 s, minus 1 s", i.e.,
+make the *minimum |drift|* go to 0 in a single pass when it's safe.
+
+New strategy splits by sign uniformity:
+
+- **All peers behind (every drift < 0)**: shift by
+  `Enum.max(drifts)` — the least-negative. The closest-to-0 peer
+  goes to exactly 0; every other peer moves the same amount
+  toward 0. **No peer ends up worse.** Full shift, no damping.
+- **All peers ahead**: symmetric, shift by `Enum.min`.
+- **Mixed signs**: shift by `0.5 × median`. Some peers will end up
+  further from 0 (the ones on the other side of median), so we
+  half-step to bound that disruption.
+
+Cap per pass raised to ±1000 ms (was 200), interval down to 5 s
+(was 10 s). Min-drift threshold 50 ms (was 100). With these, a
+1-second room-wide drift converges in one or two passes (5–10 s).
+
+`Logger.debug` for `[clock_adjust]` is now `Logger.info` and
+includes the per-peer drifts so it's visible in production logs.
+
+### Stop the 1 Hz panel flicker
+
+The "Seek cooldown" row was disappearing/reappearing every 1 s
+because `:sync_client_stats` reset `seek_streak: 0` for the entry,
+the next render hid the conditional row, then `:user_decision_state`
+arrived ~ms later and set it back to non-zero, and the next render
+showed it again. Fix: carry forward decision-state fields across
+drift reports; only `:user_decision_state` updates them.
+
+Server-only / no extension republish.
+
+---
+
 # v6.8.11
 
 ### Stop the 1 Hz panel flicker

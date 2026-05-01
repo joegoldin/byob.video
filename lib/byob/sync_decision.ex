@@ -144,6 +144,11 @@ defmodule Byob.SyncDecision do
 
   @doc """
   Compute remaining cooldown before another seek can fire (ms).
+
+  Guaranteed to be in `[0, @seek_cooldown_max_ms]` regardless of any
+  timing weirdness. The hard upper clamp at the end defends against
+  monotonic-time discontinuities (e.g. server restart with stale state
+  in some path, or any future bug that puts `last_seek_at > now_ms`).
   """
   @spec cooldown_remaining_ms(t(), integer()) :: non_neg_integer()
   def cooldown_remaining_ms(state, now_ms) do
@@ -156,7 +161,10 @@ defmodule Byob.SyncDecision do
         |> min(@seek_cooldown_max_ms)
         |> trunc()
 
-      max(0, cooldown - (now_ms - state.last_seek_at))
+      cooldown
+      |> Kernel.-(now_ms - state.last_seek_at)
+      |> max(0)
+      |> min(@seek_cooldown_max_ms)
     end
   end
 

@@ -66,14 +66,30 @@ defmodule Byob.RoomServer do
   @rate_limit_reset_interval_ms 5_000
   @sync_broadcast_debounce_ms 500
 
-  # Room-wide clock adjustment: every N seconds, look at all peers' drift,
-  # compute the mean, and shift the canonical reference by a fraction of
-  # it. Heavily damped + capped to avoid disturbing the clients' jitter
-  # EMAs and SyncDecision L-learning.
-  @clock_adjust_interval_ms 10_000
-  @clock_adjust_min_drift_ms 100
-  @clock_adjust_damping 0.3
-  @clock_adjust_max_per_pass_ms 200
+  # Room-wide clock adjustment: minimize all peers' |drift| toward 0 by
+  # shifting the canonical reference. Strategy depends on sign uniformity:
+  #
+  # All peers behind (drift < 0):
+  #   Shift by `Enum.max(drifts)` — the LEAST-negative drift. Moves the
+  #   closest-to-0 peer all the way to 0; everyone else moves the same
+  #   amount toward 0 (none become worse). Full shift (no damping) is
+  #   safe here.
+  #
+  # All peers ahead (drift > 0):
+  #   Shift by `Enum.min(drifts)` — symmetric.
+  #
+  # Mixed signs:
+  #   Shift by median (robust to outliers). Damped 0.5 because some peers
+  #   *will* end up further from 0 (the ones on the opposite side of
+  #   median); half-step keeps that disruption bounded.
+  #
+  # Capped at 1000 ms per pass and run every 5 s, so even pathological
+  # corrections converge in a handful of seconds without yanking the
+  # canonical reference dramatically in any single broadcast.
+  @clock_adjust_interval_ms 5_000
+  @clock_adjust_min_drift_ms 50
+  @clock_adjust_mixed_damping 0.5
+  @clock_adjust_max_per_pass_ms 1_000
   @drift_sample_stale_ms 5_000
   # Defer the side effects of a leave (broadcast "left" toast, pause room
   # if ≤1 user, mark user disconnected) by this much. Network blips that
@@ -259,6 +275,15 @@ defmodule Byob.RoomServer do
             round_expire_ref: nil,
             round_last_broadcast_ms: 0,
             round_coalesce_ref: nil,
+            # Runtime-only state: clear on restart. last_seek_at /
+            # updated_at inside these structs use System.monotonic_time
+            # which resets across process restarts, so stale values from
+            # the previous runtime become huge negative deltas (the
+            # 700-second cooldown bug) and stale observation_pending /
+            # learned_l_ms can confuse the new process.
+            user_sync_states: %{},
+            drift_samples: %{},
+            clock_adjust_ref: nil,
             users: Enum.into(saved.users, %{}, fn {k, v} -> {k, %{v | connected: false}} end)
           })
 
@@ -1457,25 +1482,25 @@ defmodule Byob.RoomServer do
           state
 
         true ->
-          # MEDIAN, not mean — robust to outliers. With one peer at -2590 ms
-          # while the rest are clustered around 0, mean would chase the
-          # outlier (-432 ms) and pull the in-tolerance peers OUT of
-          # tolerance, then oscillate when adjustment swings them past 0.
-          # Median represents "where most peers are" and ignores the
-          # outlier; the outlier needs to seek to fix itself.
-          median_ms = compute_median(active_drifts)
+          {raw_shift, reason} = clock_adjust_target(active_drifts)
 
-          if abs(median_ms) > @clock_adjust_min_drift_ms do
-            # Sign: negative median → expected too HIGH → reduce current_pos
-            # (negative adjustment → new_pos < current_pos).
-            adjustment_ms =
-              (median_ms * @clock_adjust_damping)
+          if abs(raw_shift) > @clock_adjust_min_drift_ms do
+            # Sign: drift = local − expected. To move peer drifts TOWARD 0
+            # by N, expected must shift by SAME sign as the drift values
+            # (`new_drift = drift − Δ` so Δ = drift to zero them; for the
+            # all-same-sign case `raw_shift` already IS such a Δ).
+            shift_ms =
+              raw_shift
               |> trunc()
               |> max(-@clock_adjust_max_per_pass_ms)
               |> min(@clock_adjust_max_per_pass_ms)
 
             current_pos = current_position(state)
-            new_pos = max(0.0, current_pos + adjustment_ms / 1000)
+            # `current_pos − shift_ms/1000`: new expected drops by shift,
+            # so peers' drifts increase by shift (= -shift_ms applied to
+            # `local - expected`). For all-behind (raw_shift = max_neg <
+            # 0), this *decreases* current_pos by abs(max_neg).
+            new_pos = max(0.0, current_pos + shift_ms / 1000)
 
             unless current_media_is_live?(state) do
               broadcast(
@@ -1486,8 +1511,8 @@ defmodule Byob.RoomServer do
 
             require Logger
 
-            Logger.debug(
-              "[clock_adjust] room=#{state.room_id} median=#{median_ms}ms adj=#{adjustment_ms}ms peers=#{length(active_drifts)} new_pos=#{Float.round(new_pos * 1.0, 2)}"
+            Logger.info(
+              "[clock_adjust] room=#{state.room_id} #{reason} shift=#{shift_ms}ms peers=#{length(active_drifts)} drifts=#{inspect(active_drifts)} new_pos=#{Float.round(new_pos * 1.0, 2)}"
             )
 
             %{state | current_time: new_pos, last_sync_at: now}
@@ -1707,6 +1732,32 @@ defmodule Byob.RoomServer do
     state = reset_user_sync_states(state)
     broadcast(state, {:video_changed, %{media_item: item, index: index}})
     state
+  end
+
+  # Choose how much to shift the canonical clock to minimize peers' |drift|.
+  # Returns `{shift_ms, reason}`.
+  defp clock_adjust_target(drifts) do
+    cond do
+      drifts == [] ->
+        {0, "empty"}
+
+      Enum.all?(drifts, &(&1 < 0)) ->
+        # All behind. Shifting by the LEAST-negative drift moves it to
+        # exactly 0 and pulls every other peer the same amount toward 0
+        # — none end up worse. Full shift, no damping needed.
+        {Enum.max(drifts), "all-behind"}
+
+      Enum.all?(drifts, &(&1 > 0)) ->
+        # All ahead. Symmetric.
+        {Enum.min(drifts), "all-ahead"}
+
+      true ->
+        # Mixed signs — peers on opposite sides of 0. Shifting in either
+        # direction moves some peers toward 0 and others away. Use median
+        # for the robust optimum and damp to limit per-pass disruption.
+        median = compute_median(drifts)
+        {trunc(median * @clock_adjust_mixed_damping), "mixed"}
+    end
   end
 
   defp compute_median(values) do

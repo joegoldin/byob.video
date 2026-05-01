@@ -639,46 +639,53 @@ defmodule ByobWeb.RoomLive.Components do
                             {if info.drift_ms > 0, do: "+", else: ""}{info.drift_ms}ms
                           </span>
                         </div>
-                        <%= if Map.get(info, :offset_ms, 0) != 0 do %>
-                          <div class="flex justify-between">
-                            <span>Offset</span>
-                            <span class="text-base-content/40">
-                              {if info.offset_ms > 0, do: "+", else: ""}{info.offset_ms}ms
-                            </span>
-                          </div>
-                        <% end %>
-                        <%= if Map.get(info, :rtt_ms, 0) > 0 do %>
-                          <div class="flex justify-between">
-                            <span>RTT</span>
-                            <span class="text-base-content/40">{info.rtt_ms}ms</span>
-                          </div>
-                        <% end %>
-                        <% jitter_ms = Map.get(info, :noise_floor_ms, 0)
-                        # Warning above (min_tolerance / NOISE_K_TOLERANCE)
-                        # — that's the jitter level at which the adaptive
-                        # tolerance starts growing past its floor. Below 1
-                        # ms is "≈ 0" practically.
-                        jitter_warn_threshold_ms = div(Byob.SyncDecision.min_tolerance_ms(), 4) %>
+                        <% peer_offset_ms = Map.get(info, :offset_ms, 0)
+                           peer_rtt_ms = Map.get(info, :rtt_ms, 0)
+                           peer_jitter_ms = Map.get(info, :noise_floor_ms, 0)
+                           peer_l_ms = Map.get(info, :learned_l_ms, 0)
+                           peer_tolerance_ms = Map.get(info, :tolerance_ms, 0)
+                           peer_streak = Map.get(info, :seek_streak, 0)
+                           # Warn level at the jitter at which adaptive tolerance starts
+                           # growing past its floor (= floor / K_jitter).
+                           jitter_warn_threshold_ms = div(Byob.SyncDecision.min_tolerance_ms(), 4) %>
+                        <div class="flex justify-between">
+                          <span>Offset</span>
+                          <span class="text-base-content/40">
+                            {if peer_offset_ms > 0, do: "+", else: ""}{peer_offset_ms}ms
+                          </span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>RTT</span>
+                          <span class="text-base-content/40">{peer_rtt_ms}ms</span>
+                        </div>
                         <div class="flex justify-between">
                           <span>Jitter</span>
                           <span class={
                             cond do
-                              jitter_ms > jitter_warn_threshold_ms -> "text-warning"
-                              jitter_ms < 1 -> "text-success"
+                              peer_jitter_ms > jitter_warn_threshold_ms -> "text-warning"
+                              peer_jitter_ms < 1 -> "text-success"
                               true -> "text-base-content/40"
                             end
                           }>
-                            {if jitter_ms < 1, do: "<1ms", else: "#{jitter_ms}ms"}
+                            {if peer_jitter_ms < 1, do: "<1ms", else: "#{peer_jitter_ms}ms"}
                           </span>
                         </div>
-                        <%= if is_local? and Map.get(info, :learned_l_ms, 0) > 0 do %>
-                          <div class="flex justify-between">
-                            <span>Learned seek lag</span>
-                            <span class="text-base-content/40">
-                              {info.learned_l_ms}ms
-                            </span>
-                          </div>
-                        <% end %>
+                        <div class="flex justify-between">
+                          <span>Tolerance</span>
+                          <span class="text-base-content/40">±{peer_tolerance_ms}ms</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>Learned seek lag</span>
+                          <span class="text-base-content/40">{peer_l_ms}ms</span>
+                        </div>
+                        <div class="flex justify-between">
+                          <span>Seek streak</span>
+                          <span class={
+                            if peer_streak > 0, do: "text-warning", else: "text-base-content/40"
+                          }>
+                            {peer_streak}
+                          </span>
+                        </div>
                         <div class="flex justify-between">
                           <span>State</span>
                           <span class={

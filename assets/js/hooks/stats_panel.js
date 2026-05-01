@@ -338,22 +338,99 @@ function renderDriftBands(host, data) {
     centerLine +
     tick +
     `</svg>` +
-    // Threshold labels under the section boundaries.
-    `<div style="position:relative;height:14px;margin-top:2px;font-size:9px;font-family:monospace;color:rgba(255,255,255,0.55)">` +
-    `<span style="position:absolute;left:${xToleranceL.toFixed(1)}%;transform:translateX(-50%)">−${tolerance}</span>` +
-    `<span style="position:absolute;left:${xJitterL.toFixed(1)}%;transform:translateX(-50%)">−${jitterBand}</span>` +
-    `<span style="position:absolute;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.4)">0</span>` +
-    `<span style="position:absolute;left:${xJitterR.toFixed(1)}%;transform:translateX(-50%)">+${jitterBand}</span>` +
-    `<span style="position:absolute;left:${xToleranceR.toFixed(1)}%;transform:translateX(-50%)">+${tolerance}</span>` +
-    `</div>` +
-    // Section captions, centered under each band.
-    `<div style="position:relative;height:12px;margin-top:1px;font-size:9px;font-family:monospace;color:rgba(255,255,255,0.35)">` +
-    `<span style="position:absolute;left:${(xToleranceL / 2).toFixed(1)}%;transform:translateX(-50%);color:rgba(248,113,113,0.7)">seek</span>` +
-    `<span style="position:absolute;left:${((xToleranceL + xJitterL) / 2).toFixed(1)}%;transform:translateX(-50%)">tolerated</span>` +
-    `<span style="position:absolute;left:50%;transform:translateX(-50%);color:rgba(52,211,153,0.7)">in sync</span>` +
-    `<span style="position:absolute;left:${((xJitterR + xToleranceR) / 2).toFixed(1)}%;transform:translateX(-50%)">tolerated</span>` +
-    `<span style="position:absolute;left:${((xToleranceR + 100) / 2).toFixed(1)}%;transform:translateX(-50%);color:rgba(248,113,113,0.7)">seek</span>` +
-    `</div>`;
+    // Threshold labels. When jitter is small relative to tolerance the
+    // ±jitter labels would render right on top of the "0". Push them
+    // outward from center until each pair is at least `minGap` apart.
+    // The "0" stays anchored at 50%; ±tolerance gets pushed further out
+    // if ±jitter would otherwise crowd it.
+    renderRepulsedLabels(
+      [
+        { x: xToleranceL, text: `−${tolerance}` },
+        { x: xJitterL, text: `−${jitterBand}` },
+        { x: 50, text: "0", color: "rgba(255,255,255,0.4)" },
+        { x: xJitterR, text: `+${jitterBand}` },
+        { x: xToleranceR, text: `+${tolerance}` },
+      ],
+      8 // minGap %
+    ) +
+    // Section captions: same repulsion treatment so "tolerated" doesn't
+    // overlap "in sync" / "seek" when bands are narrow.
+    renderRepulsedLabels(
+      [
+        {
+          x: xToleranceL / 2,
+          text: "seek",
+          color: "rgba(248,113,113,0.7)",
+        },
+        {
+          x: (xToleranceL + xJitterL) / 2,
+          text: "tolerated",
+        },
+        {
+          x: 50,
+          text: "in sync",
+          color: "rgba(52,211,153,0.7)",
+        },
+        {
+          x: (xJitterR + xToleranceR) / 2,
+          text: "tolerated",
+        },
+        {
+          x: (xToleranceR + 100) / 2,
+          text: "seek",
+          color: "rgba(248,113,113,0.7)",
+        },
+      ],
+      11, // minGap % (wider labels)
+      "rgba(255,255,255,0.35)"
+    );
+}
+
+// Render a row of percent-positioned labels with collision avoidance.
+// Labels are sorted by x; each side of the natural center (50 %) is
+// pushed *outward* from its inner neighbor until at least `minGap` %
+// apart. The center label (if at 50 %) stays anchored. Positions are
+// then clamped to [0, 100].
+function renderRepulsedLabels(labels, minGap, defaultColor) {
+  const sorted = [...labels].sort((a, b) => a.x - b.x);
+  const centerIdx = sorted.findIndex((l) => Math.abs(l.x - 50) < 0.01);
+
+  if (centerIdx >= 0) {
+    // Walk left from center, pushing each label further left if it's
+    // closer than minGap to the previous (more central) one.
+    for (let i = centerIdx - 1; i >= 0; i--) {
+      const next = sorted[i + 1].x;
+      if (next - sorted[i].x < minGap) sorted[i].x = next - minGap;
+    }
+    // Walk right from center, pushing further right.
+    for (let i = centerIdx + 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1].x;
+      if (sorted[i].x - prev < minGap) sorted[i].x = prev + minGap;
+    }
+  } else {
+    // No center anchor — just sweep left to right.
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1].x;
+      if (sorted[i].x - prev < minGap) sorted[i].x = prev + minGap;
+    }
+  }
+
+  // Clamp to chart bounds.
+  for (const l of sorted) l.x = Math.max(0, Math.min(100, l.x));
+
+  const baseColor = defaultColor || "rgba(255,255,255,0.55)";
+  const isCaption = !!defaultColor;
+  const height = isCaption ? 12 : 14;
+  const marginTop = isCaption ? 1 : 2;
+
+  const html = sorted
+    .map(
+      (l) =>
+        `<span style="position:absolute;left:${l.x.toFixed(1)}%;transform:translateX(-50%)${l.color ? `;color:${l.color}` : ""}">${l.text}</span>`
+    )
+    .join("");
+
+  return `<div style="position:relative;height:${height}px;margin-top:${marginTop}px;font-size:9px;font-family:monospace;color:${baseColor}">${html}</div>`;
 }
 
 // CSS.escape isn't universal in older WebViews; fall back to a small subset
