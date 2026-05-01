@@ -265,6 +265,7 @@ defmodule ByobWeb.ExtensionChannel do
     tab_id = payload["tab_id"] || "?"
     rtt_ms = trunc(payload["rtt_ms"] || 0)
     noise_floor_ms = trunc(payload["noise_floor_ms"] || 0)
+    observed_l_ms = trunc(payload["observed_l_ms"] || 0)
 
     state = RoomServer.get_state(socket.assigns.room_pid)
     now_mono = System.monotonic_time(:millisecond)
@@ -287,6 +288,7 @@ defmodule ByobWeb.ExtensionChannel do
          drift_ms: drift_ms,
          rtt_ms: rtt_ms,
          noise_floor_ms: noise_floor_ms,
+         observed_l_ms: observed_l_ms,
          server_position: Float.round(pos, 1),
          play_state: Atom.to_string(state.play_state)
        }}

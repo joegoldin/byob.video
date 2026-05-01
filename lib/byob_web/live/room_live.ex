@@ -221,6 +221,7 @@ defmodule ByobWeb.RoomLive do
       offset_ms = trunc(params["offset_ms"] || 0)
       rtt_ms = trunc(params["rtt_ms"] || 0)
       noise_floor_ms = trunc(params["noise_floor_ms"] || 0)
+      observed_l_ms = trunc(params["observed_l_ms"] || 0)
       playing = params["playing"] || false
 
       state = Byob.RoomServer.get_state(room_pid)
@@ -247,6 +248,7 @@ defmodule ByobWeb.RoomLive do
            offset_ms: offset_ms,
            rtt_ms: rtt_ms,
            noise_floor_ms: noise_floor_ms,
+           observed_l_ms: observed_l_ms,
            server_position: Float.round(server_pos * 1.0, 1),
            play_state: if(playing, do: "playing", else: "paused")
          }}

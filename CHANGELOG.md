@@ -3,6 +3,42 @@
 
 ---
 
+# v6.8.14
+
+### Client-measured L_processing — drop the inference machinery
+
+Replaces the fragile post-seek-window L-observation with a direct
+measurement: the JS player and extension content script timestamp
+the moment they dispatch a sync seek, capture the elapsed time on
+the next `playing` / `seeked` transition, and ship it to the server
+as `observed_l_ms` in the next drift report. The server's
+`SyncDecision` smooths it as an EMA and uses it as the overshoot
+for that client's next seek. Same convergence behavior (1-2 seeks)
+but no fragile inference.
+
+**Removed (all became unnecessary):**
+- `observation_pending`, `last_overshoot_ms` from the
+  `%SyncDecision{}` struct
+- `maybe_observe_l/3` and the post-seek timing constants
+  (`@l_observation_after_seek_ms`)
+- The v6.8.13 echo guard in `RoomServer.handle_call({:seek, …})`
+  and `@server_seek_echo_window_ms` — irrelevant once the L
+  observation no longer depends on `observation_pending` surviving
+  the player's seek-echo
+
+**Added:**
+- `_seekIssuedAt` / `_lastObservedL` in `video_player.js` and
+  `extension/content.js`
+- `observed_l_ms` field in the LV drift report and the extension
+  channel's `video:drift` payload
+- `maybe_update_l/2` in `SyncDecision` — accepts client samples,
+  band-checks `[50, 5000] ms`, EMA-smooths into `learned_l_ms`
+
+The result: `learned_l_ms` is set from the client's first sync
+seek and refined on every subsequent one. No more "stuck at 0".
+
+---
+
 # v6.8.13
 
 ### Fix `learned_L` stuck at 0; room-max end labels on bands diagram

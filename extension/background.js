@@ -371,6 +371,7 @@ function handleContentMessage(msg, port, tabId) {
         channel.push(EVT.CHAN_VIDEO_DRIFT, {
           drift_ms: msg.drift,
           noise_floor_ms: msg.noise_floor_ms || 0,
+          observed_l_ms: msg.observed_l_ms || 0,
           rtt_ms: clockRtt || 0,
           tab_id: String(tabId),
         });

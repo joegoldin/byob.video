@@ -49,6 +49,12 @@ const VideoPlayer = {
     this.seekDetectorInterval = null;
     this.stateCheckInterval = null;
     this.expectedPlayState = null; // "playing" or "paused"
+    // Seek-latency measurement. _seekIssuedAt is set the moment a sync
+    // seek command is dispatched to the player; _lastObservedL captures
+    // the time-to-PLAYING delta and is reported in the next drift
+    // report (server uses it as the overshoot for future seeks).
+    this._seekIssuedAt = 0;
+    this._lastObservedL = 0;
     this.sponsorSegments = [];
     this.sponsorCheckInterval = null;
     this.sbSettings = {};
@@ -91,15 +97,22 @@ const VideoPlayer = {
     });
 
     // Server-authoritative seek: when the server's SyncDecision module
-    // determines this client needs to seek, it pushes this command with a
-    // pre-computed target (already includes rtt/2 + learned_L overshoot).
+    // determines this client needs to seek, it pushes this command with
+    // a pre-computed target (already includes learned_L overshoot).
     // Reconcile just executes it.
+    //
+    // L_processing measurement: timestamp the moment we tell the player
+    // to seek; on the next PLAYING transition compute the elapsed time
+    // and stash it for the next drift report. The server uses that
+    // observed L directly as the next overshoot — no post-seek-window
+    // inference, no observation-pending bookkeeping.
     this.handleEvent(LV_EVT.SYNC_SEEK_COMMAND, (data) => {
       if (!this.player || !this.isReady) return;
       // Suppress player events during the seek so the iOS PAUSED →
       // BUFFERING → PLAYING flicker doesn't broadcast spurious sync
       // events to the room.
       this.suppression.suppress("playing");
+      this._seekIssuedAt = performance.now();
       this._showSyncingOverlay("Re-syncing…");
       this.reconcile.executeSeek?.(data?.position || 0, data?.server_time);
     });
@@ -141,11 +154,18 @@ const VideoPlayer = {
       // Server-authoritative model: client only sends raw measurements.
       // Tolerance / seek_streak / cooldown live in `Byob.SyncDecision` on
       // the server now, computed per-user from the room's full picture.
+      // observed_l_ms: most recent measured seek-to-playing latency.
+      // Sent once per measurement, then cleared so a stale value
+      // doesn't get re-applied. Server uses it as the L for the next
+      // overshoot.
+      const observedL = this._lastObservedL;
+      this._lastObservedL = 0;
       this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
         drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
         offset_ms: 0, // legacy passthrough (extension still computes one)
         rtt_ms: Math.round(this.clockSync.getMedianRttMs?.() || 0),
         noise_floor_ms: Math.round(this.reconcile.noiseFloorEmaMs || 0),
+        observed_l_ms: Math.round(observedL),
         playing: state === "playing",
       });
     }, DRIFT_REPORT_INTERVAL_MS);
@@ -565,6 +585,19 @@ const VideoPlayer = {
     // landed, so leave it up to keep the user informed.
     if (stateName === "playing") {
       this._hideSyncingOverlay();
+      // L_processing measurement: time from sync seek dispatch to
+      // first PLAYING transition. Captured BEFORE the suppression
+      // check below swallows the event for sync-issued seeks.
+      // 5 s clamp covers the "no playing event" edge case (seek
+      // landed while paused, or never landed) — stale samples are
+      // discarded by the server's [50, 5000] ms band check anyway.
+      if (this._seekIssuedAt > 0) {
+        const elapsed = performance.now() - this._seekIssuedAt;
+        this._seekIssuedAt = 0;
+        if (elapsed >= 0 && elapsed < 5000) {
+          this._lastObservedL = elapsed;
+        }
+      }
     }
 
     // Buffering is transient — don't push to server, don't update

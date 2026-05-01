@@ -111,6 +111,11 @@
   let _jitterEmaMs = 0;
   let _jitterSamples = 0;
   let _lastSeekExecutedAt = 0;
+  // Seek-latency measurement. _seekIssuedAt is the ms timestamp of the
+  // last sync seek dispatch; _lastObservedL is the elapsed time to the
+  // following `seeked` event, reported once and cleared.
+  let _seekIssuedAt = 0;
+  let _lastObservedL = 0;
   const _JITTER_ALPHA = 0.1;       // ~1 s horizon at 500 ms tick
   const _POST_SEEK_QUIET_MS = 5000; // pause jitter EMA for 5 s after a seek
 
@@ -656,6 +661,19 @@
   }
 
   function onVideoSeeked() {
+    // L_processing measurement: time from sync seek dispatch to the
+    // `seeked` event landing. Captured BEFORE the commandGuard /
+    // userInitiated gates below — those exist to suppress echo of
+    // server-issued seeks back as VIDEO_SEEK, but we still want to
+    // record how long the seek took so the server can use it as
+    // overshoot for the next one.
+    if (_seekIssuedAt > 0) {
+      const elapsed = Date.now() - _seekIssuedAt;
+      _seekIssuedAt = 0;
+      if (elapsed >= 0 && elapsed < 5000) {
+        _lastObservedL = elapsed;
+      }
+    }
     if (!synced || commandGuard) return;
     if (!userInitiated()) {
       _log("onVideoSeeked ignored — no user activation");
@@ -764,11 +782,17 @@
 
       // Send drift report to server (server decides whether to seek).
       // background.js fills in rtt_ms from its own clockSync samples.
+      // observed_l_ms: most recent measured seek-to-`seeked` latency.
+      // Sent once per measurement, then cleared so a stale value
+      // doesn't get re-applied.
       if (port) {
+        const observedL = _lastObservedL;
+        _lastObservedL = 0;
         port.postMessage({
           type: EVT.VIDEO_DRIFT,
           drift: Math.round(driftMs),
           noise_floor_ms: Math.round(_jitterEmaMs),
+          observed_l_ms: Math.round(observedL),
         });
       }
     }, RECONCILE_TICK_MS);
@@ -1151,6 +1175,7 @@
         if (typeof msg.position !== "number") break;
         _log("cmd:server-seek pos=", msg.position, "server_time=", msg.server_time);
         _lastSeekExecutedAt = Date.now();
+        _seekIssuedAt = _lastSeekExecutedAt;
         lastSeekAt = _lastSeekExecutedAt;
         if (commandGuard) clearTimeout(commandGuard);
         commandGuard = setTimeout(() => { commandGuard = null; }, CMD_SEEK_COMMAND_GUARD_MS);
