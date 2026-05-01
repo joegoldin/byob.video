@@ -585,12 +585,22 @@ defmodule ByobWeb.RoomLive.Components do
                              else: nil
                          id_label =
                            if tab_short, do: "#{owner_short}:#{tab_short}", else: owner_short %>
-                      <div class="mb-2 p-1.5 rounded bg-base-200/50">
+                      <% is_local? = user_id == @user_id %>
+                      <div class={[
+                        "mb-2 p-1.5 rounded",
+                        if(is_local?, do: "bg-primary/10 border border-primary/30", else: "bg-base-200/50")
+                      ]}>
                         <div class="text-[10px] truncate mb-0.5" title={client_id}>
                           <span
-                            class="text-base-content/70 font-semibold"
+                            class={[
+                              "font-semibold",
+                              if(is_local?, do: "text-primary", else: "text-base-content/70")
+                            ]}
                             data-byob-username={username}
                           >{username}</span>
+                          <%= if is_local? do %>
+                            <span class="text-primary/70 font-semibold">(you)</span>
+                          <% end %>
                           <span class="text-base-content/30">({id_label})</span>
                         </div>
                         <div class="flex justify-between items-center gap-2">
@@ -628,16 +638,24 @@ defmodule ByobWeb.RoomLive.Components do
                             <span class="text-base-content/40">{info.rtt_ms}ms</span>
                           </div>
                         <% end %>
-                        <%= if Map.get(info, :noise_floor_ms, 0) > 0 do %>
+                        <% jitter_ms = Map.get(info, :noise_floor_ms, 0) %>
+                        <div class="flex justify-between">
+                          <span>Jitter</span>
+                          <span class={
+                            cond do
+                              jitter_ms > 200 -> "text-warning"
+                              jitter_ms < 1 -> "text-success"
+                              true -> "text-base-content/40"
+                            end
+                          }>
+                            {if jitter_ms < 1, do: "<1ms", else: "#{jitter_ms}ms"}
+                          </span>
+                        </div>
+                        <%= if is_local? and Map.get(info, :learned_l_ms, 0) > 0 do %>
                           <div class="flex justify-between">
-                            <span>Jitter</span>
-                            <span class={
-                              cond do
-                                info.noise_floor_ms > 200 -> "text-warning"
-                                true -> "text-base-content/40"
-                              end
-                            }>
-                              {info.noise_floor_ms}ms
+                            <span>Learned seek lag</span>
+                            <span class="text-base-content/40">
+                              {info.learned_l_ms}ms
                             </span>
                           </div>
                         <% end %>

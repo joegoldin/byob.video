@@ -3,6 +3,30 @@
 
 ---
 
+# v6.7.3
+
+### Stats panel polish
+
+Four small tweaks to the connected-clients section:
+
+- **Jitter row always shown.** Was hidden when 0; now renders
+  `<1ms` (in success-green) when calm, `Xms` otherwise. So you can
+  tell at a glance whether the client is reporting *calm* vs.
+  *not yet measured*.
+- **"Learned seek lag" row** added to the local user's row when the
+  server's `Byob.SyncDecision` has converged on a value. Lets you
+  watch the adaptive L learning settle in real time.
+- **Offset trace removed from the local clock-sync chart.** It's
+  always 0 in the server-driven model — the violet line was dead
+  pixels. Chart is now RTT (blue) + drift (amber) only.
+- **"You" highlighting.** Local user's row in the connected-clients
+  list gets a primary-tinted border + "(you)" tag in the header so
+  it's obvious which row is yours.
+
+Server-only / no extension republish.
+
+---
+
 # v6.7.2
 
 ### Extension: server-driven sync (mirror v6.7.0/v6.7.1 to extension/content.js)

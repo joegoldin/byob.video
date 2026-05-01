@@ -26,7 +26,6 @@ const SPARK_H = 20;
 
 const COLOR_RTT = "#60a5fa";    // blue
 const COLOR_DRIFT = "#fbbf24";  // amber
-const COLOR_OFFSET = "#a78bfa"; // violet
 
 const StatsPanel = {
   mounted() {
@@ -119,29 +118,23 @@ function renderSparkline(host, values) {
 // very different bands). Drift is rendered with a 0-baseline; RTT and
 // offset are rendered as scaled-to-range lines so movement is visible.
 function renderLocalChart(host, ring) {
+  // Offset is always 0 in the server-driven model (server owns the
+  // adaptive seek-latency learning, no client-side EMA), so we drop
+  // its trace. RTT + drift only.
   const segments = [
     {
       key: "rtt",
       label: "RTT",
       values: ring.rtt,
       color: COLOR_RTT,
-      // RTT is non-negative; scale full height to max.
-      scale: scalePositive,
+      scale: scalePositive, // non-negative, scale full height to max
     },
     {
       key: "drift",
       label: "drift",
       values: ring.drift,
       color: COLOR_DRIFT,
-      // Drift is signed; center the axis.
-      scale: scaleSigned,
-    },
-    {
-      key: "offset",
-      label: "offset",
-      values: ring.offset,
-      color: COLOR_OFFSET,
-      scale: scaleSigned,
+      scale: scaleSigned, // signed, center axis
     },
   ];
 
