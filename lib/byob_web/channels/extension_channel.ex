@@ -278,6 +278,9 @@ defmodule ByobWeb.ExtensionChannel do
         state.current_time
       end
 
+    username =
+      get_in(state, [Access.key(:users), socket.assigns.user_id, Access.key(:username)])
+
     Phoenix.PubSub.broadcast(
       Byob.PubSub,
       "room:#{socket.assigns.room_id}",
@@ -285,6 +288,7 @@ defmodule ByobWeb.ExtensionChannel do
        %{
          user_id: socket.assigns.user_id,
          tab_id: tab_id,
+         username: username,
          drift_ms: drift_ms,
          rtt_ms: rtt_ms,
          noise_floor_ms: noise_floor_ms,
@@ -350,11 +354,6 @@ defmodule ByobWeb.ExtensionChannel do
 
   def handle_info({:sync_pause, data}, socket) do
     push(socket, Events.sync_pause(), data)
-    {:noreply, socket}
-  end
-
-  def handle_info({:sync_seek, data}, socket) do
-    push(socket, Events.sync_seek(), data)
     {:noreply, socket}
   end
 

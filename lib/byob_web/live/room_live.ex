@@ -346,7 +346,6 @@ defmodule ByobWeb.RoomLive do
 
   def handle_info({:sync_play, data}, socket), do: PubSub.handle_sync_play(data, socket)
   def handle_info({:sync_pause, data}, socket), do: PubSub.handle_sync_pause(data, socket)
-  def handle_info({:sync_seek, data}, socket), do: PubSub.handle_sync_seek(data, socket)
 
   def handle_info({:sync_correction, data}, socket),
     do: PubSub.handle_sync_correction(data, socket)
@@ -460,6 +459,7 @@ defmodule ByobWeb.RoomLive do
       Phoenix.LiveView.push_event(socket, Events.sync_client_stats(), %{
         key: key,
         user_id: data.user_id,
+        username: Map.get(data, :username),
         drift_ms: data.drift_ms,
         offset_ms: Map.get(data, :offset_ms, 0),
         rtt_ms: Map.get(data, :rtt_ms, 0),
@@ -522,6 +522,7 @@ defmodule ByobWeb.RoomLive do
             Phoenix.LiveView.push_event(socket, Events.sync_client_stats(), %{
               key: key,
               user_id: user_id,
+              username: Map.get(merged, :username),
               drift_ms: Map.get(merged, :drift_ms, 0),
               offset_ms: Map.get(merged, :offset_ms, 0),
               rtt_ms: Map.get(merged, :rtt_ms, 0),

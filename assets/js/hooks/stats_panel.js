@@ -60,9 +60,16 @@ const StatsPanel = {
         // for this peer (detected by seek_streak going up).
         seekFlags: [],
         lastSeekStreak: 0,
+        userId: data.user_id || "",
+        username: data.username || data.user_id || "?",
       };
       this.rings.set(key, ring);
     }
+    // Username can land in a later sample (e.g. extension channel sends
+    // it sparsely); update if we get a fresh one.
+    if (data.username) ring.username = data.username;
+    if (data.user_id) ring.userId = data.user_id;
+
     const streak = data.seek_streak || 0;
     const isSeek = streak > ring.lastSeekStreak;
     ring.lastSeekStreak = streak;
@@ -80,14 +87,14 @@ const StatsPanel = {
       renderSparkline(spark, ring.drift, ring.seekFlags);
     }
 
-    // Local multi-line chart + correction-bands diagram. The bands diagram
-    // is local-only because it visualizes our own Reconcile state (effective
-    // dead zone, hard-seek threshold, rate-correcting flag) — values that
-    // hysteresis can grow from their constants and that we want to *see*
-    // grow.
+    // Multi-line chart shows EVERY peer's drift on a shared time axis,
+    // plus the local user's RTT for context. Re-render on any sample
+    // (not just local) so a peer's spike shows up immediately.
+    const chart = document.getElementById("byob-local-sync-chart");
+    if (chart) renderLocalChart(chart, this.rings, this.localUserId);
+
+    // Bands diagram + drift-history details are local-only.
     if (this.localUserId && data.user_id === this.localUserId) {
-      const chart = document.getElementById("byob-local-sync-chart");
-      if (chart) renderLocalChart(chart, ring);
       const bands = document.getElementById("byob-drift-bands");
       if (bands) renderDriftBands(bands, data);
     }
@@ -152,65 +159,110 @@ function renderSparkline(host, values, seekFlags) {
     `</svg>`;
 }
 
-// Multi-line chart: RTT + drift + offset on a shared time axis. Each metric
-// is auto-scaled to its own range (no shared y-axis — RTT and drift live in
-// very different bands). Drift is rendered with a 0-baseline; RTT and
-// offset are rendered as scaled-to-range lines so movement is visible.
-function renderLocalChart(host, ring) {
-  // Offset is always 0 in the server-driven model (server owns the
-  // adaptive seek-latency learning, no client-side EMA), so we drop
-  // its trace. RTT + drift only.
-  const segments = [
-    {
-      key: "rtt",
-      label: "RTT",
-      values: ring.rtt,
-      color: COLOR_RTT,
-      scale: scalePositive, // non-negative, scale full height to max
-    },
-    {
-      key: "drift",
-      label: "drift",
-      values: ring.drift,
-      color: COLOR_DRIFT,
-      scale: scaleSigned, // signed, center axis
-    },
-  ];
+// Multi-peer chart: every connected client's drift on a shared time
+// axis (signed, centered at 0), plus the LOCAL user's RTT for context.
+// Drift y-axis auto-scales to the worst |drift| across all peers so a
+// single big-drift peer doesn't crush the others into a flat line at 0.
+//
+// Each peer gets a stable HSL hue derived from their user_id; the local
+// user is drawn last (on top) in the existing amber so it remains
+// visually distinct as "you".
+function renderLocalChart(host, rings, localUserId) {
+  // Snapshot peer rings, sorted so local user renders LAST (on top).
+  // Stable order otherwise (by key) so colors don't reshuffle each tick.
+  const entries = [...rings.entries()].sort(([ak, av], [bk, bv]) => {
+    const aLocal = localUserId && av.userId === localUserId ? 1 : 0;
+    const bLocal = localUserId && bv.userId === localUserId ? 1 : 0;
+    if (aLocal !== bLocal) return aLocal - bLocal;
+    return ak < bk ? -1 : ak > bk ? 1 : 0;
+  });
 
-  const lines = segments
-    .filter((s) => s.values.length > 0)
-    .map((s) => {
-      const points = s.scale(s.values, LOCAL_CHART_W, LOCAL_CHART_H);
-      return `<polyline points="${points}" fill="none" stroke="${s.color}" stroke-width="1.2" vector-effect="non-scaling-stroke"/>`;
+  // Find local ring (for RTT line + amber drift highlight).
+  const localEntry = entries.find(
+    ([_, r]) => localUserId && r.userId === localUserId
+  );
+  const localRing = localEntry ? localEntry[1] : null;
+
+  // Global drift max so per-peer lines share a y-axis. Floor at 50 ms
+  // so a quiet room doesn't draw drift jitter as huge spikes.
+  let driftMax = 50;
+  for (const [, ring] of entries) {
+    for (const v of ring.drift) {
+      const a = Math.abs(v);
+      if (a > driftMax) driftMax = a;
+    }
+  }
+
+  // Drift lines, one per peer.
+  const driftLines = entries
+    .filter(([, ring]) => ring.drift.length > 0)
+    .map(([key, ring]) => {
+      const isLocal = localUserId && ring.userId === localUserId;
+      const color = isLocal ? COLOR_DRIFT : peerColor(ring.userId || key);
+      const points = scaleSignedTo(ring.drift, LOCAL_CHART_W, LOCAL_CHART_H, driftMax);
+      const width = isLocal ? 1.6 : 1.0;
+      return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="${width}" vector-effect="non-scaling-stroke" opacity="${isLocal ? 1 : 0.85}"/>`;
     })
     .join("");
 
-  // Legend with current values. `last` may be undefined if no samples yet.
-  const legend = segments
-    .map((s) => {
-      const last = s.values.length ? Math.round(s.values[s.values.length - 1]) : "—";
-      return (
-        `<span style="color:${s.color}">■</span>` +
-        ` ${s.label}: <span style="color:${s.color}">${last}${last === "—" ? "" : "ms"}</span>`
-      );
-    })
-    .join(" &nbsp; ");
+  // Local RTT line (single peer — only meaningful for this client).
+  let rttLine = "";
+  if (localRing && localRing.rtt.length > 0) {
+    const points = scalePositive(localRing.rtt, LOCAL_CHART_W, LOCAL_CHART_H);
+    rttLine = `<polyline points="${points}" fill="none" stroke="${COLOR_RTT}" stroke-width="1.2" vector-effect="non-scaling-stroke" opacity="0.7"/>`;
+  }
+
+  // Legend: local RTT first, then a drift swatch per peer with current value.
+  const legendItems = [];
+  if (localRing && localRing.rtt.length > 0) {
+    const last = Math.round(localRing.rtt[localRing.rtt.length - 1]);
+    legendItems.push(
+      `<span style="color:${COLOR_RTT}">■</span> RTT: <span style="color:${COLOR_RTT}">${last}ms</span>`
+    );
+  }
+  for (const [key, ring] of entries) {
+    if (ring.drift.length === 0) continue;
+    const isLocal = localUserId && ring.userId === localUserId;
+    const color = isLocal ? COLOR_DRIFT : peerColor(ring.userId || key);
+    const last = Math.round(ring.drift[ring.drift.length - 1]);
+    const name = isLocal ? `${ring.username} (you)` : ring.username;
+    const sign = last > 0 ? "+" : "";
+    legendItems.push(
+      `<span style="color:${color}">■</span> ${name}: <span style="color:${color}">${sign}${last}ms</span>`
+    );
+  }
+  const legend = legendItems.join(" &nbsp; ");
 
   host.innerHTML =
     `<svg width="100%" height="${LOCAL_CHART_H}" viewBox="0 0 ${LOCAL_CHART_W} ${LOCAL_CHART_H}" preserveAspectRatio="none" style="display:block;background:rgba(0,0,0,0.15);border-radius:4px">` +
-    // Grid baseline at 50% (where signed metrics sit at 0).
+    // Grid baseline at 50% — the 0-drift axis.
     `<line x1="0" y1="${LOCAL_CHART_H / 2}" x2="${LOCAL_CHART_W}" y2="${LOCAL_CHART_H / 2}" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>` +
-    lines +
+    rttLine +
+    driftLines +
     `</svg>` +
-    `<div style="font-size:10px;margin-top:2px;opacity:0.7">${legend}</div>`;
+    `<div style="font-size:10px;margin-top:2px;opacity:0.85;display:flex;flex-wrap:wrap;gap:4px 12px">${legend}</div>`;
 }
 
-function scaleSigned(values, w, h) {
-  const max = Math.max(50, ...values.map((v) => Math.abs(v)));
+// Hash user_id to a stable HSL hue. Same id → same color across reloads.
+// Skips the amber band reserved for the local user (~30-60°).
+function peerColor(userId) {
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = ((hash << 5) - hash + userId.charCodeAt(i)) | 0;
+  }
+  let hue = Math.abs(hash) % 360;
+  // Push hue out of the local-user amber band so peers don't collide
+  // visually with "you".
+  if (hue >= 30 && hue <= 70) hue = (hue + 90) % 360;
+  return `hsl(${hue}, 70%, 60%)`;
+}
+
+function scaleSignedTo(values, w, h, max) {
+  const m = Math.max(1, max);
   return values
     .map((v, i) => {
       const x = (i / (RING_SIZE - 1)) * w;
-      const y = h / 2 - (v / max) * (h / 2 - 1);
+      const y = h / 2 - (v / m) * (h / 2 - 1);
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
@@ -358,7 +410,7 @@ function renderDriftBands(host, data) {
         { x: xToleranceR, text: `+${tolerance}` },
         { x: 100, text: `+${Math.round(displayMax)}`, color: "rgba(255,255,255,0.55)" },
       ],
-      8 // minGap %
+      3 // minGap % (just enough to keep labels from physically overlapping)
     ) +
     // Section captions: same repulsion treatment so "tolerated" doesn't
     // overlap "in sync" / "seek" when bands are narrow.

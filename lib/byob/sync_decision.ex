@@ -114,6 +114,7 @@ defmodule Byob.SyncDecision do
   def seek_cooldown_base_ms, do: @seek_cooldown_base_ms
   def seek_cooldown_max_ms, do: @seek_cooldown_max_ms
   def seek_streak_reset_ms, do: @seek_streak_reset_ms
+  def default_learned_l_ms, do: @default_learned_l_ms
 
   @doc """
   Compute the effective tolerance for the current report. Exposed

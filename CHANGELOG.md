@@ -3,6 +3,44 @@
 
 ---
 
+# v6.8.16
+
+### Personalised user-seek; tightened bands-diagram label spacing
+
+**User scrubs and video changes no longer cause cascading sync seeks
+across the room.** Previously the `:sync_seek` broadcast handed every
+peer a raw target position. Each peer's player took ~L_processing to
+land, leaving them L behind expected, which then triggered a
+SyncDecision compensating seek per peer per event. With multiple
+events fired in quick succession (scrub, scrub, video change), seek
+streaks climbed to 4-5 across all clients.
+
+Now `RoomServer.handle_call({:seek, …})` calls a new
+`broadcast_personalized_seek/4` helper that sends a per-user
+`:user_seek_command` to each connected peer (originator excluded).
+Each peer's target is pre-shifted by their own `learned_l_ms`
+(default 300 if no entry yet) so the player lands ON expected
+after processing instead of L behind. SyncDecision becomes a
+backstop for L variance, not the primary correction path.
+
+**Dead-code removal.** With user seeks routed through
+`:user_seek_command`, the legacy `:sync_seek` broadcast path is
+unused. Removed:
+
+- `Byob.Events.sync_seek/0`
+- `LV_EVT.SYNC_SEEK` and `_onSyncSeek` in `video_player.js`
+- `ByobWeb.RoomLive.PubSub.handle_sync_seek/2`
+- `:sync_seek` `handle_info` clauses in `room_live.ex` and
+  `extension_channel.ex`
+- Extension's `CHAN_SYNC_SEEK` channel listener and `COMMAND_SEEK`
+  port message + content-script handler
+
+**Bands-diagram tweak.** Threshold-label `minGap` reduced from 8 %
+to 3 % — the `±jitter` numbers now sit close enough to visually
+associate with the green band.
+
+---
+
 # v6.8.15
 
 ### Faster L convergence — seeded default + accurate measurement

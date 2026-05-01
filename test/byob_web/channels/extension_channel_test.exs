@@ -83,25 +83,34 @@ defmodule ByobWeb.ExtensionChannelTest do
       assert_receive {:sync_pause, %{time: 5.0}}
     end
 
-    test "video:seek broadcasts sync_seek", %{socket: socket, room_id: room_id} do
+    test "video:seek dispatches personalized seek to other peers",
+         %{socket: socket, room_id: room_id} do
+      pid = GenServer.whereis({:via, Registry, {Byob.RoomRegistry, room_id}})
+      {:ok, _} = RoomServer.join(pid, "peer", "Peer")
+
       Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
 
       ExtensionChannel.handle_in("video:seek", %{"position" => 30.0}, socket)
 
-      assert_receive {:sync_seek, %{time: 30.0}}
+      default_l = Byob.SyncDecision.default_learned_l_ms() / 1000
+      assert_receive {:user_seek_command, "peer", %{position: target}}
+      assert_in_delta target, 30.0 + default_l, 0.001
     end
 
-    test "video:play and video:seek still broadcast separately", %{
+    test "video:play broadcasts; video:seek dispatches personalized commands", %{
       socket: socket,
       room_id: room_id
     } do
+      pid = GenServer.whereis({:via, Registry, {Byob.RoomRegistry, room_id}})
+      {:ok, _} = RoomServer.join(pid, "peer", "Peer")
+
       Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
 
       ExtensionChannel.handle_in("video:play", %{"position" => 10.0}, socket)
       ExtensionChannel.handle_in("video:seek", %{"position" => 30.0}, socket)
 
       assert_receive {:sync_play, %{time: 10.0}}
-      assert_receive {:sync_seek, %{time: 30.0}}
+      assert_receive {:user_seek_command, "peer", %{position: _}}
     end
 
     test "sync:ping replies with pong", %{socket: socket} do

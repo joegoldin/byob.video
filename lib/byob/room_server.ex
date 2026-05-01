@@ -831,7 +831,11 @@ defmodule Byob.RoomServer do
         # any in-flight per-user SyncDecision streak / cooldown is now
         # stale. Reset all peers' decision state (preserving learned_L).
         state = reset_user_sync_states(state)
-        broadcast(state, {:sync_seek, %{time: position, server_time: now, user_id: user_id}})
+        # Personalized per-user seek commands: each peer's target is
+        # pre-shifted by their own learned_L so they land on `position`
+        # after the player's processing latency instead of L behind.
+        # Originator is excluded — their player is already at `position`.
+        state = broadcast_personalized_seek(state, position, now, user_id)
         {:reply, :ok, state}
     end
   end
@@ -1659,6 +1663,40 @@ defmodule Byob.RoomServer do
 
   defp broadcast(state, message) do
     Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{state.room_id}", message)
+  end
+
+  # Send a personalized sync seek command to every connected user except
+  # `exclude_user_id` (typically the originator of a user-initiated
+  # seek — they're already at `position`). Each peer's target is shifted
+  # by their own `learned_l_ms` so the player lands ON expected after
+  # processing instead of L_processing behind it. Without this,
+  # `Byob.SyncDecision` would have to fire a compensating seek for each
+  # peer on every user-initiated event, which inflates seek streaks.
+  defp broadcast_personalized_seek(state, position, server_time, exclude_user_id) do
+    default_l = Byob.SyncDecision.default_learned_l_ms()
+
+    Enum.each(state.users, fn {uid, user} ->
+      cond do
+        uid == exclude_user_id ->
+          :ok
+
+        not Map.get(user, :connected, false) ->
+          :ok
+
+        true ->
+          learned_l =
+            case Map.get(state.user_sync_states, uid) do
+              %{learned_l_ms: l} when l > 0 -> l
+              _ -> default_l
+            end
+
+          target = max(0.0, position + learned_l / 1000)
+          command = %{position: target, server_time: server_time}
+          broadcast(state, {:user_seek_command, uid, command})
+      end
+    end)
+
+    state
   end
 
   # Runs Byob.SyncDecision for ONE user. Returns

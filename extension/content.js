@@ -46,7 +46,6 @@
     // background.js → content.js (port message)
     COMMAND_PLAY: "command:play",
     COMMAND_PAUSE: "command:pause",
-    COMMAND_SEEK: "command:seek",
     COMMAND_INITIAL_STATE: "command:initial-state",
     COMMAND_SYNCED: "command:synced",
     COMMAND_QUEUE_ENDED: "command:queue-ended",
@@ -1143,20 +1142,6 @@
         startReconcile();
         break;
 
-      case EVT.COMMAND_SEEK:
-        // Defensive: server already drops seeks for live items, so
-        // we shouldn't see this — but if a stale seek arrives mid
-        // VOD→live transition, ignore it.
-        if (isLive) break;
-        _log("cmd:seek pos=", msg.position, "server_time=", msg.server_time);
-        lastSeekAt = Date.now();
-        updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time);
-        if (commandGuard) clearTimeout(commandGuard);
-        commandGuard = setTimeout(() => { commandGuard = null; }, CMD_SEEK_COMMAND_GUARD_MS);
-        updateSyncBarStatus("catching_up", { sticky: true, durationMs: 2500 });
-        seekTo(msg.position);
-        break;
-
       case EVT.SYNC_CORRECTION:
         // Server periodic refresh (every few seconds). Updates reference so
         // reconcile can drift-correct. No direct player action here.
@@ -1166,21 +1151,28 @@
         break;
 
       case EVT.SYNC_SEEK_COMMAND:
-        // Server's `Byob.SyncDecision` decided this client needs to seek.
-        // Target is pre-computed (includes learned-L overshoot), we just
-        // execute it. lastSeekExecutedAt suppresses jitter EMA updates
-        // for 5 s so the position-jump tickDelta doesn't poison noise
-        // estimation.
+        // Server pushed a sync seek (either SyncDecision-driven, or a
+        // user-initiated scrub personalised for this peer). Target is
+        // pre-shifted by learned_L; we add the one-way transit slop
+        // here so the seek lands on `expected` after processing instead
+        // of L_one_way behind it. Mirrors the browser's
+        // `Reconcile.executeSeek` math exactly.
         if (isLive) break;
         if (typeof msg.position !== "number") break;
-        _log("cmd:server-seek pos=", msg.position, "server_time=", msg.server_time);
+        let _seekTarget = msg.position;
+        if (clockSynced && typeof msg.server_time === "number") {
+          const _slopMs = Math.max(0, (Date.now() + clockOffset) - msg.server_time);
+          _seekTarget += _slopMs / 1000;
+        }
+        _log("cmd:server-seek pos=", msg.position, "→", _seekTarget.toFixed(2),
+             "server_time=", msg.server_time);
         _lastSeekExecutedAt = Date.now();
         _seekIssuedAt = _lastSeekExecutedAt;
         lastSeekAt = _lastSeekExecutedAt;
         if (commandGuard) clearTimeout(commandGuard);
         commandGuard = setTimeout(() => { commandGuard = null; }, CMD_SEEK_COMMAND_GUARD_MS);
         updateSyncBarStatus("resyncing", { sticky: true, durationMs: 2500 });
-        seekTo(msg.position);
+        seekTo(_seekTarget);
         break;
     }
   }

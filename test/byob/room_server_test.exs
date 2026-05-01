@@ -83,14 +83,28 @@ defmodule Byob.RoomServerTest do
   end
 
   describe "seek/3" do
-    test "updates position", %{pid: pid, room_id: room_id} do
-      {:ok, _} = RoomServer.join(pid, "user1", "Test")
+    test "updates position and broadcasts personalized seek to other peers",
+         %{pid: pid, room_id: room_id} do
+      {:ok, _} = RoomServer.join(pid, "user1", "Test1")
+      {:ok, _} = RoomServer.join(pid, "user2", "Test2")
       RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :now)
 
       Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
       :ok = RoomServer.seek(pid, "user1", 30.0)
 
-      assert_receive {:sync_seek, %{time: 30.0, user_id: "user1"}}
+      # Originator (user1) is excluded; user2 receives a personalized
+      # seek command with target ≈ 30.0 + default_learned_l_ms / 1000.
+      default_l = Byob.SyncDecision.default_learned_l_ms() / 1000
+      expected_target = 30.0 + default_l
+
+      assert_receive {:user_seek_command, "user2", %{position: target}}
+      assert_in_delta target, expected_target, 0.001
+      refute_received {:user_seek_command, "user1", _}
+
+      # snapshot returns current_position (which advances if playing) —
+      # the seek just landed so it should be very close to 30.0.
+      state = RoomServer.get_state(pid)
+      assert_in_delta state.current_time, 30.0, 0.5
     end
   end
 

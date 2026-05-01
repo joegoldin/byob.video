@@ -488,10 +488,11 @@ defmodule ByobWeb.RoomLive.Components do
                 </span>
               </div>
             <% end %>
-            <%!-- Local clock-sync chart: RTT + drift + offset over the last 60s.
-                 Hook owns this element's contents; LV stays out of the way. --%>
+            <%!-- Peer-drift chart: every connected client's drift over the
+                 last 60 s on a shared signed axis, plus the local user's
+                 RTT for context. Hook owns the contents; LV stays out. --%>
             <div class="mt-2 pt-2 border-t border-base-300/50">
-              <div class="text-base-content/40 mb-1">Local clock sync (60s)</div>
+              <div class="text-base-content/40 mb-1">Peer drift + local RTT (60s)</div>
               <div id="byob-local-sync-chart" phx-update="ignore"></div>
             </div>
             <%!-- Correction bands: where the current drift sits on the
@@ -775,7 +776,7 @@ defmodule ByobWeb.RoomLive.Components do
                 <div>
                   <dt class="text-base-content/80">Sparklines</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    The line next to each peer's drift is the last ~60 s of their drift, color-graded the same way as the numeric value. The "Local clock sync" chart at the top overlays your own RTT, drift, and offset over the same window.
+                    The line next to each peer's drift is the last ~60 s of their drift, color-graded the same way as the numeric value. The "Peer drift" chart at the top overlays every connected client's drift on a shared signed axis, plus your own RTT in blue for context.
                   </dd>
                 </div>
               </dl>

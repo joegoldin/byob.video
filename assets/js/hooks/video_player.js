@@ -81,7 +81,6 @@ const VideoPlayer = {
     this.handleEvent(LV_EVT.SYNC_STATE, (state) => this._onSyncState(state));
     this.handleEvent(LV_EVT.SYNC_PLAY, (data) => this._onSyncPlay(data));
     this.handleEvent(LV_EVT.SYNC_PAUSE, (data) => this._onSyncPause(data));
-    this.handleEvent(LV_EVT.SYNC_SEEK, (data) => this._onSyncSeek(data));
     this.handleEvent(LV_EVT.SYNC_PONG, (data) => this.clockSync.handlePong(data));
     this.handleEvent(LV_EVT.SYNC_CORRECTION, (data) => this._onSyncCorrection(data));
     this.handleEvent(LV_EVT.SYNC_HEARTBEAT, (data) => this._onSyncHeartbeat(data));
@@ -767,18 +766,6 @@ const VideoPlayer = {
     // Position will be corrected on next play via reconcile.
     this._pause();
     this.reconcile.stop();
-  },
-
-  _onSyncSeek(data) {
-    if (data.user_id === this.userId) return;
-    this.suppression.suppress(null); // suppress next state change regardless
-    this._showSyncingOverlay("Catching up…");
-    this._seekTo(data.time);
-    this.reconcile.setServerState(
-      data.time,
-      data.server_time,
-      this.clockSync
-    );
   },
 
   _onSyncCorrection(data) {
@@ -1567,9 +1554,9 @@ const VideoPlayer = {
 
   // ── "Syncing…" overlay ────────────────────────────────────────────────
   // Shown briefly when the player is mid-correction:
-  //   * Peer seeked (_onSyncSeek)
   //   * Initial join's seek+play (_applyPendingState)
-  //   * Server commanded a seek (SYNC_SEEK_COMMAND handler)
+  //   * Server commanded a seek (SYNC_SEEK_COMMAND handler — covers both
+  //     SyncDecision-issued seeks and personalised user-seek commands)
   // pointer-events: none — purely informational, doesn't block interaction.
   // Auto-hides on next "playing" state change, or after 3 s safety timeout
   // (whichever is first). Re-showing while already visible just resets the

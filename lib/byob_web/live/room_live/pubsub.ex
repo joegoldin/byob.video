@@ -16,10 +16,6 @@ defmodule ByobWeb.RoomLive.PubSub do
     {:noreply, push_event(socket, Events.sync_pause(), data)}
   end
 
-  def handle_sync_seek(data, socket) do
-    {:noreply, push_event(socket, Events.sync_seek(), data)}
-  end
-
   def handle_sync_correction(data, socket) do
     {:noreply, push_event(socket, Events.sync_correction(), data)}
   end

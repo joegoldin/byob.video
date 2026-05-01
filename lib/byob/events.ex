@@ -40,7 +40,6 @@ defmodule Byob.Events do
   def sync_state, do: "sync:state"
   def sync_play, do: "sync:play"
   def sync_pause, do: "sync:pause"
-  def sync_seek, do: "sync:seek"
   def sync_correction, do: "sync:correction"
   def sync_heartbeat, do: "sync:heartbeat"
   def sync_pong, do: "sync:pong"

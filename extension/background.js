@@ -26,7 +26,6 @@ const EVT = Object.freeze({
   // background.js → content.js
   COMMAND_PLAY: "command:play",
   COMMAND_PAUSE: "command:pause",
-  COMMAND_SEEK: "command:seek",
   COMMAND_INITIAL_STATE: "command:initial-state",
   COMMAND_SYNCED: "command:synced",
   COMMAND_QUEUE_ENDED: "command:queue-ended",
@@ -59,7 +58,6 @@ const EVT = Object.freeze({
   // Channel OUT (server → background.js subscribers)
   CHAN_SYNC_PLAY: "sync:play",
   CHAN_SYNC_PAUSE: "sync:pause",
-  CHAN_SYNC_SEEK: "sync:seek",
   CHAN_SYNC_CORRECTION: "sync:correction",
   CHAN_SYNC_SEEK_COMMAND: "sync:seek_command",
   CHAN_AUTOPLAY_COUNTDOWN: "autoplay:countdown",
@@ -496,12 +494,6 @@ function connectToRoom(roomId, serverUrl, token, username) {
 
   channel.on(EVT.CHAN_SYNC_PAUSE, (data) => broadcastToContentScripts({
     type: EVT.COMMAND_PAUSE,
-    position: data.time,
-    server_time: data.server_time,
-  }));
-
-  channel.on(EVT.CHAN_SYNC_SEEK, (data) => broadcastToContentScripts({
-    type: EVT.COMMAND_SEEK,
     position: data.time,
     server_time: data.server_time,
   }));

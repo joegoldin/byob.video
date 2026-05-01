@@ -11,7 +11,6 @@ export const LV_EVT = Object.freeze({
   SYNC_STATE: "sync:state",
   SYNC_PLAY: "sync:play",
   SYNC_PAUSE: "sync:pause",
-  SYNC_SEEK: "sync:seek",
   SYNC_PONG: "sync:pong",
   SYNC_CORRECTION: "sync:correction",
   SYNC_HEARTBEAT: "sync:heartbeat",
