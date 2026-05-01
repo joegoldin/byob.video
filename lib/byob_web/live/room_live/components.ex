@@ -1428,8 +1428,11 @@ defmodule ByobWeb.RoomLive.Components do
   attr :users, :map, required: true
   attr :user_id, :string, required: true
   attr :editing_username, :boolean, required: true
+  attr :sync_clients, :map, default: %{}
 
   def users_card(assigns) do
+    assigns = assign(assigns, :user_status, user_status_map(assigns.sync_clients))
+
     ~H"""
     <div class="card bg-base-200 flex-shrink-0">
       <div class="card-body p-4">
@@ -1449,13 +1452,42 @@ defmodule ByobWeb.RoomLive.Components do
             data-user-id={uid}
             class="flex items-center gap-2 text-sm"
           >
-            <div class={"w-2 h-2 rounded-full flex-shrink-0 #{if user.connected, do: "bg-success", else: "bg-base-content/20"}"} />
+            <% status = Map.get(@user_status, user.username, %{}) %>
+            <%!-- Status indicator: spinner when resyncing, pause glyph
+                 when waiting on a user gesture, otherwise the existing
+                 connected/disconnected dot. Order matters — resyncing
+                 trumps gesture-blocked (we only learn one when a sync
+                 is in flight, anyway). --%>
+            <span
+              :if={user.connected and Map.get(status, :resyncing, false)}
+              class="flex-shrink-0 inline-flex items-center justify-center w-3 h-3"
+              title="Re-syncing playback"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" class="text-warning" style="animation:byob-spin 0.8s linear infinite">
+                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-opacity="0.3" stroke-width="3" fill="none"/>
+                <path d="M12 2 a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span
+              :if={user.connected and !Map.get(status, :resyncing, false) and Map.get(status, :gesture_blocked, false)}
+              class="flex-shrink-0 inline-flex items-center justify-center w-3 h-3 text-base-content/50"
+              title="Waiting for this user to click to start playback"
+            >
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                <rect x="6" y="4" width="4" height="16" rx="1" />
+                <rect x="14" y="4" width="4" height="16" rx="1" />
+              </svg>
+            </span>
+            <div
+              :if={!(user.connected and (Map.get(status, :resyncing, false) or Map.get(status, :gesture_blocked, false)))}
+              class={"w-2 h-2 rounded-full flex-shrink-0 #{if user.connected, do: "bg-success", else: "bg-base-content/20"}"}
+            />
             <%!-- Other users: just show name (Nicknames hook decorates) --%>
             <span
               :if={!is_self_user(uid, @user_id)}
               class="truncate flex-1"
               data-byob-username={user.username}
-            >{user.username}</span>
+            >{user.username}<span :if={user.connected and Map.get(status, :resyncing, false)} class="text-warning text-xs ml-1">(re-syncing)</span></span>
             <%!-- Self: show name + tab indicator --%>
             <span
               :if={is_self_user(uid, @user_id) && !@editing_username}
@@ -1466,6 +1498,7 @@ defmodule ByobWeb.RoomLive.Components do
               <span :if={uid != @user_id} class="text-base-content/30 font-normal text-xs">
                 (other tab)
               </span>
+              <span :if={user.connected and Map.get(status, :resyncing, false)} class="text-warning text-xs ml-1">(re-syncing)</span>
             </span>
             <button
               :if={uid == @user_id && !@editing_username}
@@ -1595,6 +1628,44 @@ defmodule ByobWeb.RoomLive.Components do
 
     not (has_title and is_youtube)
   end
+
+  # Build a per-username aggregated status from the per-tab `clients`
+  # map (sync_stats). A username is marked resyncing if ANY of their
+  # tabs has cooldown_remaining_ms > 0 (cascade in flight) and marked
+  # gesture_blocked if ANY tab is sitting on a press-to-play overlay.
+  # Stale entries (> 5 s old) are excluded so a user who closed their
+  # tab doesn't keep appearing as "re-syncing forever" until the panel
+  # re-renders. The `byob-spin` keyframes used by the spinner glyph
+  # are injected by stats_panel.js once the panel is opened — for
+  # users who never open it the spinner falls back to a static circle.
+  def user_status_map(sync_clients) when is_map(sync_clients) do
+    now_s = System.system_time(:second)
+
+    sync_clients
+    |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
+    |> Enum.reduce(%{}, fn {_key, c}, acc ->
+      username = Map.get(c, :username)
+      if is_binary(username) do
+        prev = Map.get(acc, username, %{resyncing: false, gesture_blocked: false})
+        cooldown = Map.get(c, :cooldown_remaining_ms, 0) || 0
+        streak = Map.get(c, :seek_streak, 0) || 0
+        # cooldown > 0 = SyncDecision currently in its post-seek
+        # backoff window; combined with streak > 0 (cleared after
+        # 10 s of quiet) this is "actively cascading".
+        resyncing = cooldown > 0 and streak > 0
+        gesture_blocked = !!Map.get(c, :gesture_blocked, false)
+
+        Map.put(acc, username, %{
+          resyncing: prev.resyncing or resyncing,
+          gesture_blocked: prev.gesture_blocked or gesture_blocked
+        })
+      else
+        acc
+      end
+    end)
+  end
+
+  def user_status_map(_), do: %{}
 
   def dedup_users(users, my_user_id) do
     users

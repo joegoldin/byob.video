@@ -122,4 +122,13 @@ html[data-byob-extension] .byob-no-ext { display: none !important; }
   animation: byobSliceWin 1200ms ease-out forwards;
 }
 
+/* Spinner used by the in-player Re-syncing pill AND the per-user
+   re-syncing indicator in the Users card. video_player.js used to
+   inject this dynamically the first time it showed the pill, but
+   the user-list indicator can render before that, so it lives in
+   the global stylesheet instead. */
+@keyframes byob-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* This file is for your main application CSS */

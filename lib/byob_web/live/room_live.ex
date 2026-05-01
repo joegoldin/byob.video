@@ -224,6 +224,7 @@ defmodule ByobWeb.RoomLive do
       rtt_ms = trunc(params["rtt_ms"] || 0)
       noise_floor_ms = trunc(params["noise_floor_ms"] || 0)
       observed_l_ms = trunc(params["observed_l_ms"] || 0)
+      gesture_blocked = !!params["gesture_blocked"]
       playing = params["playing"] || false
 
       state = Byob.RoomServer.get_state(room_pid)
@@ -251,6 +252,7 @@ defmodule ByobWeb.RoomLive do
            rtt_ms: rtt_ms,
            noise_floor_ms: noise_floor_ms,
            observed_l_ms: observed_l_ms,
+           gesture_blocked: gesture_blocked,
            server_position: Float.round(server_pos * 1.0, 1),
            play_state: if(playing, do: "playing", else: "paused")
          }}
@@ -407,6 +409,7 @@ defmodule ByobWeb.RoomLive do
         offset_ms: Map.get(data, :offset_ms, 0),
         rtt_ms: Map.get(data, :rtt_ms, 0),
         noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
+        gesture_blocked: Map.get(data, :gesture_blocked, false),
         username: Map.get(data, :username),
         server_position: data.server_position,
         play_state: data.play_state,
@@ -800,7 +803,12 @@ defmodule ByobWeb.RoomLive do
         <Components.activity_log activity_log={@activity_log} />
 
         <%!-- Users card — pinned at bottom --%>
-        <Components.users_card users={@users} user_id={@user_id} editing_username={@editing_username} />
+        <Components.users_card
+          users={@users}
+          user_id={@user_id}
+          editing_username={@editing_username}
+          sync_clients={Map.get(@sync_stats || %{}, :clients, %{})}
+        />
       </div>
     </div>
     """

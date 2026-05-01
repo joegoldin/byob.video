@@ -3,6 +3,33 @@
 
 ---
 
+# v6.8.25
+
+### Per-user status indicators in the Users list
+
+The Users card now distinguishes three states per row instead of just
+"connected" / "disconnected":
+
+- **Spinner + "(re-syncing)" text** when that user is in an active
+  SyncDecision cascade — derived from `cooldown_remaining_ms > 0 and
+  seek_streak > 0` aggregated across all of the user's tabs. So when
+  someone scrubs and a peer is doing one or more compensating seeks,
+  you can see at a glance who's still settling.
+- **Paused glyph (⏸)** when one of that user's tabs is sitting on a
+  press-to-play overlay (the "Click to join the room" or "Click to
+  join playback" intent — autoplay-blocked). New `gesture_blocked`
+  flag in the drift report payload tells the server when JS is
+  showing one of those overlays. The server includes it in
+  `:sync_client_stats`; the LV stores it in the per-tab clients map.
+- **Existing green / gray dot** when neither of the above applies.
+
+Helpers added: `Components.user_status_map/1` builds the per-username
+aggregate from `sync_clients`. `users_card` now takes a `sync_clients`
+prop. `byob-spin` keyframe moved to `app.css` so the spinner glyph
+works even before the in-player pill has injected its dynamic style.
+
+---
+
 # v6.8.24
 
 ### Mobile autoplay-help skip, glossary refresh, panel trim

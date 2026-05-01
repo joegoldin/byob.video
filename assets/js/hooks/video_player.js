@@ -1774,12 +1774,20 @@ const VideoPlayer = {
       ? 0
       : (this.reconcile.measureDriftMs?.() ?? this.reconcile.lastDriftMs ?? 0);
 
+    // Tell the server when this tab is sitting on a press-to-play
+    // overlay — peers' user-list rows show a pause glyph for users
+    // who haven't unlocked autoplay yet, so they know not to wait.
+    const gestureBlocked = !!(
+      this.el.querySelector(".byob-join-ready") ||
+      this.el.querySelector(".byob-click-to-play")
+    );
     this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
       drift_ms: Math.round(driftMs),
       offset_ms: 0, // legacy passthrough (extension still computes one)
       rtt_ms: Math.round(this.clockSync.getMedianRttMs?.() || 0),
       noise_floor_ms: Math.round(this.reconcile.noiseFloorEmaMs || 0),
       observed_l_ms: Math.round(observedL),
+      gesture_blocked: gestureBlocked,
       playing: state === "playing",
     });
   },
