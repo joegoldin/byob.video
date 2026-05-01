@@ -46,7 +46,13 @@ defmodule Byob.RoomServer do
     # Per-peer drift samples for room-wide clock adjustment.
     # %{user_id => %{drift_ms, updated_at_monotonic_ms}}
     drift_samples: %{},
-    clock_adjust_ref: nil
+    clock_adjust_ref: nil,
+    # Server-authoritative seek decisions (was per-LV in assigns; moved
+    # here because Phoenix can have multiple LV processes per user during
+    # transport switches, each with its own streak counter racing the
+    # other and stomping each other's seeks).
+    # %{user_id => Byob.SyncDecision.t()}
+    user_sync_states: %{}
   ]
 
   @autoplay_countdown_ms 5_000
@@ -1362,21 +1368,55 @@ defmodule Byob.RoomServer do
     {:noreply, state}
   end
 
-  # ── Drift-sample tracking + room-wide clock adjustment ───────────────────
+  # ── Drift-sample tracking + per-user SyncDecision + clock adjustment ──
   # We subscribe to "room:#{room_id}" in init so we receive every peer's
   # drift report (broadcast as `:sync_client_stats` by LV and Channel).
-  # The data drives `:adjust_room_clock` below.
+  # The data drives:
+  #   1. drift_samples for room-wide clock adjustment
+  #   2. per-user `Byob.SyncDecision` — single authoritative state per
+  #      user, regardless of how many LV processes are alive for that
+  #      user (transport switches, reconnects).
   def handle_info({:sync_client_stats, data}, state) do
     user_id = Map.get(data, :user_id)
 
     if is_binary(user_id) do
+      now = System.monotonic_time(:millisecond)
+
       drift_samples =
         Map.put(state.drift_samples, user_id, %{
           drift_ms: Map.get(data, :drift_ms, 0),
-          updated_at: System.monotonic_time(:millisecond)
+          updated_at: now
         })
 
-      {:noreply, %{state | drift_samples: drift_samples}}
+      {user_state, new_user_state, seek_command, tolerance_ms, cooldown_ms} =
+        run_sync_decision(state, data, drift_samples, user_id, now)
+
+      user_sync_states = Map.put(state.user_sync_states, user_id, new_user_state)
+      state = %{state | drift_samples: drift_samples, user_sync_states: user_sync_states}
+
+      # If a seek was decided, broadcast it. Targeted at the user_id —
+      # any LV/Channel whose socket matches forwards to push_event.
+      if seek_command do
+        broadcast(state, {:user_seek_command, user_id, seek_command})
+      end
+
+      # Always broadcast the decision-state snapshot so the panel can
+      # show server-authoritative tolerance / streak / cooldown / learned_L
+      # for that user. This *replaces* the per-LV computation that used
+      # to live in room_live's handle_info.
+      broadcast(
+        state,
+        {:user_decision_state, user_id,
+         %{
+           tolerance_ms: tolerance_ms,
+           seek_streak: new_user_state.seek_streak,
+           cooldown_remaining_ms: cooldown_ms,
+           learned_l_ms: trunc(new_user_state.learned_l_ms || 0)
+         }}
+      )
+
+      _ = user_state
+      {:noreply, state}
     else
       {:noreply, state}
     end
@@ -1589,6 +1629,54 @@ defmodule Byob.RoomServer do
 
   defp broadcast(state, message) do
     Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{state.room_id}", message)
+  end
+
+  # Runs Byob.SyncDecision for ONE user. Returns
+  #   {old_state, new_state, seek_command_or_nil, tolerance_ms, cooldown_ms}
+  defp run_sync_decision(state, data, drift_samples, user_id, now_ms) do
+    user_state = Map.get(state.user_sync_states, user_id) || Byob.SyncDecision.new()
+
+    # Room jitter: max non-stale peer noise floor.
+    room_jitter =
+      drift_samples
+      |> Enum.filter(fn {_, %{updated_at: t}} -> now_ms - t < @drift_sample_stale_ms end)
+      |> Enum.map(fn {_, c} -> Map.get(c, :noise_floor_ms, 0) end)
+      |> case do
+        [] -> 0
+        list -> Enum.max(list)
+      end
+
+    expected_position = current_position(state)
+
+    drift_input = %{
+      drift_ms: Map.get(data, :drift_ms, 0),
+      noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
+      rtt_ms: Map.get(data, :rtt_ms, 0),
+      user_id: user_id
+    }
+
+    room = %{expected_position: expected_position, room_jitter_ms: room_jitter}
+
+    {result, new_user_state} =
+      case Byob.SyncDecision.evaluate(user_state, drift_input, room, now_ms) do
+        {:seek, command, ns} -> {{:seek, command}, ns}
+        {:no_seek, ns} -> {:no_seek, ns}
+      end
+
+    seek_command =
+      case result do
+        {:seek, cmd} -> cmd
+        _ -> nil
+      end
+
+    tolerance_ms =
+      drift_input
+      |> Byob.SyncDecision.tolerance_ms(room, new_user_state, now_ms)
+      |> trunc()
+
+    cooldown_ms = Byob.SyncDecision.cooldown_remaining_ms(new_user_state, now_ms)
+
+    {user_state, new_user_state, seek_command, tolerance_ms, cooldown_ms}
   end
 
   defp compute_median(values) do

@@ -3,6 +3,47 @@
 
 ---
 
+# v6.8.5
+
+### Move SyncDecision into room_server (singleton-per-room state)
+
+v6.8.4's diagnostic logging revealed the smoking gun: two seek
+decisions for the same user in the same millisecond, one with
+`streak=1` and another with `streak=7`. **Two LV processes were
+running `SyncDecision` for the same user** — one left over from a
+prior socket connection (transport switch / reconnect) and one
+fresh. Each had its own `learned_L = 0`, neither could converge,
+and they fought each other on every drift report.
+
+Fix: move `SyncDecision` state out of LV assigns and into
+`room_server` — a singleton GenServer per room. Now there's
+exactly *one* decision state per user, regardless of how many LV
+processes are alive.
+
+**Flow.** room_server's existing `handle_info({:sync_client_stats,
+...})` handler (it already subscribed to PubSub for clock-adjust)
+now also runs `Byob.SyncDecision.evaluate/4` for each peer. When
+the decision returns `:seek`, room_server broadcasts
+`{:user_seek_command, user_id, command}`. Every LV / Channel that
+matches `user_id == socket.assigns.user_id` forwards to its
+`push_event`. Multiple LVs for the same user (transport switch
+window) all forward the same command — idempotent because target
+position + server_time are identical.
+
+**Decision-state display.** room_server also broadcasts
+`{:user_decision_state, user_id, %{tolerance_ms, seek_streak,
+cooldown_remaining_ms, learned_l_ms}}` after each evaluation. LVs
+merge it into the clients-map entry for the named user so the
+panel renders with server-authoritative values.
+
+**Removed:** `:user_sync_state` from LV mount assigns; LV's
+`maybe_decide_seek` helper; channel's parallel decision path; per-
+LV streak counters that were the source of the bug.
+
+Server-only / no extension republish.
+
+---
+
 # v6.8.4
 
 ### Diagnostic logging in SyncDecision L-observation

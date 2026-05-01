@@ -66,11 +66,7 @@ defmodule ByobWeb.RoomLive do
         comments_expanded: false,
         round: nil,
         round_collapsed: false,
-        sync_stats: %{correction_interval_ms: 1000, clients: %{}},
-        # Server-authoritative seek decision state. Only this LV's user's
-        # state lives here; other peers' decisions are owned by THEIR own
-        # LVs / Channels.
-        user_sync_state: Byob.SyncDecision.new()
+        sync_stats: %{correction_interval_ms: 1000, clients: %{}}
       )
 
     if connected?(socket) do
@@ -427,54 +423,24 @@ defmodule ByobWeb.RoomLive do
           {Enum.max(jitters), Enum.max(drifts)}
       end
 
-    # Server-authoritative seek decision: runs only when this report is
-    # from this LV's user. May push a `sync:seek_command` event.
-    socket = maybe_decide_seek(socket, data, room_jitter)
+    # Server-authoritative seek decisions live in room_server now. LVs
+    # don't run SyncDecision per-user anymore — that caused duplicate
+    # state when two LV processes existed for the same user (transport
+    # switches, reconnects). room_server is a singleton per room and
+    # owns one decision state per user.
+    #
+    # Decision-state fields (tolerance / streak / cooldown / learned_L)
+    # arrive via `:user_decision_state` broadcasts handled below; they
+    # update the clients map entry for that user.
 
-    is_self? =
-      data.user_id == socket.assigns[:user_id] and Map.get(data, :tab_id) == "browser"
-
-    # Server-side tolerance / streak / cooldown / learned_L for the local
-    # user's row. Other peers see 0s (their own LVs own the truth).
-    {tolerance_ms, seek_streak, cooldown_remaining_ms, learned_l_ms} =
-      if is_self? do
-        user_state = socket.assigns[:user_sync_state] || Byob.SyncDecision.new()
-        now_ms = System.monotonic_time(:millisecond)
-
-        drift_input = %{
-          drift_ms: data.drift_ms,
-          noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
-          rtt_ms: Map.get(data, :rtt_ms, 0)
-        }
-
-        room_input = %{expected_position: 0, room_jitter_ms: room_jitter}
-
-        {
-          trunc(Byob.SyncDecision.tolerance_ms(drift_input, room_input, user_state, now_ms)),
-          user_state.seek_streak,
-          Byob.SyncDecision.cooldown_remaining_ms(user_state, now_ms),
-          trunc(user_state.learned_l_ms || 0)
-        }
-      else
-        {0, 0, 0, 0}
-      end
-
-    # Stuff the server-computed fields into the local user's clients-map
-    # entry so the panel template (which reads from clients map) sees the
-    # values without needing a separate code path.
-    clients =
-      if is_self? do
-        Map.update(clients, key, %{}, fn entry ->
-          Map.merge(entry, %{
-            tolerance_ms: tolerance_ms,
-            seek_streak: seek_streak,
-            cooldown_remaining_ms: cooldown_remaining_ms,
-            learned_l_ms: learned_l_ms
-          })
-        end)
-      else
-        clients
-      end
+    # `tolerance_ms` etc. are not in `data` for non-room-server flows
+    # (e.g. legacy extension state-only drift). For brand-new client
+    # entries, default to 0 here; they'll be overwritten by the next
+    # :user_decision_state broadcast (~1 s).
+    tolerance_ms = Map.get(data, :tolerance_ms, 0)
+    seek_streak = Map.get(data, :seek_streak, 0)
+    cooldown_remaining_ms = Map.get(data, :cooldown_remaining_ms, 0)
+    learned_l_ms = Map.get(data, :learned_l_ms, 0)
 
     sync_stats = Map.put(sync_stats, :clients, clients)
 
@@ -500,6 +466,40 @@ defmodule ByobWeb.RoomLive do
         room_max_drift_ms: room_max_drift
       })
 
+    {:noreply, assign(socket, :sync_stats, sync_stats)}
+  end
+
+  # Room-server-driven seek command. Targeted at user_id; only the LV(s)
+  # whose socket matches forwards to push_event. Multiple LVs for the
+  # same user (transport switches) all forward the same command —
+  # idempotent since position + server_time are identical.
+  def handle_info({:user_seek_command, user_id, command}, socket) do
+    if user_id == socket.assigns[:user_id] do
+      socket = Phoenix.LiveView.push_event(socket, Events.sync_seek_command(), command)
+      {:noreply, socket}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # Room-server-driven decision-state update. Updates the local clients-
+  # map entry so the panel can render server-authoritative tolerance /
+  # streak / cooldown / learned_L for the named user.
+  def handle_info({:user_decision_state, user_id, decision}, socket) do
+    clients = Map.get(socket.assigns.sync_stats, :clients, %{})
+    key = "#{user_id}:browser"
+
+    clients =
+      case Map.get(clients, key) do
+        nil ->
+          # No drift report seen yet for this user; skip the merge.
+          clients
+
+        entry ->
+          Map.put(clients, key, Map.merge(entry, decision))
+      end
+
+    sync_stats = Map.put(socket.assigns.sync_stats, :clients, clients)
     {:noreply, assign(socket, :sync_stats, sync_stats)}
   end
 
@@ -608,73 +608,6 @@ defmodule ByobWeb.RoomLive do
 
   def handle_info(_msg, socket) do
     {:noreply, socket}
-  end
-
-  # ── Sync decision helpers ────────────────────────────────────────────
-
-  # Run the SyncDecision evaluator for THIS user's drift report and push a
-  # `sync:seek_command` if it returns one. Decision state lives in this
-  # LV's assigns. Other peers' reports are observed for room-consensus
-  # purposes only — their seek decisions are owned by their own LVs.
-  defp maybe_decide_seek(socket, data, room_jitter) do
-    user_id = socket.assigns[:user_id]
-    room_pid = socket.assigns[:room_pid]
-
-    cond do
-      data.user_id != user_id ->
-        socket
-
-      Map.get(data, :tab_id) != "browser" ->
-        # Extension reports go through the Channel; this path is only for
-        # the LiveView (browser) player.
-        socket
-
-      is_nil(room_pid) ->
-        socket
-
-      true ->
-        room_state = current_room_state(room_pid)
-
-        room = %{
-          expected_position: room_state.expected_position,
-          room_jitter_ms: room_jitter
-        }
-
-        drift_input = %{
-          drift_ms: data.drift_ms,
-          noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
-          rtt_ms: Map.get(data, :rtt_ms, 0),
-          user_id: user_id
-        }
-
-        sync_state = socket.assigns[:user_sync_state] || Byob.SyncDecision.new()
-        now_ms = System.monotonic_time(:millisecond)
-
-        case Byob.SyncDecision.evaluate(sync_state, drift_input, room, now_ms) do
-          {:seek, command, new_state} ->
-            socket
-            |> Phoenix.LiveView.push_event(Events.sync_seek_command(), command)
-            |> assign(:user_sync_state, new_state)
-
-          {:no_seek, new_state} ->
-            assign(socket, :user_sync_state, new_state)
-        end
-    end
-  end
-
-  defp current_room_state(room_pid) do
-    state = Byob.RoomServer.get_state(room_pid)
-    now = System.monotonic_time(:millisecond)
-
-    expected =
-      if state.play_state == :playing do
-        elapsed = (now - Map.get(state, :last_sync_at, now)) / 1000
-        state.current_time + elapsed
-      else
-        state.current_time
-      end
-
-    %{expected_position: expected, play_state: state.play_state}
   end
 
   # Render

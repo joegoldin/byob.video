@@ -46,8 +46,6 @@ defmodule ByobWeb.ExtensionChannel do
       socket
       |> assign(:room_id, room_id)
       |> assign(:room_pid, pid)
-      |> assign(:user_sync_state, Byob.SyncDecision.new())
-      |> assign(:clients, %{})
 
     {:ok, sync_state_payload(state), socket}
   end
@@ -321,47 +319,26 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   @impl true
-  def handle_info({:sync_client_stats, data}, socket) do
-    # Mirror the LV's flow: update local clients map for room-jitter
-    # consensus, then run SyncDecision for *this* extension user. Other
-    # peers' reports update the consensus only.
-    key = "#{data.user_id}:#{Map.get(data, :tab_id, "?")}"
-    now_s = System.system_time(:second)
+  def handle_info({:sync_client_stats, _data}, socket) do
+    # Server-authoritative model: room_server makes seek decisions, not us.
+    # We just observe the broadcast (no-op here for extension users; the
+    # decision will arrive as a `:user_seek_command` below).
+    {:noreply, socket}
+  end
 
-    clients =
-      socket.assigns
-      |> Map.get(:clients, %{})
-      |> Map.put(key, %{
-        drift_ms: data.drift_ms,
-        rtt_ms: Map.get(data, :rtt_ms, 0),
-        noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
-        updated_at: now_s
-      })
-
-    socket = assign(socket, :clients, clients)
-
-    # Only the extension's *own* drift report triggers a seek decision.
-    if data.user_id == socket.assigns.user_id and Map.get(data, :tab_id) != "browser" do
-      room_jitter =
-        clients
-        |> Enum.filter(fn {_, c} -> now_s - c.updated_at < 5 end)
-        |> Enum.map(fn {_, c} -> c.noise_floor_ms end)
-        |> case do
-          [] -> 0
-          list -> Enum.max(list)
-        end
-
-      case maybe_decide_seek(socket, data, room_jitter) do
-        {:seek, command, new_state} ->
-          push(socket, Events.sync_seek_command(), command)
-          {:noreply, assign(socket, :user_sync_state, new_state)}
-
-        {:no_seek, new_state} ->
-          {:noreply, assign(socket, :user_sync_state, new_state)}
-      end
-    else
-      {:noreply, socket}
+  # Room-server-driven seek command targeted at this extension's user.
+  def handle_info({:user_seek_command, user_id, command}, socket) do
+    if user_id == socket.assigns[:user_id] do
+      push(socket, Events.sync_seek_command(), command)
     end
+
+    {:noreply, socket}
+  end
+
+  # Decision-state broadcast — extension panel doesn't display these
+  # currently, but received to keep PubSub mailbox clean.
+  def handle_info({:user_decision_state, _user_id, _decision}, socket) do
+    {:noreply, socket}
   end
 
   def handle_info({:sync_play, data}, socket) do
@@ -548,37 +525,4 @@ defmodule ByobWeb.ExtensionChannel do
     }
   end
 
-  # Mirrors the LV's maybe_decide_seek but returns a result tuple instead of
-  # operating on the socket — channel handle_info wraps push() around the
-  # `:seek` case. Same SyncDecision module either way.
-  defp maybe_decide_seek(socket, data, room_jitter) do
-    room_pid = socket.assigns.room_pid
-
-    if room_pid do
-      state = Byob.RoomServer.get_state(room_pid)
-      now_mono = System.monotonic_time(:millisecond)
-
-      expected =
-        if state.play_state == :playing do
-          elapsed = (now_mono - Map.get(state, :last_sync_at, now_mono)) / 1000
-          state.current_time + elapsed
-        else
-          state.current_time
-        end
-
-      drift_input = %{
-        drift_ms: data.drift_ms,
-        noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
-        rtt_ms: Map.get(data, :rtt_ms, 0),
-        user_id: socket.assigns[:user_id]
-      }
-
-      room = %{expected_position: expected, room_jitter_ms: room_jitter}
-      sync_state = socket.assigns[:user_sync_state] || Byob.SyncDecision.new()
-
-      Byob.SyncDecision.evaluate(sync_state, drift_input, room, now_mono)
-    else
-      {:no_seek, socket.assigns[:user_sync_state] || Byob.SyncDecision.new()}
-    end
-  end
 end
