@@ -3,6 +3,30 @@
 
 ---
 
+# v6.8.1
+
+### Hotfix: clock-adjustment sign bug
+
+v6.8.0's room-wide clock adjustment had the sign backwards. Drift
+sign convention is `local − expected`. When peers are behind,
+mean drift is negative; expected is too HIGH; we should LOWER
+`current_time`. My code did `current_pos - (mean × 0.3) / 1000` —
+which for negative mean *added* to current_pos, pushing the
+canonical reference further away from where peers actually were
+on every adjustment pass.
+
+Symptom: peer drifts grew gradually instead of converging to 0;
+clients sometimes appeared "stuck out of sync" because the
+reference kept racing ahead.
+
+Fix: `current_pos + (mean × 0.3) / 1000`. Negative mean → negative
+adjustment → `current_pos` decreases → drift converges to 0.
+Positive mean (peers ahead, rare) works symmetrically.
+
+Server-only / no extension republish.
+
+---
+
 # v6.8.0
 
 ### Tighter tolerances + room-wide clock adjustment + extension status text

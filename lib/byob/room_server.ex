@@ -1416,6 +1416,13 @@ defmodule Byob.RoomServer do
           mean_ms = trunc(Enum.sum(active_drifts) / length(active_drifts))
 
           if abs(mean_ms) > @clock_adjust_min_drift_ms do
+            # Sign convention: drift = local − expected. If mean drift is
+            # negative (peers behind), expected is too HIGH — we want to
+            # *lower* current_pos. Adjustment carries mean's sign:
+            #   negative mean → negative adjustment → new_pos < current_pos
+            #   positive mean → positive adjustment → new_pos > current_pos
+            # The earlier `current_pos - adjustment / 1000` had the sign
+            # backwards and was making drift grow on every pass.
             adjustment_ms =
               (mean_ms * @clock_adjust_damping)
               |> trunc()
@@ -1423,7 +1430,7 @@ defmodule Byob.RoomServer do
               |> min(@clock_adjust_max_per_pass_ms)
 
             current_pos = current_position(state)
-            new_pos = max(0.0, current_pos - adjustment_ms / 1000)
+            new_pos = max(0.0, current_pos + adjustment_ms / 1000)
 
             unless current_media_is_live?(state) do
               broadcast(
