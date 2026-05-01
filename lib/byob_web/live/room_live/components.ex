@@ -370,13 +370,40 @@ defmodule ByobWeb.RoomLive.Components do
             data-byob-local-user-id={@user_id}
             class="mt-2 text-xs text-base-content/50 space-y-1 font-mono"
           >
+            <%!-- Pull this browser's effective tolerance / hard-seek threshold
+                 out of its own most-recent drift report. These reflect the
+                 *current* values in our Reconcile loop — including any
+                 hysteresis-driven growth (post-seek dead zone widens 50→500,
+                 mid-correction hard-seek widens 3000→4000) — so the values
+                 above match the band-diagram below. Defaults are the cold
+                 constants for the brief window before the first report
+                 lands. --%>
+            <% local_client =
+              @sync_stats
+              |> Map.get(:clients, %{})
+              |> Map.get("#{@user_id}:browser") || %{}
+
+            dead_zone = Map.get(local_client, :dead_zone_ms, 0)
+            hard_seek = Map.get(local_client, :hard_seek_ms, 0)
+            dead_zone = if dead_zone > 0, do: dead_zone, else: 50
+            hard_seek = if hard_seek > 0, do: hard_seek, else: 3000
+            dz_widened? = dead_zone > 50
+            hs_widened? = hard_seek > 3000 %>
             <div class="flex justify-between">
               <span>Correction interval</span>
               <span>{@sync_stats.correction_interval_ms}ms</span>
             </div>
             <div class="flex justify-between">
               <span>Drift tolerance</span>
-              <span>250ms</span>
+              <span class={if dz_widened?, do: "text-warning", else: ""}>
+                ±{dead_zone}ms{if dz_widened?, do: " (post-seek)", else: ""}
+              </span>
+            </div>
+            <div class="flex justify-between">
+              <span>Hard seek at</span>
+              <span class={if hs_widened?, do: "text-warning", else: ""}>
+                ±{hard_seek}ms{if hs_widened?, do: " (correcting)", else: ""}
+              </span>
             </div>
             <%!-- Local clock-sync chart: RTT + drift + offset over the last 60s.
                  Hook owns this element's contents; LV stays out of the way. --%>
@@ -532,7 +559,11 @@ defmodule ByobWeb.RoomLive.Components do
             <%!-- Glossary: collapsed by default. Explains what each metric in
                  the panel actually measures, plus the constants that govern
                  how aggressively we correct. --%>
-            <details class="mt-3 pt-2 border-t border-base-300/50">
+            <details
+              id="stats-glossary"
+              phx-hook="PreserveDetails"
+              class="mt-3 pt-2 border-t border-base-300/50"
+            >
               <summary class="text-base-content/40 cursor-pointer hover:text-base-content/60 select-none">
                 What do these mean?
               </summary>

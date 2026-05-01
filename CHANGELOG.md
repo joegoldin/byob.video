@@ -3,6 +3,34 @@
 
 ---
 
+# v6.5.49
+
+### Stats for nerds: tolerance / hard-seek track hysteresis, persist glossary
+
+Two follow-up tweaks on v6.5.48:
+
+**Drift tolerance / Hard seek now track the live values.** The
+top-of-panel "Drift tolerance" line was hardcoded to `250ms` —
+which was the UI warning threshold, not Reconcile's actual dead
+zone (`50ms`, widened to `500ms` for 5 s after a hard seek). It
+now reads the local browser's effective threshold from its own
+most-recent drift report and renders `±50ms` normally,
+`±500ms (post-seek)` highlighted when widened. A new "Hard seek
+at" row does the same: `±3000ms` normally, `±4000ms (correcting)`
+when rate-correction has nudged the threshold up. Same source of
+truth as the band-diagram below, so the numbers and the band
+widths now move together.
+
+**Glossary persists across re-opens.** The collapsed "What do
+these mean?" `<details>` was resetting to closed every time the
+settings modal re-opened. Added `id="stats-glossary"` and
+`phx-hook="PreserveDetails"` so its open state survives LV
+re-renders, matching the parent `Stats for nerds` panel.
+
+Server-only / no extension republish.
+
+---
+
 # v6.5.48
 
 ### Stats for nerds: correction bands diagram, glossary, |drift|, fix join-time hitch
