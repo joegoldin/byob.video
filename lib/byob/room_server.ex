@@ -65,6 +65,15 @@ defmodule Byob.RoomServer do
   @persist_interval_ms 5_000
   @rate_limit_reset_interval_ms 5_000
   @sync_broadcast_debounce_ms 500
+  # Window during which an inbound `:seek` from a user is treated as a
+  # player echo of a server-issued sync seek (and dropped silently).
+  # Must span the full L-observation cycle: ~1500 ms post-seek wait +
+  # the next drift-report tick (1000 ms cadence) + a buffer. Without
+  # this guard, the player's `seeked` callback fires EV_VIDEO_SEEK,
+  # which used to call `reset_user_sync_states` and clear
+  # `observation_pending` BEFORE the post-seek drift report could
+  # sample L — pinning learned_L at 0 forever.
+  @server_seek_echo_window_ms 2_500
 
   # Room-wide clock adjustment: minimize all peers' |drift| toward 0 by
   # shifting the canonical reference. Strategy depends on sign uniformity:
@@ -790,11 +799,23 @@ defmodule Byob.RoomServer do
     now = System.monotonic_time(:millisecond)
     last = Map.get(state.last_seek_at, user_id)
 
+    server_seek_recent? =
+      case Map.get(state.user_sync_states, user_id) do
+        %{last_seek_at: t} when t > 0 -> now - t < @server_seek_echo_window_ms
+        _ -> false
+      end
+
     cond do
       current_media_is_live?(state) ->
         # Live content (YT live, Twitch) — there's no meaningful
         # position to sync, and forcing other players to seek
         # would knock them off the live edge. Drop the seek.
+        {:reply, :ok, state}
+
+      server_seek_recent? ->
+        # Player echo of our own server-issued sync seek. Dropping
+        # this preserves the SyncDecision's `observation_pending`
+        # state long enough to sample residual drift and learn L.
         {:reply, :ok, state}
 
       last != nil and now - last < @sync_broadcast_debounce_ms ->

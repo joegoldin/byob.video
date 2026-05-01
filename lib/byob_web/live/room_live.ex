@@ -463,6 +463,7 @@ defmodule ByobWeb.RoomLive do
         rtt_ms: Map.get(data, :rtt_ms, 0),
         noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
         room_jitter_ms: room_jitter,
+        room_max_drift_ms: room_max_drift,
         tolerance_ms: Map.get(merged, :tolerance_ms, 0),
         seek_streak: Map.get(merged, :seek_streak, 0),
         cooldown_remaining_ms: Map.get(merged, :cooldown_remaining_ms, 0),
@@ -524,6 +525,7 @@ defmodule ByobWeb.RoomLive do
               rtt_ms: Map.get(merged, :rtt_ms, 0),
               noise_floor_ms: Map.get(merged, :noise_floor_ms, 0),
               room_jitter_ms: room_jitter_from_clients(clients),
+              room_max_drift_ms: room_max_drift_from_clients(clients),
               tolerance_ms: Map.get(merged, :tolerance_ms, 0),
               seek_streak: Map.get(merged, :seek_streak, 0),
               cooldown_remaining_ms: Map.get(merged, :cooldown_remaining_ms, 0),
@@ -651,6 +653,18 @@ defmodule ByobWeb.RoomLive do
     clients
     |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
     |> Enum.map(fn {_, c} -> Map.get(c, :noise_floor_ms, 0) end)
+    |> case do
+      [] -> 0
+      list -> Enum.max(list)
+    end
+  end
+
+  defp room_max_drift_from_clients(clients) do
+    now_s = System.system_time(:second)
+
+    clients
+    |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
+    |> Enum.map(fn {_, c} -> abs(Map.get(c, :drift_ms, 0)) end)
     |> case do
       [] -> 0
       list -> Enum.max(list)

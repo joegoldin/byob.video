@@ -3,6 +3,42 @@
 
 ---
 
+# v6.8.13
+
+### Fix `learned_L` stuck at 0; room-max end labels on bands diagram
+
+**Root cause of `learned_L = 0` on every client.** When SyncDecision
+issued a sync seek, the player executed `seekTo()` and then echoed
+an `EV_VIDEO_SEEK` back to the server (HTML5 `seeked` callback for
+direct video; position-jump detector once `Suppression` cleared at
+~400 ms post-state-settle for YouTube). The echo flowed through
+`RoomServer.handle_call({:seek, …})` → `reset_user_sync_states/1`,
+which cleared `observation_pending = false` and `last_seek_at = 0`
+**before** the next drift report at t≈2 s could sample residual
+drift. Result: `last_overshoot_ms − drift_after = 0 − 0` was never
+measured; `learned_l_ms` stayed at 0; every seek issued with
+`overshoot = 0`; the cycle was self-perpetuating.
+
+Fix: in `room_server.ex`, the `:seek` handler now drops echoes
+within `@server_seek_echo_window_ms` (2500 ms — covers the 1500 ms
+post-seek wait + 1000 ms drift-report cadence + a small buffer)
+of the user's last server-issued seek. Real user seeks pass
+through normally outside that window. The 500 ms debounce stays
+in place for back-to-back user scrubs.
+
+**Bands-diagram ends now show room-max drift.** The diagram used
+to scale to a fixed `±2×tolerance`, so the bar-ends were arbitrary
+when peers genuinely drifted further. Scale is now
+`max(2×tolerance, room_max_drift, |local drift|)` and the ends
+carry `±displayMax` labels (de-collided via `renderRepulsedLabels`).
+When the room is calm the ends still show `±2×tolerance`; when a
+peer is far off, the scale stretches and the end labels reflect
+the actual worst-peer drift in real time. Server pushes
+`room_max_drift_ms` through both `sync:client_stats` push paths
+(initial drift report + `:user_decision_state` follow-up).
+
+---
+
 # v6.8.12
 
 ### Aggressive room-clock convergence + cooldown ceiling guarantee

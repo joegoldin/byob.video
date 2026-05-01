@@ -254,8 +254,12 @@ function renderDriftBands(host, data) {
   const cooldownRemaining = data.cooldown_remaining_ms || 0;
   const seekStreak = data.seek_streak || 0;
 
-  // Linear ms → % mapping over [-displayMax, +displayMax].
-  const displayMax = tolerance * 2;
+  // Linear ms → % mapping over [-displayMax, +displayMax]. The scale
+  // floor is 2× tolerance so the seek bands always have visible width;
+  // we expand to the worst peer drift in the room when that exceeds
+  // 2× tolerance, so the bar-ends always represent something real.
+  const roomMaxDrift = Math.max(0, data.room_max_drift_ms || 0);
+  const displayMax = Math.max(tolerance * 2, roomMaxDrift, Math.abs(drift));
   const xFor = (ms) => {
     const clamped = Math.max(-displayMax, Math.min(displayMax, ms));
     return 50 + (clamped / displayMax) * 50;
@@ -269,8 +273,8 @@ function renderDriftBands(host, data) {
 
   const xJitterL = xFor(-jitterBand);
   const xJitterR = xFor(jitterBand);
-  const xToleranceL = xFor(-tolerance); // = 25
-  const xToleranceR = xFor(tolerance);  // = 75
+  const xToleranceL = xFor(-tolerance);
+  const xToleranceR = xFor(tolerance);
 
   const band = (x1, x2, color, isActive) => {
     const w = Math.max(0, x2 - x1);
@@ -342,14 +346,17 @@ function renderDriftBands(host, data) {
     // ±jitter labels would render right on top of the "0". Push them
     // outward from center until each pair is at least `minGap` apart.
     // The "0" stays anchored at 50%; ±tolerance gets pushed further out
-    // if ±jitter would otherwise crowd it.
+    // if ±jitter would otherwise crowd it. The bar ends are labeled with
+    // the scale max — usually the worst peer drift in the room.
     renderRepulsedLabels(
       [
+        { x: 0, text: `−${Math.round(displayMax)}`, color: "rgba(255,255,255,0.55)" },
         { x: xToleranceL, text: `−${tolerance}` },
         { x: xJitterL, text: `−${jitterBand}` },
         { x: 50, text: "0", color: "rgba(255,255,255,0.4)" },
         { x: xJitterR, text: `+${jitterBand}` },
         { x: xToleranceR, text: `+${tolerance}` },
+        { x: 100, text: `+${Math.round(displayMax)}`, color: "rgba(255,255,255,0.55)" },
       ],
       8 // minGap %
     ) +
