@@ -207,10 +207,13 @@ function scalePositive(values, w, h) {
 function renderDriftBands(host, data) {
   const drift = data.drift_ms || 0;
   const tolerance = Math.max(1, data.tolerance_ms || 100);
-  const noise = Math.max(1, data.noise_floor_ms || 0);
-  // jitterBand is the "in sync" zone — capped at tolerance so green never
-  // exceeds yellow even on a very noisy link.
-  const jitterBand = Math.min(noise, tolerance);
+  // The green "in sync" band sizes to ROOM jitter consensus, not local
+  // jitter — that's the value driving the tolerance and what "in sync"
+  // actually means relative to the whole room's calibration. Falls back
+  // to local noise floor (single-user rooms) and never exceeds tolerance.
+  const roomJitter = Math.max(0, data.room_jitter_ms || 0);
+  const localJitter = Math.max(0, data.noise_floor_ms || 0);
+  const jitterBand = Math.max(1, Math.min(Math.max(roomJitter, localJitter), tolerance));
   const cooldownRemaining = data.cooldown_remaining_ms || 0;
   const seekStreak = data.seek_streak || 0;
 
@@ -295,7 +298,7 @@ function renderDriftBands(host, data) {
     `<span style="display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:9999px;background:${stateColor}33;border:1px solid ${stateColor}66;color:${stateColor};font-size:10px;font-weight:600">` +
     `<span style="width:6px;height:6px;border-radius:50%;background:${stateColor}"></span>${stateLabel}` +
     `</span>` +
-    `<span style="font-size:10px;opacity:0.6;font-family:monospace">drift ${drift > 0 ? "+" : ""}${drift}ms · jitter ~${noise}ms${statusBits.length ? " · " + statusBits.join(" · ") : ""}</span>` +
+    `<span style="font-size:10px;opacity:0.6;font-family:monospace">drift ${drift > 0 ? "+" : ""}${drift}ms · room jitter ~${roomJitter}ms${statusBits.length ? " · " + statusBits.join(" · ") : ""}</span>` +
     `</div>` +
     `<svg width="100%" height="34" viewBox="0 0 100 34" preserveAspectRatio="none" style="display:block;border-radius:4px;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06)">` +
     segs +

@@ -209,6 +209,14 @@ defmodule Byob.SyncDecision do
         observation_pending: true
     }
 
+    require Logger
+
+    Logger.info(
+      "[sync_decision] seek drift=#{drift_ms}ms target=#{Float.round(target_position * 1.0, 2)} " <>
+        "overshoot=#{Float.round(overshoot_ms * 1.0, 1)}ms streak=#{new_state.seek_streak} " <>
+        "learned_L=#{Float.round(state.learned_l_ms * 1.0, 1)}ms"
+    )
+
     {:seek, %{position: target_position, server_time: now_ms}, new_state}
   end
 

@@ -3,6 +3,29 @@
 
 ---
 
+# v6.8.2
+
+### Bands diagram tracks room jitter; SyncDecision logging
+
+**Green "in sync" band now sized by room jitter consensus**, not
+local noise floor. That's the value actually driving tolerance —
+the band visually communicates "everyone in the room is within
+this much of each other on average". Falls back to local noise
+floor for single-user rooms; clamped at tolerance so green never
+overflows yellow. Status chip mini-text updated from
+`jitter ~Xms` to `room jitter ~Xms`.
+
+**Server-side seek decision logging.** `Byob.SyncDecision` now
+emits a Logger.info entry every time it issues a seek:
+`[sync_decision] seek drift=X target=Y overshoot=Z streak=N
+learned_L=Lms`. So `fly logs | grep sync_decision` shows the
+full decision flow per peer — useful for diagnosing "why isn't
+this client seeking" questions.
+
+Server-only / no extension republish.
+
+---
+
 # v6.8.1
 
 ### Hotfix: clock-adjustment sign bug

@@ -486,6 +486,7 @@ defmodule ByobWeb.RoomLive do
         offset_ms: Map.get(data, :offset_ms, 0),
         rtt_ms: Map.get(data, :rtt_ms, 0),
         noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
+        room_jitter_ms: room_jitter,
         tolerance_ms: tolerance_ms,
         seek_streak: seek_streak,
         cooldown_remaining_ms: cooldown_remaining_ms,
