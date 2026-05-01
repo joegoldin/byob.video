@@ -3,6 +3,46 @@
 
 ---
 
+# v6.5.52
+
+### Drift tolerance honors room-wide drift spread, not just jitter
+
+v6.5.51's room consensus only looked at **jitter** (tick-to-tick
+`|Δdrift|`). A peer 600 ms behind with a steady signal has tiny
+jitter — so the consensus stayed tight, drift tolerance stayed at
+the 250 ms floor, and the calm peer kept rate-correcting against
+the slow peer's offset. Wrong signal.
+
+**Two-signal consensus.** Server now publishes both
+`room_jitter_ms` (max peer jitter EMA) and `room_max_drift_ms`
+(max peer `|drift|`). Reconcile takes
+`max(K_jitter × jitter, K_drift × maxDrift)` as the input to the
+adaptive dead zone — so the band widens for either kind of
+spread. K factors differ because the inputs aren't the same:
+- `K_jitter = 4` — many sigmas of headroom over noise
+- `K_drift  = 1.5` — just enough margin to clear the worst peer's
+  sustained offset
+Same idea for hard-seek (`K_hard_jitter = 30`, `K_hard_drift = 5`).
+
+**Panel updates.**
+- New "Room max |drift|" row, amber when > 250 ms.
+- "Drift tolerance" now annotates the driver: `(local jitter)`,
+  `(peer jitter)`, `(peer drift)`, `(floor)`, or `(ceiling)` —
+  amber when a peer is setting the bar. Same updating-status
+  treatment as the jitter rows.
+- New "Jitter" row inside each connected-client card so you can
+  see per-peer noise alongside their drift / RTT / offset.
+- "Server position" was being shown per-peer with values 0.3–1 s
+  apart — looked like an NTP bug, was actually report-arrival
+  timing (each peer's report processed at a slightly different
+  server moment). Moved to a single canonical row at the top of
+  the Connected clients section, extrapolated forward from the
+  freshest peer report. Per-peer rows lose the misleading column.
+
+Server-only / no extension republish.
+
+---
+
 # v6.5.51
 
 ### Room-wide jitter consensus, offset bootstrap fix, scroll-stable glossary

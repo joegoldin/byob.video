@@ -425,26 +425,35 @@ defmodule ByobWeb.RoomLive do
         play_state: data.play_state
       })
 
-    # Room-wide tolerance consensus: the noisiest non-stale peer sets the
-    # bar. Every client computes its own consensus from its own clients map
-    # — they all see the same broadcasts, so they converge on the same
-    # value. Pushed to JS via push_event so Reconcile can use it as the
-    # *floor* for its own jitter EMA, stopping calm peers from rate-
-    # correcting against a jittery peer's noise.
+    # Room-wide tolerance consensus, two signals:
+    #   room_jitter      = max peer noise_floor (tick-to-tick jitter EMA)
+    #   room_max_drift   = max peer |drift| — captures *sustained* offset
+    #                      (a peer steadily 600 ms behind has tiny jitter
+    #                      but a real spread we shouldn't rate-correct
+    #                      against)
+    # Pushed every drift report; reconcile uses both with different K
+    # factors so tolerance scales appropriately for each.
     now_s = System.system_time(:second)
 
-    room_jitter =
+    active =
       clients
       |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
-      |> Enum.map(fn {_, c} -> Map.get(c, :noise_floor_ms, 0) end)
-      |> case do
-        [] -> 0
-        list -> Enum.max(list)
+
+    {room_jitter, room_max_drift} =
+      case active do
+        [] ->
+          {0, 0}
+
+        list ->
+          jitters = Enum.map(list, fn {_, c} -> Map.get(c, :noise_floor_ms, 0) end)
+          drifts = Enum.map(list, fn {_, c} -> abs(Map.get(c, :drift_ms, 0)) end)
+          {Enum.max(jitters), Enum.max(drifts)}
       end
 
     socket =
       Phoenix.LiveView.push_event(socket, Events.sync_room_tolerance(), %{
-        room_jitter_ms: room_jitter
+        room_jitter_ms: room_jitter,
+        room_max_drift_ms: room_max_drift
       })
 
     {:noreply, assign(socket, :sync_stats, sync_stats)}

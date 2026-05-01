@@ -390,18 +390,42 @@ defmodule ByobWeb.RoomLive.Components do
             dead_zone = if dead_zone > 0, do: dead_zone, else: 250
             hard_seek = if hard_seek > 0, do: hard_seek, else: 3000
 
-            # Room consensus: max non-stale peer jitter. The "room is as
-            # calm as its noisiest peer" — calm peers tolerate the worst
-            # client's noise instead of trying to rate-correct against it.
+            # Room consensus: max non-stale peer jitter AND max non-stale
+            # peer |drift|. Two signals — jitter captures noise, drift
+            # captures sustained spread (a peer steadily 600 ms behind has
+            # tiny jitter but a real offset to tolerate).
             now_s = System.system_time(:second)
 
-            room_jitter =
+            active_for_consensus =
               (@sync_stats[:clients] || %{})
               |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
-              |> Enum.map(fn {_, c} -> Map.get(c, :noise_floor_ms, 0) end)
-              |> case do
-                [] -> 0
-                list -> Enum.max(list)
+
+            {room_jitter, room_max_drift} =
+              case active_for_consensus do
+                [] ->
+                  {0, 0}
+
+                list ->
+                  {
+                    list |> Enum.map(fn {_, c} -> Map.get(c, :noise_floor_ms, 0) end) |> Enum.max(),
+                    list |> Enum.map(fn {_, c} -> abs(Map.get(c, :drift_ms, 0)) end) |> Enum.max()
+                  }
+              end
+
+            # Annotate which input is *driving* the current tolerance, so
+            # users can see at a glance whether they're tracking a noisy
+            # peer's jitter or a slow peer's offset. K factors must match
+            # reconcile.js (NOISE_K_DEAD=4, DRIFT_K_DEAD=1.5).
+            tol_from_jitter = 4 * max(noise_floor, room_jitter)
+            tol_from_drift = trunc(1.5 * room_max_drift)
+
+            tolerance_driver =
+              cond do
+                dead_zone <= 250 -> "floor"
+                dead_zone >= 1500 -> "ceiling"
+                tol_from_drift > tol_from_jitter and room_max_drift > 0 -> "peer drift"
+                room_jitter > noise_floor -> "peer jitter"
+                true -> "local jitter"
               end %>
             <div class="flex justify-between">
               <span>Correction interval</span>
@@ -419,14 +443,29 @@ defmodule ByobWeb.RoomLive.Components do
                 {room_jitter}ms{if room_jitter > noise_floor, do: " (peer)", else: ""}
               </span>
             </div>
-            <%!-- Drift tolerance and hard-seek are derived from the *room*
-                 consensus jitter (with floors / ceilings + post-seek and
-                 rate-correcting bumps). Wider room jitter → wider local
-                 tolerance, so calm peers don't fight a noisy peer's
-                 signal. --%>
+            <div class="flex justify-between">
+              <span>Room max |drift|</span>
+              <span class={
+                if room_max_drift > 250, do: "text-warning", else: "text-base-content/40"
+              }>
+                {room_max_drift}ms
+              </span>
+            </div>
+            <%!-- Drift tolerance and hard-seek scale with the larger of
+                 (K_jitter × jitter, K_drift × max-drift) — so noisy AND
+                 spread-out rooms both get wider tolerance. The "(driven by
+                 X)" annotation matches the style of the room jitter row's
+                 "(peer)" tag. --%>
             <div class="flex justify-between">
               <span>Drift tolerance</span>
-              <span class="text-base-content/70">±{dead_zone}ms</span>
+              <span class={
+                cond do
+                  tolerance_driver in ["peer drift", "peer jitter"] -> "text-warning"
+                  true -> "text-base-content/70"
+                end
+              }>
+                ±{dead_zone}ms ({tolerance_driver})
+              </span>
             </div>
             <div class="flex justify-between">
               <span>Hard seek at</span>
@@ -490,6 +529,25 @@ defmodule ByobWeb.RoomLive.Components do
                 }>
                   {avg}ms / {mn}ms / {mx}ms
                 </span>
+              </div>
+            <% end %>
+            <%!-- Single canonical "Server position": extrapolate the freshest
+                 peer report forward to render time. Per-peer server_pos
+                 values were 0.3-1 s apart in the panel because each report
+                 was processed at a slightly different server moment — that
+                 lag is real but looked like a sync bug. One value at the
+                 top is honest. --%>
+            <%= if map_size(active_clients) > 0 do %>
+              <% latest_client = active_clients |> Map.values() |> Enum.max_by(& &1.updated_at, fn -> %{} end)
+                 latest_pos = Map.get(latest_client, :server_position, 0.0)
+                 elapsed_since = max(0, System.system_time(:second) - Map.get(latest_client, :updated_at, 0))
+                 server_pos_now =
+                   if @play_state == :playing,
+                     do: Float.round(latest_pos + elapsed_since * 1.0, 1),
+                     else: latest_pos %>
+              <div class="flex justify-between mt-2 pt-2 border-t border-base-300/50">
+                <span>Server position</span>
+                <span class="text-base-content/70">{server_pos_now}s</span>
               </div>
             <% end %>
             <%= if connected_users != [] do %>
@@ -565,10 +623,19 @@ defmodule ByobWeb.RoomLive.Components do
                             <span class="text-base-content/40">{info.rtt_ms}ms</span>
                           </div>
                         <% end %>
-                        <div class="flex justify-between">
-                          <span>Server pos</span>
-                          <span>{info.server_position}s</span>
-                        </div>
+                        <%= if Map.get(info, :noise_floor_ms, 0) > 0 do %>
+                          <div class="flex justify-between">
+                            <span>Jitter</span>
+                            <span class={
+                              cond do
+                                info.noise_floor_ms > 200 -> "text-warning"
+                                true -> "text-base-content/40"
+                              end
+                            }>
+                              {info.noise_floor_ms}ms
+                            </span>
+                          </div>
+                        <% end %>
                         <div class="flex justify-between">
                           <span>State</span>
                           <span class={

@@ -43,6 +43,11 @@ const HISTORY_SIZE = 5;
 const NOISE_EMA_ALPHA = 0.1;          // ~10-sample (1 s) horizon
 const NOISE_K_DEAD = 4;               // ~99 % CI of normal-distributed noise
 const NOISE_K_HARD = 30;              // ≫ noise → real desync, not jitter
+// Drift K factors are smaller than jitter K because drift is a *signal*,
+// not noise — we don't need many sigmas of headroom, we just need enough
+// margin to clear the worst peer's sustained offset without correcting.
+const DRIFT_K_DEAD = 1.5;             // tolerance = 1.5 × max-peer-drift
+const DRIFT_K_HARD = 5;                // hard-seek = 5 × max-peer-drift
 const MIN_DEAD_ZONE_MS = 250;         // floor matches UI's "in tolerance" green threshold
 const MAX_DEAD_ZONE_MS = 1500;        // ceiling — peers shouldn't drift > 1.5 s
 const MIN_HARD_SEEK_MS = 3000;        // never snap on < 3 s drift
@@ -82,11 +87,14 @@ export class Reconcile {
     // and hard-seek threshold.
     this.noiseFloorEmaMs = 0;
     this.noiseSamples = 0;
-    // Room-wide jitter consensus from the server (max of all peers'
-    // noiseFloor over the last 5 s). Used as a floor on this client's
-    // own jitter so calm peers don't rate-correct against a noisy peer's
-    // signal. Set externally via setRoomJitter().
+    // Room-wide consensus from the server. Two signals:
+    //   roomJitterMs    = max peer jitter EMA (noise floor)
+    //   roomMaxDriftMs  = max peer |drift|   (sustained offset)
+    // Reconcile uses both with different K factors so the effective
+    // dead zone widens whenever EITHER consensus is high — calm peers
+    // tolerate the worst peer's noise AND the worst peer's offset.
     this.roomJitterMs = 0;
+    this.roomMaxDriftMs = 0;
     this.lastDriftMs = 0;   // most recent adjusted drift (for UI reporting)
     this.lastRawDriftMs = 0;
     // Latest effective thresholds (cached so getEffectiveThresholds is cheap).
@@ -121,12 +129,13 @@ export class Reconcile {
     this.offsetSamples = 0;
   }
 
-  // Apply the room-wide jitter consensus. Reconcile uses
-  // `max(localJitter, roomJitter)` as the input to its adaptive thresholds,
-  // so calm peers tolerate the room's noisiest signal. 0 falls back to
-  // local-only behavior.
-  setRoomJitter(ms) {
-    this.roomJitterMs = Math.max(0, ms || 0);
+  // Apply the room-wide consensus values. `jitter` is max peer noise
+  // floor; `maxDrift` is max peer |drift|. They drive separate inputs to
+  // the adaptive thresholds (with different K factors). 0 falls back to
+  // local-only behavior on either dimension.
+  setRoomTolerance({ jitter = 0, maxDrift = 0 } = {}) {
+    this.roomJitterMs = Math.max(0, jitter || 0);
+    this.roomMaxDriftMs = Math.max(0, maxDrift || 0);
   }
 
   // The thresholds the most recent tick actually applied. Both the dead
@@ -141,6 +150,7 @@ export class Reconcile {
       hardSeekMs: this._effectiveHardSeekMs,
       noiseFloorMs: this.noiseFloorEmaMs,
       roomJitterMs: this.roomJitterMs,
+      roomMaxDriftMs: this.roomMaxDriftMs,
       isRateCorrecting: this.isRateCorrecting,
       postSeek,
     };
@@ -170,6 +180,7 @@ export class Reconcile {
     this.noiseFloorEmaMs = 0;
     this.noiseSamples = 0;
     this.roomJitterMs = 0;
+    this.roomMaxDriftMs = 0;
     this._effectiveDeadZoneMs = MIN_DEAD_ZONE_MS;
     this._effectiveHardSeekMs = MIN_HARD_SEEK_MS;
     try {
@@ -239,18 +250,28 @@ export class Reconcile {
     }
     this.noiseSamples++;
 
-    // Effective thresholds: scale with the larger of this client's own
-    // jitter and the room consensus (so calm peers don't rate-correct
-    // against a jittery peer's noise). Clamped, then widened by event-
-    // driven hysteresis (post-seek, mid-correction).
+    // Effective thresholds: take the max of two scaled inputs so the band
+    // grows whenever EITHER signal is large.
+    //   jitter input:  K_jitter × max(local jitter, room jitter)
+    //                  — needs many sigmas of headroom over noise
+    //   drift input:   K_drift  × room max |drift|
+    //                  — only needs enough margin to clear the worst peer's
+    //                    sustained offset; not noise, so smaller K
+    // Then clamped, then widened by event-driven hysteresis.
     const effectiveJitterMs = Math.max(this.noiseFloorEmaMs, this.roomJitterMs);
     const adaptiveDeadZone = clamp(
-      NOISE_K_DEAD * effectiveJitterMs,
+      Math.max(
+        NOISE_K_DEAD * effectiveJitterMs,
+        DRIFT_K_DEAD * this.roomMaxDriftMs
+      ),
       MIN_DEAD_ZONE_MS,
       MAX_DEAD_ZONE_MS
     );
     const adaptiveHardSeek = clamp(
-      NOISE_K_HARD * effectiveJitterMs,
+      Math.max(
+        NOISE_K_HARD * effectiveJitterMs,
+        DRIFT_K_HARD * this.roomMaxDriftMs
+      ),
       MIN_HARD_SEEK_MS,
       MAX_HARD_SEEK_MS
     );
