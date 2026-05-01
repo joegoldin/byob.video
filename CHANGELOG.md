@@ -3,6 +3,34 @@
 
 ---
 
+# v6.8.11
+
+### Stop the 1 Hz panel flicker
+
+The "Seek cooldown" row (and the bands diagram) was disappearing
+and reappearing on every drift report — exactly 1 Hz cadence. The
+cause was a two-step update for the same row:
+
+1. `:sync_client_stats` arrived → handler reset `seek_streak: 0`
+   for the entry (along with `tolerance_ms`, `cooldown_remaining_ms`,
+   `learned_l_ms`).
+2. Re-render → conditional row `<%= if seek_streak > 0 do %>` hides.
+3. `:user_decision_state` arrived ~ms later → set `seek_streak: 1`.
+4. Re-render → conditional row reappears.
+
+LV processes messages serially with a re-render after each, so the
+brief 0-state was visible to the user as a flicker.
+
+Fix: in `:sync_client_stats`, *carry forward* the decision-state
+fields from the previous clients-map entry instead of resetting
+to 0. Only `:user_decision_state` updates them. Same change for the
+JS push payload so the bands diagram doesn't bounce between
+fallback-tolerance (300) and the actual server value either.
+
+Server-only / no extension republish.
+
+---
+
 # v6.8.10
 
 ### Reset SyncDecision on video change + user seek; mark seeks on sparklines

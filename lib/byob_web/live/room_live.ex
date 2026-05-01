@@ -388,6 +388,15 @@ defmodule ByobWeb.RoomLive do
     clients = Map.get(socket.assigns.sync_stats, :clients, %{})
     key = "#{data.user_id}:#{data.tab_id}"
 
+    # Preserve any existing decision-state fields (tolerance_ms,
+    # seek_streak, cooldown_remaining_ms, learned_l_ms). Those arrive
+    # via the separate `:user_decision_state` broadcast — if we wrote
+    # 0/empty here, the panel would flicker on every drift report
+    # because the conditional "Seek cooldown" row would disappear and
+    # reappear between this :sync_client_stats and the next
+    # :user_decision_state.
+    prev = Map.get(clients, key, %{})
+
     clients =
       Map.put(clients, key, %{
         drift_ms: data.drift_ms,
@@ -398,7 +407,12 @@ defmodule ByobWeb.RoomLive do
         username: Map.get(data, :username),
         server_position: data.server_position,
         play_state: data.play_state,
-        updated_at: System.system_time(:second)
+        updated_at: System.system_time(:second),
+        # Carry forward decision-state fields from the previous entry.
+        tolerance_ms: Map.get(prev, :tolerance_ms, 0),
+        seek_streak: Map.get(prev, :seek_streak, 0),
+        cooldown_remaining_ms: Map.get(prev, :cooldown_remaining_ms, 0),
+        learned_l_ms: Map.get(prev, :learned_l_ms, 0)
       })
 
     sync_stats = Map.put(socket.assigns.sync_stats, :clients, clients)
@@ -433,16 +447,12 @@ defmodule ByobWeb.RoomLive do
     # arrive via `:user_decision_state` broadcasts handled below; they
     # update the clients map entry for that user.
 
-    # `tolerance_ms` etc. are not in `data` for non-room-server flows
-    # (e.g. legacy extension state-only drift). For brand-new client
-    # entries, default to 0 here; they'll be overwritten by the next
-    # :user_decision_state broadcast (~1 s).
-    tolerance_ms = Map.get(data, :tolerance_ms, 0)
-    seek_streak = Map.get(data, :seek_streak, 0)
-    cooldown_remaining_ms = Map.get(data, :cooldown_remaining_ms, 0)
-    learned_l_ms = Map.get(data, :learned_l_ms, 0)
-
     sync_stats = Map.put(sync_stats, :clients, clients)
+
+    # Use the carried-forward decision-state values for the JS push too,
+    # so the bands diagram doesn't flicker between the broadcast and the
+    # follow-up :user_decision_state (1 Hz cycle was very visible).
+    merged = Map.get(clients, key, %{})
 
     socket =
       Phoenix.LiveView.push_event(socket, Events.sync_client_stats(), %{
@@ -453,10 +463,10 @@ defmodule ByobWeb.RoomLive do
         rtt_ms: Map.get(data, :rtt_ms, 0),
         noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
         room_jitter_ms: room_jitter,
-        tolerance_ms: tolerance_ms,
-        seek_streak: seek_streak,
-        cooldown_remaining_ms: cooldown_remaining_ms,
-        learned_l_ms: learned_l_ms,
+        tolerance_ms: Map.get(merged, :tolerance_ms, 0),
+        seek_streak: Map.get(merged, :seek_streak, 0),
+        cooldown_remaining_ms: Map.get(merged, :cooldown_remaining_ms, 0),
+        learned_l_ms: Map.get(merged, :learned_l_ms, 0),
         play_state: data.play_state
       })
 
