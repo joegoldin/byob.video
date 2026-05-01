@@ -52,6 +52,11 @@ const VideoPlayer = {
     this.seekDetectorInterval = null;
     this.stateCheckInterval = null;
     this.expectedPlayState = null; // "playing" or "paused"
+    // Throttle for the bottom-right "Re-syncing…" pill while paused —
+    // shown once per pause session, then suppressed so cascading
+    // sync seeks don't produce a flickering repeat. Reset on each
+    // transition (in either direction) involving the paused state.
+    this._pausedSyncPillShown = false;
     // Seek-latency measurement. _seekIssuedAt is set the moment a sync
     // seek command is dispatched to the player; _lastObservedL captures
     // the time-to-PLAYING delta and is reported in the next drift
@@ -711,6 +716,10 @@ const VideoPlayer = {
 
   _onSyncPlay(data) {
     this.expectedPlayState = "playing";
+    // Resuming from pause — clear the per-pause-session pill throttle
+    // so the next time we land in paused, the FIRST sync command
+    // there can pop the pill once again.
+    this._pausedSyncPillShown = false;
     // Remove any of our own overlays — host is taking us out of the
     // paused "waiting to join" state, or we're already playing and this
     // is a redundant broadcast.
@@ -764,6 +773,12 @@ const VideoPlayer = {
 
   _onSyncPause(data) {
     this.expectedPlayState = "paused";
+    // Pause supersedes any in-flight syncing pill — there's nothing
+    // to "be in sync" with while paused. Reset the per-pause-session
+    // throttle so the FIRST sync command in this new paused session
+    // can still pop the pill once.
+    this._hideSyncingOverlayNow?.();
+    this._pausedSyncPillShown = false;
     if (data.user_id === this.userId) return;
     this.suppression.suppress("paused");
     // Don't seekTo here — it causes YouTube to fire double PAUSED events,
@@ -1421,6 +1436,10 @@ const VideoPlayer = {
     // Never obscure a video that's actually playing locally.
     if (this._isLocallyPlaying()) return;
 
+    // The "Click to join" overlay supersedes any in-flight "Re-syncing…"
+    // pill — playback is paused waiting on the user, so the syncing
+    // status is misleading. Bypass the deferred-hide grace.
+    this._hideSyncingOverlayNow?.();
     const overlay = document.createElement("div");
     overlay.className = "byob-join-ready";
     // Background layer: video thumbnail (so the user sees the video even
@@ -1475,6 +1494,10 @@ const VideoPlayer = {
 
     // Remove any existing overlay
     this.el.querySelector(".byob-click-to-play")?.remove();
+
+    // Click-to-play means playback is gated on the user — the
+    // "Re-syncing…" pill would be misleading next to the gated state.
+    this._hideSyncingOverlayNow?.();
 
     const overlay = document.createElement("div");
     overlay.className = "byob-click-to-play";
@@ -1582,6 +1605,19 @@ const VideoPlayer = {
   _showSyncingOverlay(text = "Syncing…") {
     if (this.el.querySelector(".byob-click-to-play")) return;
     if (this.el.querySelector(".byob-join-ready")) return;
+    // While paused, show the pill ONCE per pause session (first sync
+    // command after the pause), then suppress subsequent shows so we
+    // don't get a flicker of repeating Re-syncing… pills as the
+    // server's per-peer commands cascade across paused clients. The
+    // flag is reset whenever play_state transitions through pause→
+    // play→pause, so each fresh paused session gets one pill.
+    const isPaused =
+      this.expectedPlayState === "paused" ||
+      this.player?.getState?.() === "paused";
+    if (isPaused) {
+      if (this._pausedSyncPillShown) return;
+      this._pausedSyncPillShown = true;
+    }
 
     // Stamp the moment of this show — the deferred hide uses this to
     // keep the overlay visible for at least SYNCING_MIN_LIFETIME_MS
@@ -1707,11 +1743,25 @@ const VideoPlayer = {
     const observedL = this._lastObservedL;
     this._lastObservedL = 0;
     this._seekIssuedAt = 0;
+
+    // While paused the player position is frozen, but our expected
+    // position calc (`serverPosition + wall-clock elapsed`) keeps
+    // advancing — producing a sawtooth that ramps ever more
+    // negative until the server fires a (pointless) sync seek to
+    // "fix" it, which only resets the sawtooth and starts the cycle
+    // over. Pin reported drift to 0 while paused so neither the
+    // server's SyncDecision nor the panel sees fake drift.
+    const isPaused =
+      this.expectedPlayState === "paused" || state === "paused";
+
     // Always recompute drift from the current player position. The
     // reconcile loop's `lastDriftMs` only refreshes every 100 ms, so
     // an out-of-cadence post-seek report could otherwise ship the
     // PRE-seek value and trigger a spurious SyncDecision cascade.
-    const driftMs = this.reconcile.measureDriftMs?.() ?? this.reconcile.lastDriftMs ?? 0;
+    const driftMs = isPaused
+      ? 0
+      : (this.reconcile.measureDriftMs?.() ?? this.reconcile.lastDriftMs ?? 0);
+
     this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
       drift_ms: Math.round(driftMs),
       offset_ms: 0, // legacy passthrough (extension still computes one)

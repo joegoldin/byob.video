@@ -3,6 +3,44 @@
 
 ---
 
+# v6.8.23
+
+### Stop the paused-drift sawtooth (and assorted pill cleanup)
+
+**Browser was reporting fake drift while paused.** Local position is
+frozen but `expectedPosition = serverPosition + (now − serverTime)/1000`
+keeps advancing with wall-clock, producing a sawtooth that ramps
+ever more negative until the server fires a sync seek to "fix" it
+— which only resets the sawtooth and starts the cycle over.
+Result: cascading sync seeks across paused rooms, with peer drifts
+visible as -2000, -2500, -3000 ms etc.
+
+Fix: `_pushDriftReport()` now pins reported drift to `0` whenever
+`expectedPlayState === "paused"` or the player's actual state is
+`paused`. SyncDecision sees `|0| < tolerance` → `no_seek`. No
+cascade. Panel shows true `0` for paused peers.
+
+Extension was already gated on `serverRef.playState === PLAYING` so
+this only affected the browser path.
+
+### Bonus pill cleanup
+
+- **Pill no longer appears while a press-to-play overlay is up.**
+  `_maybeShowReadyOverlay` ("Click to join the room") and
+  `_showClickToPlay` (autoplay-blocked retry) now bypass the
+  deferred-hide grace and remove any in-flight pill. Playback is
+  user-gated in those states; "Re-syncing…" is misleading next to
+  them.
+- **Pill shows once per pause session, then suppresses.** New
+  `_pausedSyncPillShown` flag throttles the bottom-right pill while
+  paused: the first sync command in a paused session pops it (so
+  the user knows something happened), subsequent ones suppress so
+  cascading sync commands across paused peers don't produce a
+  flickering repeat. Reset on each `_onSyncPause` / `_onSyncPlay`
+  transition so each fresh paused session gets one pill.
+
+---
+
 # v6.8.22
 
 ### Peer-drift legend lays out one row per peer
