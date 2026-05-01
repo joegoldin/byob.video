@@ -3,6 +3,60 @@
 
 ---
 
+# v6.7.0
+
+### Server-authoritative sync with adaptive seek-latency learning
+
+Major refactor: the seek decision moves from the browser to the
+server. Each user's LV owns a `Byob.SyncDecision` state machine in
+its assigns. The browser is now a *measurement reporter*: it sends
+drift / jitter / rtt at 1 Hz; the server computes tolerance, checks
+sustained drift, applies cooldown, and issues a `sync:seek_command`
+event with a pre-computed target. The browser executes it.
+
+**Why this shape.** Removes the duplicated reconcile logic across
+browser and (eventually) extension. Server has the room's full
+picture; better positioned to decide consistently. Decision logic
+in Elixir is testable in a way browser code never quite is.
+
+**Adaptive seek-latency (L) learning.** v6.6.2 tried a static
+`seek_target = expected − drift` overshoot, which oscillated
+because drift ≠ L. The server-driven model fixes this: after each
+seek, the next drift report tells us the residual `L = overshoot −
+drift_after`. Server tracks an EMA of L per user. Subsequent seek
+commands use `target = expected_now + (rtt_ms / 2 + learned_L) /
+1000` — overshoot exactly compensates for the round-trip + the
+device's actual seek processing time, drift converges to ~0 in one
+shot.
+
+**Reconcile.js shrinks dramatically.** From ~150 LOC of decision
+logic to ~80 LOC of measurement + a single `executeSeek(target,
+server_time)` callback. Deleted: `seekStreak`, cooldown ladder,
+`seekCandidateTicks`, MAX_SEEK_STREAK, post-seek tolerance bumps,
+`_applyHardSeek`, `_cooldownRemainingMs`, all of it. Server owns
+the equivalent state.
+
+**Drift report payload simplified.** Browser ships
+`{drift_ms, rtt_ms, noise_floor_ms, playing}`. Tolerance / streak /
+cooldown are now server-computed and only flow back via the panel
+push to the local user.
+
+**Panel still works as before.** Server stuffs the computed
+tolerance / streak / cooldown / learned_L into the local user's
+clients-map entry post-decision, so the existing template reads
+them naturally. Other peer rows show drift / jitter / RTT only —
+those decisions are owned by their own LVs.
+
+**Extension still on the old client-driven model.** The extension
+codebase needs the same simplification (turn its content.js into a
+measurement reporter that listens for `sync:seek_command` from the
+Channel). Separate task; requires extension republish through
+Chrome / Firefox stores. v6.7.x for that.
+
+Server-only / no extension republish.
+
+---
+
 # v6.6.4
 
 ### Tolerance ceiling raised — accept what each client can actually deliver

@@ -63,6 +63,7 @@ defmodule Byob.Events do
   def notify, do: "notify"
   def sync_client_stats, do: "sync:client_stats"
   def sync_room_tolerance, do: "sync:room_tolerance"
+  def sync_seek_command, do: "sync:seek_command"
 
   # ── LV handle_event (browser VideoPlayer → LiveView) ────────────────────
   def ev_video_play, do: "video:play"

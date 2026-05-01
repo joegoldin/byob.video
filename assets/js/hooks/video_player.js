@@ -80,16 +80,27 @@ const VideoPlayer = {
     this.handleEvent(LV_EVT.SYNC_CORRECTION, (data) => this._onSyncCorrection(data));
     this.handleEvent(LV_EVT.SYNC_HEARTBEAT, (data) => this._onSyncHeartbeat(data));
     this.handleEvent(LV_EVT.SYNC_ROOM_TOLERANCE, (data) => {
-      // Server pushes both room-wide consensus signals on every drift
-      // report from any peer:
-      //   room_jitter    = max peer jitter (noise floor)
-      //   room_max_drift = max peer |drift| (sustained offset)
-      // Reconcile uses both with different K factors so the effective
-      // dead zone widens for either kind of room-wide spread.
+      // Server-driven model: room consensus is informational only. The
+      // server already used these values to make seek decisions and
+      // included them in `sync:client_stats` for panel display. Kept as
+      // a no-op shim in case Reconcile gains a use for it later.
       this.reconcile.setRoomTolerance?.({
         jitter: data?.room_jitter_ms || 0,
         maxDrift: data?.room_max_drift_ms || 0,
       });
+    });
+
+    // Server-authoritative seek: when the server's SyncDecision module
+    // determines this client needs to seek, it pushes this command with a
+    // pre-computed target (already includes rtt/2 + learned_L overshoot).
+    // Reconcile just executes it.
+    this.handleEvent(LV_EVT.SYNC_SEEK_COMMAND, (data) => {
+      if (!this.player || !this.isReady) return;
+      // Suppress player events during the seek so the iOS PAUSED →
+      // BUFFERING → PLAYING flicker doesn't broadcast spurious sync
+      // events to the room.
+      this.suppression.suppress("playing");
+      this.reconcile.executeSeek?.(data?.position || 0, data?.server_time);
     });
     this.handleEvent(LV_EVT.SYNC_AUTOPLAY_COUNTDOWN, (data) => this._onAutoplayCountdown(data));
     this.handleEvent(LV_EVT.SYNC_AUTOPLAY_CANCELLED, () => this._hideAutoplayCountdown());
@@ -126,15 +137,14 @@ const VideoPlayer = {
       // so peers see "no drift data" rather than misleading numbers.
       if (this._isLive) return;
       const state = this.player.getState?.();
-      const thresholds = this.reconcile.getEffectiveThresholds?.() || {};
+      // Server-authoritative model: client only sends raw measurements.
+      // Tolerance / seek_streak / cooldown live in `Byob.SyncDecision` on
+      // the server now, computed per-user from the room's full picture.
       this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
         drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
-        offset_ms: 0, // browser no longer uses offset EMA; legacy field kept for the extension path
+        offset_ms: 0, // legacy passthrough (extension still computes one)
         rtt_ms: Math.round(this.clockSync.getMedianRttMs?.() || 0),
-        tolerance_ms: Math.round(thresholds.toleranceMs || 0),
-        noise_floor_ms: Math.round(thresholds.noiseFloorMs || 0),
-        seek_streak: thresholds.seekStreak || 0,
-        cooldown_remaining_ms: Math.round(thresholds.cooldownRemainingMs || 0),
+        noise_floor_ms: Math.round(this.reconcile.noiseFloorEmaMs || 0),
         playing: state === "playing",
       });
     }, DRIFT_REPORT_INTERVAL_MS);
