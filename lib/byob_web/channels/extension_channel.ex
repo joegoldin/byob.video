@@ -46,6 +46,8 @@ defmodule ByobWeb.ExtensionChannel do
       socket
       |> assign(:room_id, room_id)
       |> assign(:room_pid, pid)
+      |> assign(:user_sync_state, Byob.SyncDecision.new())
+      |> assign(:clients, %{})
 
     {:ok, sync_state_payload(state), socket}
   end
@@ -263,12 +265,15 @@ defmodule ByobWeb.ExtensionChannel do
 
   def handle_in(@in_video_drift, %{"drift_ms" => drift_ms} = payload, socket) do
     tab_id = payload["tab_id"] || "?"
+    rtt_ms = trunc(payload["rtt_ms"] || 0)
+    noise_floor_ms = trunc(payload["noise_floor_ms"] || 0)
+
     state = RoomServer.get_state(socket.assigns.room_pid)
-    now = System.monotonic_time(:millisecond)
+    now_mono = System.monotonic_time(:millisecond)
 
     pos =
       if state.play_state == :playing do
-        elapsed = (now - Map.get(state, :last_sync_at, now)) / 1000
+        elapsed = (now_mono - Map.get(state, :last_sync_at, now_mono)) / 1000
         state.current_time + elapsed
       else
         state.current_time
@@ -282,6 +287,8 @@ defmodule ByobWeb.ExtensionChannel do
          user_id: socket.assigns.user_id,
          tab_id: tab_id,
          drift_ms: drift_ms,
+         rtt_ms: rtt_ms,
+         noise_floor_ms: noise_floor_ms,
          server_position: Float.round(pos, 1),
          play_state: Atom.to_string(state.play_state)
        }}
@@ -314,6 +321,49 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   @impl true
+  def handle_info({:sync_client_stats, data}, socket) do
+    # Mirror the LV's flow: update local clients map for room-jitter
+    # consensus, then run SyncDecision for *this* extension user. Other
+    # peers' reports update the consensus only.
+    key = "#{data.user_id}:#{Map.get(data, :tab_id, "?")}"
+    now_s = System.system_time(:second)
+
+    clients =
+      socket.assigns
+      |> Map.get(:clients, %{})
+      |> Map.put(key, %{
+        drift_ms: data.drift_ms,
+        rtt_ms: Map.get(data, :rtt_ms, 0),
+        noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
+        updated_at: now_s
+      })
+
+    socket = assign(socket, :clients, clients)
+
+    # Only the extension's *own* drift report triggers a seek decision.
+    if data.user_id == socket.assigns.user_id and Map.get(data, :tab_id) != "browser" do
+      room_jitter =
+        clients
+        |> Enum.filter(fn {_, c} -> now_s - c.updated_at < 5 end)
+        |> Enum.map(fn {_, c} -> c.noise_floor_ms end)
+        |> case do
+          [] -> 0
+          list -> Enum.max(list)
+        end
+
+      case maybe_decide_seek(socket, data, room_jitter) do
+        {:seek, command, new_state} ->
+          push(socket, Events.sync_seek_command(), command)
+          {:noreply, assign(socket, :user_sync_state, new_state)}
+
+        {:no_seek, new_state} ->
+          {:noreply, assign(socket, :user_sync_state, new_state)}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:sync_play, data}, socket) do
     push(socket, Events.sync_play(), data)
     {:noreply, socket}
@@ -496,5 +546,38 @@ defmodule ByobWeb.ExtensionChannel do
       title: item.title,
       is_live: Map.get(item, :is_live, false)
     }
+  end
+
+  # Mirrors the LV's maybe_decide_seek but returns a result tuple instead of
+  # operating on the socket — channel handle_info wraps push() around the
+  # `:seek` case. Same SyncDecision module either way.
+  defp maybe_decide_seek(socket, data, room_jitter) do
+    room_pid = socket.assigns.room_pid
+
+    if room_pid do
+      state = Byob.RoomServer.get_state(room_pid)
+      now_mono = System.monotonic_time(:millisecond)
+
+      expected =
+        if state.play_state == :playing do
+          elapsed = (now_mono - Map.get(state, :last_sync_at, now_mono)) / 1000
+          state.current_time + elapsed
+        else
+          state.current_time
+        end
+
+      drift_input = %{
+        drift_ms: data.drift_ms,
+        noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
+        rtt_ms: Map.get(data, :rtt_ms, 0)
+      }
+
+      room = %{expected_position: expected, room_jitter_ms: room_jitter}
+      sync_state = socket.assigns[:user_sync_state] || Byob.SyncDecision.new()
+
+      Byob.SyncDecision.evaluate(sync_state, drift_input, room, now_mono)
+    else
+      {:no_seek, socket.assigns[:user_sync_state] || Byob.SyncDecision.new()}
+    end
   end
 end

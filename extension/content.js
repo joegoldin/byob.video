@@ -41,6 +41,7 @@
     VIDEO_LIVE_STATUS: "video:live_status",
     VIDEO_REQUEST_SYNC: "video:request-sync",
     VIDEO_UPDATE_URL: "video:update_url",
+    VIDEO_DRIFT: "video:drift",
 
     // background.js → content.js (port message)
     COMMAND_PLAY: "command:play",
@@ -52,6 +53,7 @@
     COMMAND_VIDEO_CHANGE: "command:video-change",
     COMMAND_LIVE_STATUS: "command:live-status",
     SYNC_CORRECTION: "sync:correction",
+    SYNC_SEEK_COMMAND: "sync:seek_command",
     AUTOPLAY_COUNTDOWN: "autoplay:countdown",
     AUTOPLAY_CANCELLED: "autoplay:cancelled",
 
@@ -99,16 +101,18 @@
   let serverRef = null;            // { position, playState, serverTime }
   let lastSeekAt = 0;
   let _pendingPlayPause = null;    // debounced send
-  let _hardSeekFailures = 0;
   let _mismatchSince = 0;          // Date.now() when actual≠expected started
-  // Adaptive drift offset: EMA of raw drift during stable playback. Applied
-  // to reconcile decisions and reported to server so panel drift converges
-  // to ~0 after learning structural latency.
-  let _offsetEmaMs = 0;
-  let _offsetSamples = 0;
-  const _OFFSET_ALPHA = 0.02;
-  const _OFFSET_CAP_MS = 500;
-  const _OFFSET_WARMUP = 10;
+  // Server-authoritative model: extension just measures drift + jitter
+  // and reports them. The server (Byob.SyncDecision) decides when and
+  // where to seek and pushes `sync:seek_command`. No local offset EMA,
+  // no hard-seek logic, no rate correction — matches the browser-side
+  // reconcile.js shape after v6.7.0.
+  let _lastDriftMs = 0;
+  let _jitterEmaMs = 0;
+  let _jitterSamples = 0;
+  let _lastSeekExecutedAt = 0;
+  const _JITTER_ALPHA = 0.1;       // ~1 s horizon at 500 ms tick
+  const _POST_SEEK_QUIET_MS = 5000; // pause jitter EMA for 5 s after a seek
 
   // ── Timing constants (ms) ─────────────────────────────────────────────────
   const RECONCILE_TICK_MS = 500;
@@ -121,17 +125,14 @@
   const COMMAND_GUARD_CHECK_MS = 200;
   const MISMATCH_ACCEPT_MS = 10000;
   const MISMATCH_ENFORCE_MS = 2000;
-  const RECENT_SEEK_WINDOW_MS = 5000;
   const ACTIVATE_RETRY_MS = 500;
   const TOAST_FADE_MS = 250;
   const COUNTDOWN_TICK_MS = 500;
   const SYNC_BAR_RETRY_MS = 500;
   const URL_POLL_MS = 1000;
-  const DRIFT_HARD_THRESHOLD_S = 5.0;
-  const DRIFT_RATE_MIN = 0.9;
-  const DRIFT_RATE_MAX = 1.1;
-  const DRIFT_RATE_TIME_CONSTANT = 5;
-  const HARD_SEEK_GIVE_UP_ATTEMPTS = 2;
+  // Drift thresholds + rate correction live on the server now (see
+  // lib/byob/sync_decision.ex). Extension is dumb: report drift, execute
+  // seek commands.
   const VIDEO_ENDED_TAIL_S = 3;
   const MIN_ENDED_DURATION_S = 60;
 
@@ -545,7 +546,8 @@
         position: pos,
         duration: dur,
         playing,
-        offset_ms: _offsetSamples >= _OFFSET_WARMUP ? Math.round(_offsetEmaMs) : 0,
+        // No more offset_ms — extension stopped learning it. Server's
+        // `Byob.SyncDecision` owns adaptive seek-latency now.
       };
       if (synced && port) port.postMessage(msg);
       if (port) {
@@ -577,8 +579,10 @@
     hookedVideo = null;
     isBuffering = false;
     hideBufferingOverlay();
-    _offsetEmaMs = 0;
-    _offsetSamples = 0;
+    _jitterEmaMs = 0;
+    _jitterSamples = 0;
+    _lastDriftMs = 0;
+    _lastSeekExecutedAt = 0;
     if (timeReportInterval) { clearInterval(timeReportInterval); timeReportInterval = null; }
   }
 
@@ -661,7 +665,6 @@
     // live edge — broadcasting this seek would knock peers off live.
     if (isLive) return;
     lastSeekAt = Date.now();
-    _hardSeekFailures = 0;
     updateServerRef(hookedVideo.currentTime, serverRef?.playState ?? expectedPlayState);
     if (port) port.postMessage({ type: EVT.VIDEO_SEEK, position: hookedVideo.currentTime });
     if (commandGuard) clearTimeout(commandGuard);
@@ -686,35 +689,30 @@
   }
 
   // ── Reconcile loop ────────────────────────────────────────────────────────
-  // Runs every 500ms once synced. Compares local pos to expected pos derived
-  // from serverRef + clockOffset; adjusts playbackRate for small drift,
-  // hard-seeks for large drift. Gives up on hard seek after 2 failures and
-  // accepts the site's position (for sites that fight programmatic seeks).
+  // Runs every 500ms once synced. **Server-authoritative model:** this loop
+  // doesn't decide when to seek. It just measures drift and jitter, sends
+  // them to the server (via VIDEO_DRIFT), and the server decides via
+  // `Byob.SyncDecision`. When a seek is needed, the server pushes
+  // `sync:seek_command` and we execute it (handled in dispatchToContent).
+  //
+  // What stays here: state-mismatch enforcement (paused-vs-playing —
+  // server can't tell whether the user paused locally vs. an autoplay
+  // event silently flipped state, so the client side still rectifies).
   function startReconcile() {
     if (reconcileInterval) return;
 
     reconcileInterval = setInterval(() => {
       if (!hookedVideo || !synced || !serverRef || commandGuard || needsGesture) return;
 
-      // Auto-detect live vs VOD on every tick — cheap, and lets us
-      // bidirectionally switch when a live ends or a VOD turns out
-      // to be live.
       sampleLiveStatus();
-
-      // For live content, the only thing that syncs is play/pause.
-      // Position drift / hard seeks are meaningless against the
-      // live edge and would knock the player off it on every tick.
       if (isLive) return;
 
       const now = Date.now();
       const actual = hookedVideo.paused ? State.PAUSED : State.PLAYING;
 
-      // State mismatch rectifier. Debounced event handlers handle user-
-      // initiated state changes within ~500ms. If mismatch persists longer,
-      // event handlers aren't going to fire (the site toggled state silently,
-      // e.g. CR autoplay). After a 2s grace period, enforce server state;
-      // after 10s of failed enforcement, accept the site's state and update
-      // the server.
+      // State mismatch rectifier (unchanged from before). Debounced event
+      // handlers cover user-initiated changes; this catches silent
+      // toggles (e.g. CR autoplay) that bypass them.
       if (actual !== expectedPlayState && expectedPlayState) {
         if (_mismatchSince === 0) _mismatchSince = now;
         const dur = now - _mismatchSince;
@@ -742,64 +740,36 @@
         _mismatchSince = 0;
       }
 
-      const recentSeek = (now - lastSeekAt) < RECENT_SEEK_WINDOW_MS;
       if (!clockSynced) return;
-
-      // Paused: don't auto-correct position. User seeks handle position,
-      // and tweaking a paused site's currentTime often kicks it back.
-      if (serverRef.playState === State.PAUSED || actual === State.PAUSED) return;
       if (serverRef.playState !== State.PLAYING || actual !== State.PLAYING) return;
 
+      // Measure drift.
       const localPos = hookedVideo.currentTime;
       const serverNow = now + clockOffset;
       const elapsed = (serverNow - serverRef.serverTime) / 1000;
       const expectedPos = serverRef.position + elapsed;
-      const rawDrift = localPos - expectedPos;
-      const rawDriftMs = rawDrift * 1000;
+      const driftMs = (localPos - expectedPos) * 1000;
 
-      // Learn EMA only during stable playback (not during/after a recent seek,
-      // and not on absurd values that would poison the estimate).
-      if (!recentSeek && Math.abs(rawDriftMs) < _OFFSET_CAP_MS * 2) {
-        if (_offsetSamples === 0) {
-          _offsetEmaMs = rawDriftMs;
-        } else {
-          _offsetEmaMs = _OFFSET_ALPHA * rawDriftMs + (1 - _OFFSET_ALPHA) * _offsetEmaMs;
-        }
-        if (_offsetEmaMs > _OFFSET_CAP_MS) _offsetEmaMs = _OFFSET_CAP_MS;
-        else if (_offsetEmaMs < -_OFFSET_CAP_MS) _offsetEmaMs = -_OFFSET_CAP_MS;
-        _offsetSamples++;
+      // Jitter EMA: |Δdrift| per tick. Reject single-tick jumps over
+      // 500 ms (those are seeks, not noise — same logic as the browser
+      // reconcile.js). Skip during the 5 s post-seek quiet window.
+      const inPostSeekQuiet = (now - _lastSeekExecutedAt) < _POST_SEEK_QUIET_MS;
+      const tickDelta = _jitterSamples > 0 ? Math.abs(driftMs - _lastDriftMs) : 0;
+      const looksLikeSeek = tickDelta > 500;
+      if (_jitterSamples > 0 && !inPostSeekQuiet && !looksLikeSeek) {
+        _jitterEmaMs = _JITTER_ALPHA * tickDelta + (1 - _JITTER_ALPHA) * _jitterEmaMs;
       }
+      _jitterSamples++;
+      _lastDriftMs = driftMs;
 
-      // Apply learned offset: treat rawDrift == offsetEma as "baseline" (no
-      // correction needed). Uniform structural latency across clients → each
-      // learns its own offset → all converge to the same wall-clock moment.
-      const effectiveOffsetMs = _offsetSamples >= _OFFSET_WARMUP ? _offsetEmaMs : 0;
-      const drift = rawDrift - effectiveOffsetMs / 1000;
-      const absDrift = Math.abs(drift);
-      const deadZone = recentSeek ? 2.0 : (syncToleranceMs / 1000);
-
-      if (absDrift < deadZone) {
-        if (hookedVideo.playbackRate !== 1.0) hookedVideo.playbackRate = 1.0;
-        _hardSeekFailures = 0;
-      } else if (absDrift > DRIFT_HARD_THRESHOLD_S && !recentSeek && _hardSeekFailures < HARD_SEEK_GIVE_UP_ATTEMPTS) {
-        _log(`reconcile HARD SEEK drift=${drift.toFixed(1)}s expected=${expectedPos.toFixed(1)} local=${localPos.toFixed(1)} attempt=${_hardSeekFailures + 1}`);
-        _hardSeekFailures++;
-        lastSeekAt = now;
-        if (commandGuard) clearTimeout(commandGuard);
-        commandGuard = setTimeout(() => { commandGuard = null; }, SEEK_HARD_COMMAND_GUARD_MS);
-        seekTo(expectedPos);
-        hookedVideo.playbackRate = 1.0;
-      } else if (absDrift > DRIFT_HARD_THRESHOLD_S && _hardSeekFailures >= HARD_SEEK_GIVE_UP_ATTEMPTS) {
-        _log(`reconcile: giving up on hard seek, accepting site pos=${localPos.toFixed(1)}`);
-        _hardSeekFailures = 0;
-        updateServerRef(localPos, expectedPlayState);
-        if (synced && port) port.postMessage({ type: EVT.VIDEO_SEEK, position: localPos });
-        lastSeekAt = now;
-      } else if (absDrift > deadZone) {
-        // Proportional rate adjustment. Negative drift (behind) → speed up;
-        // positive (ahead) → slow down. Clamped to DRIFT_RATE_MIN/MAX.
-        const rate = Math.max(DRIFT_RATE_MIN, Math.min(DRIFT_RATE_MAX, 1.0 - drift / DRIFT_RATE_TIME_CONSTANT));
-        hookedVideo.playbackRate = rate;
+      // Send drift report to server (server decides whether to seek).
+      // background.js fills in rtt_ms from its own clockSync samples.
+      if (port) {
+        port.postMessage({
+          type: EVT.VIDEO_DRIFT,
+          drift: Math.round(driftMs),
+          noise_floor_ms: Math.round(_jitterEmaMs),
+        });
       }
     }, RECONCILE_TICK_MS);
   }
@@ -1162,6 +1132,22 @@
         if (msg.expected_time != null) {
           updateServerRef(msg.expected_time, serverRef?.playState ?? expectedPlayState, msg.server_time);
         }
+        break;
+
+      case EVT.SYNC_SEEK_COMMAND:
+        // Server's `Byob.SyncDecision` decided this client needs to seek.
+        // Target is pre-computed (includes learned-L overshoot), we just
+        // execute it. lastSeekExecutedAt suppresses jitter EMA updates
+        // for 5 s so the position-jump tickDelta doesn't poison noise
+        // estimation.
+        if (isLive) break;
+        if (typeof msg.position !== "number") break;
+        _log("cmd:server-seek pos=", msg.position, "server_time=", msg.server_time);
+        _lastSeekExecutedAt = Date.now();
+        lastSeekAt = _lastSeekExecutedAt;
+        if (commandGuard) clearTimeout(commandGuard);
+        commandGuard = setTimeout(() => { commandGuard = null; }, CMD_SEEK_COMMAND_GUARD_MS);
+        seekTo(msg.position);
         break;
     }
   }

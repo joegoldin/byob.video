@@ -33,6 +33,7 @@ const EVT = Object.freeze({
   COMMAND_VIDEO_CHANGE: "command:video-change",
   COMMAND_LIVE_STATUS: "command:live-status",
   SYNC_CORRECTION: "sync:correction",
+  SYNC_SEEK_COMMAND: "sync:seek_command",
   AUTOPLAY_COUNTDOWN: "autoplay:countdown",
   AUTOPLAY_CANCELLED: "autoplay:cancelled",
 
@@ -60,6 +61,7 @@ const EVT = Object.freeze({
   CHAN_SYNC_PAUSE: "sync:pause",
   CHAN_SYNC_SEEK: "sync:seek",
   CHAN_SYNC_CORRECTION: "sync:correction",
+  CHAN_SYNC_SEEK_COMMAND: "sync:seek_command",
   CHAN_AUTOPLAY_COUNTDOWN: "autoplay:countdown",
   CHAN_AUTOPLAY_CANCELLED: "autoplay:cancelled",
   CHAN_READY_COUNT: "ready:count",
@@ -350,7 +352,7 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case EVT.VIDEO_STATE:
-      if (channel) channel.push(EVT.CHAN_VIDEO_STATE, { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing, offset_ms: msg.offset_ms || 0, tab_id: String(tabId) });
+      if (channel) channel.push(EVT.CHAN_VIDEO_STATE, { hooked: true, position: msg.position, duration: msg.duration, playing: msg.playing, tab_id: String(tabId) });
       break;
 
     case EVT.VIDEO_READY:
@@ -360,7 +362,19 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case EVT.VIDEO_DRIFT:
-      if (channel) channel.push(EVT.CHAN_VIDEO_DRIFT, { drift_ms: msg.drift, tab_id: String(tabId) });
+      // Server-authoritative drift report. Include rtt_ms (median from
+      // background's own clockSync) and noise_floor_ms (jitter EMA the
+      // content script has been tracking) so the server's
+      // `Byob.SyncDecision` has everything it needs to compute the
+      // effective tolerance and decide whether to issue a seek command.
+      if (channel) {
+        channel.push(EVT.CHAN_VIDEO_DRIFT, {
+          drift_ms: msg.drift,
+          noise_floor_ms: msg.noise_floor_ms || 0,
+          rtt_ms: clockRtt || 0,
+          tab_id: String(tabId),
+        });
+      }
       break;
 
     case EVT.VIDEO_LIVE_STATUS:
@@ -495,6 +509,17 @@ function connectToRoom(roomId, serverUrl, token, username) {
     broadcastToContentScripts({
       type: EVT.SYNC_CORRECTION,
       expected_time: data.expected_time,
+      server_time: data.server_time,
+    });
+  });
+
+  // Server-driven seek: `Byob.SyncDecision` decided this client needs to
+  // seek to a specific position (target already includes learned-L
+  // overshoot). Forward to the content script that owns the player.
+  channel.on(EVT.CHAN_SYNC_SEEK_COMMAND, (data) => {
+    broadcastToContentScripts({
+      type: EVT.SYNC_SEEK_COMMAND,
+      position: data.position,
       server_time: data.server_time,
     });
   });

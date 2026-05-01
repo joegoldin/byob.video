@@ -3,6 +3,52 @@
 
 ---
 
+# v6.7.2
+
+### Extension: server-driven sync (mirror v6.7.0/v6.7.1 to extension/content.js)
+
+Brings the extension up to the same architecture as the browser
+player: the extension is now a measurement reporter and command
+executor, with no local seek decisions or rate correction.
+
+**Stripped from `extension/content.js`:**
+- Adaptive offset EMA (`_offsetEmaMs`, `_offsetSamples`,
+  `_OFFSET_*`) — server's `Byob.SyncDecision` learns total
+  round-trip compensation per-client.
+- Hard-seek path with `_hardSeekFailures` / `HARD_SEEK_GIVE_UP_ATTEMPTS`.
+- Rate correction (`DRIFT_RATE_MIN/MAX`, `DRIFT_RATE_TIME_CONSTANT`,
+  `DRIFT_HARD_THRESHOLD_S`) — same iOS-Safari-silently-ignores
+  reasons that motivated removing it from the browser side.
+
+**Added:**
+- Jitter EMA tracking (Δdrift per tick, ~1 s horizon, with
+  500 ms single-tick rejection so seeks don't poison it).
+- Periodic `VIDEO_DRIFT` message with `{drift, noise_floor_ms}`;
+  background.js now also fills in `rtt_ms` from its own clockSync.
+- `EVT.SYNC_SEEK_COMMAND` handler in dispatchToContent — executes
+  server-issued seek targets (which already include learned-L
+  overshoot from the v6.7.1 fix).
+
+**Server-side `extension_channel.ex`:**
+- `:user_sync_state` and `:clients` now in socket assigns at join.
+- New `handle_info({:sync_client_stats, ...})` runs `SyncDecision`
+  for this extension's user (mirrors the LV's behaviour).
+- `video:drift` handler accepts and broadcasts `noise_floor_ms` /
+  `rtt_ms` so room-jitter consensus and per-client tolerance work.
+- Pushes `sync:seek_command` to the extension when a seek is
+  needed.
+
+**State-mismatch enforcement stays.** The extension still rectifies
+silent paused-vs-playing toggles from sites like Crunchyroll
+autoplay, since those bypass our event handlers.
+
+Net: extension ~80 LOC of sync logic deleted; both browser and
+extension peers now run identical decision logic on the server.
+
+**Extension republish required** — Chrome Web Store + Firefox Add-ons.
+
+---
+
 # v6.7.1
 
 ### Hotfix: convergence (rtt double-count) and jitter-from-seeks
