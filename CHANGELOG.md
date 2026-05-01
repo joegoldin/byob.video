@@ -3,6 +3,52 @@
 
 ---
 
+# v6.8.0
+
+### Tighter tolerances + room-wide clock adjustment + extension status text
+
+Three independent improvements:
+
+**Tighter tolerance band (300 / 1000 ms).** Previously 600 / 30000.
+The v6.7.x adaptive-L learning means seeks converge to ~0 residual
+in 2 hops, so a 300 ms floor is comfortable. Ceiling at 1000 ms
+keeps peer-to-peer divergence bounded at ~2 s worst case (was
+unbounded). Adaptive landing in the middle: `K × jitter` settles
+at 600 ms territory on typical wifi.
+
+**Room-wide clock adjustment.** New: `room_server` now subscribes
+to its own room's PubSub and observes every peer's drift samples.
+Every 10 s, if ≥ 2 active peers have a consistent mean drift
+(|mean| > 100 ms, all behind or all ahead), it shifts the
+canonical reference position by 30 % of that mean (capped at
+200 ms per pass) and broadcasts a fresh `:sync_correction` so
+clients pick it up. Peer drifts converge to ~0 over a few
+adjustments; nobody fights a poorly-calibrated room reference.
+
+Heavily defended: only fires while playing, requires ≥ 2 peers
+(single-peer drift is structural lag, not room-wide), damped
+fractionally so adjustments stay below the 500 ms jitter-spike
+rejection threshold on clients (won't poison their EMAs or
+SyncDecision L-learning).
+
+**Extension status text during seeks.** No popup overlay (mirrored
+that to the main page in v6.7.4); instead, the existing byob bar
+in the extension shows transient sticky status text when the
+content script is mid-correction:
+- "Joining…" — initial sync after `command:synced`
+- "Catching up…" — peer-driven seek (`command:seek`)
+- "Re-syncing…" — server-driven seek (`sync:seek_command`)
+
+Each is sticky for 2.5 s (3 s for joining, covers two-seek
+convergence). Polling-driven status updates (playing / paused)
+are skipped during the sticky window so the transient text doesn't
+flicker.
+
+Server-only **plus** extension republish (Chrome Web Store +
+Firefox Add-ons).
+
+---
+
 # v6.7.4
 
 ### "Syncing…" overlay during corrective seeks

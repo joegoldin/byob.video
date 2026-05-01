@@ -973,7 +973,13 @@
         // caught by the userActivation check in the event handlers.
         startCommandGuard();
         applySyncedState(msg);
-        updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+        // "Joining…" while the initial seek + the server's adaptive-L
+        // follow-up seek land. Sticky 3 s — covers two-seek convergence.
+        if (msg.play_state === "playing" && !isLive) {
+          updateSyncBarStatus("joining", { sticky: true, durationMs: 3000 });
+        } else {
+          updateSyncBarStatus(hookedVideo.paused ? "paused" : "playing");
+        }
         if (!wasSynced && port) port.postMessage({ type: EVT.VIDEO_READY });
         startReconcile();
       } else if (window === window.top) {
@@ -1123,6 +1129,7 @@
         updateServerRef(msg.position, serverRef?.playState ?? expectedPlayState, msg.server_time);
         if (commandGuard) clearTimeout(commandGuard);
         commandGuard = setTimeout(() => { commandGuard = null; }, CMD_SEEK_COMMAND_GUARD_MS);
+        updateSyncBarStatus("catching_up", { sticky: true, durationMs: 2500 });
         seekTo(msg.position);
         break;
 
@@ -1147,6 +1154,7 @@
         lastSeekAt = _lastSeekExecutedAt;
         if (commandGuard) clearTimeout(commandGuard);
         commandGuard = setTimeout(() => { commandGuard = null; }, CMD_SEEK_COMMAND_GUARD_MS);
+        updateSyncBarStatus("resyncing", { sticky: true, durationMs: 2500 });
         seekTo(msg.position);
         break;
     }
@@ -1652,7 +1660,15 @@
     if (_countdownInterval) { clearInterval(_countdownInterval); _countdownInterval = null; }
   }
 
-  function updateSyncBarStatus(state) {
+  // Sticky overlay for transient sync states ("Catching up...", "Re-syncing...",
+  // "Joining..."). When set, non-sticky calls into updateSyncBarStatus are
+  // ignored until the timer expires — otherwise the polling-driven
+  // playing/paused updates would clobber the transient text within 50 ms.
+  let _syncBarStickyUntil = 0;
+
+  function updateSyncBarStatus(state, options) {
+    options = options || {};
+    if (!options.sticky && Date.now() < _syncBarStickyUntil) return;
     const dot = document.getElementById("byob-dot");
     const status = document.getElementById("byob-status");
     if (!dot || !status) return;
@@ -1660,6 +1676,9 @@
       loading:   { color: "#888",    text: "Connecting...",                      tip: "Connecting to the byob room server" },
       searching: { color: "#ff9900", text: "Play the video to start syncing",    tip: "Waiting for a video element on this page" },
       syncing:   { color: "#ff9900", text: "Syncing...",                         tip: "Applying room state to this player" },
+      joining:   { color: "#7c3aed", text: "Joining...",                         tip: "Initial seek + adaptive seek-lag learning (1-3s)" },
+      catching_up: { color: "#7c3aed", text: "Catching up...",                   tip: "Following a peer's seek" },
+      resyncing: { color: "#7c3aed", text: "Re-syncing...",                      tip: "Server detected drift — seeking to compensate" },
       clickjoin: { color: "#ff9900", text: "Click play to sync",                 tip: "Click play on the video player above to start syncing with the room" },
       playing:   { color: "#00d400", text: "Playing",                            tip: "Video is playing in sync with the room" },
       paused:    { color: "#ff9900", text: "Paused",                             tip: "Video is paused — synced with room" },
@@ -1673,6 +1692,11 @@
     status.style.color = s.color;
     status.textContent = s.text;
     status.title = s.tip;
+    if (options.sticky) {
+      _syncBarStickyUntil = Date.now() + (options.durationMs || 2500);
+    } else {
+      _syncBarStickyUntil = 0;
+    }
   }
 
   // Buffering overlay

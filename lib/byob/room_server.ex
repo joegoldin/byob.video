@@ -42,7 +42,11 @@ defmodule Byob.RoomServer do
     round: nil,
     round_expire_ref: nil,
     round_last_broadcast_ms: 0,
-    round_coalesce_ref: nil
+    round_coalesce_ref: nil,
+    # Per-peer drift samples for room-wide clock adjustment.
+    # %{user_id => %{drift_ms, updated_at_monotonic_ms}}
+    drift_samples: %{},
+    clock_adjust_ref: nil
   ]
 
   @autoplay_countdown_ms 5_000
@@ -55,6 +59,16 @@ defmodule Byob.RoomServer do
   @persist_interval_ms 5_000
   @rate_limit_reset_interval_ms 5_000
   @sync_broadcast_debounce_ms 500
+
+  # Room-wide clock adjustment: every N seconds, look at all peers' drift,
+  # compute the mean, and shift the canonical reference by a fraction of
+  # it. Heavily damped + capped to avoid disturbing the clients' jitter
+  # EMAs and SyncDecision L-learning.
+  @clock_adjust_interval_ms 10_000
+  @clock_adjust_min_drift_ms 100
+  @clock_adjust_damping 0.3
+  @clock_adjust_max_per_pass_ms 200
+  @drift_sample_stale_ms 5_000
   # Defer the side effects of a leave (broadcast "left" toast, pause room
   # if ≤1 user, mark user disconnected) by this much. Network blips that
   # resolve within the window leave no trace; only real disconnects fire.
@@ -264,6 +278,16 @@ defmodule Byob.RoomServer do
     state = schedule_persist(state)
     state = if state.play_state == :playing, do: schedule_sync_correction(state), else: state
     Process.send_after(self(), :state_heartbeat, @state_heartbeat_interval_ms)
+
+    # Subscribe to our own room's PubSub so we can observe peers' drift
+    # samples (broadcast as `:sync_client_stats` by LVs and Channels)
+    # and adjust the canonical clock toward the room's mean drift.
+    Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{state.room_id}")
+
+    clock_adjust_ref =
+      Process.send_after(self(), :adjust_room_clock, @clock_adjust_interval_ms)
+
+    state = %{state | clock_adjust_ref: clock_adjust_ref}
     {:ok, schedule_cleanup(state)}
   end
 
@@ -1337,6 +1361,98 @@ defmodule Byob.RoomServer do
 
     {:noreply, state}
   end
+
+  # ── Drift-sample tracking + room-wide clock adjustment ───────────────────
+  # We subscribe to "room:#{room_id}" in init so we receive every peer's
+  # drift report (broadcast as `:sync_client_stats` by LV and Channel).
+  # The data drives `:adjust_room_clock` below.
+  def handle_info({:sync_client_stats, data}, state) do
+    user_id = Map.get(data, :user_id)
+
+    if is_binary(user_id) do
+      drift_samples =
+        Map.put(state.drift_samples, user_id, %{
+          drift_ms: Map.get(data, :drift_ms, 0),
+          updated_at: System.monotonic_time(:millisecond)
+        })
+
+      {:noreply, %{state | drift_samples: drift_samples}}
+    else
+      {:noreply, state}
+    end
+  end
+
+  # Periodic room-wide clock adjustment. Server's canonical reference
+  # (current_time + elapsed) is fixed at room creation; if peers
+  # consistently report drift = -200 ms (everyone 200 ms behind it), the
+  # reference is calibrated wrong for the actual room. Shift it backward
+  # by a damped fraction of mean drift so peer drifts converge to ~0.
+  #
+  # Heavily defended:
+  #   * ≥ 2 active peers (otherwise it's a single peer's structural lag,
+  #     not room-wide).
+  #   * Only if play_state is :playing.
+  #   * Only if |mean| > 100 ms (avoid noise / EMA pollution).
+  #   * Damped at 30 % and capped at 200 ms per pass — small enough that
+  #     clients' jitter-EMA seek-rejection (500 ms threshold) won't see
+  #     it as a discontinuity.
+  def handle_info(:adjust_room_clock, state) do
+    now = System.monotonic_time(:millisecond)
+
+    active_drifts =
+      state.drift_samples
+      |> Enum.filter(fn {_, %{updated_at: t}} -> now - t < @drift_sample_stale_ms end)
+      |> Enum.map(fn {_, %{drift_ms: d}} -> d end)
+
+    state =
+      cond do
+        length(active_drifts) < 2 ->
+          state
+
+        state.play_state != :playing ->
+          state
+
+        true ->
+          mean_ms = trunc(Enum.sum(active_drifts) / length(active_drifts))
+
+          if abs(mean_ms) > @clock_adjust_min_drift_ms do
+            adjustment_ms =
+              (mean_ms * @clock_adjust_damping)
+              |> trunc()
+              |> max(-@clock_adjust_max_per_pass_ms)
+              |> min(@clock_adjust_max_per_pass_ms)
+
+            current_pos = current_position(state)
+            new_pos = max(0.0, current_pos - adjustment_ms / 1000)
+
+            unless current_media_is_live?(state) do
+              broadcast(
+                state,
+                {:sync_correction, %{expected_time: new_pos, server_time: now}}
+              )
+            end
+
+            require Logger
+
+            Logger.debug(
+              "[clock_adjust] room=#{state.room_id} mean=#{mean_ms}ms adj=#{adjustment_ms}ms peers=#{length(active_drifts)} new_pos=#{Float.round(new_pos * 1.0, 2)}"
+            )
+
+            %{state | current_time: new_pos, last_sync_at: now}
+          else
+            state
+          end
+      end
+
+    ref = Process.send_after(self(), :adjust_room_clock, @clock_adjust_interval_ms)
+    {:noreply, %{state | clock_adjust_ref: ref}}
+  end
+
+  # Catch-all for self-PubSub broadcasts we receive but don't act on
+  # (we subscribe broadly to get :sync_client_stats; everything else —
+  # :sync_play, :sync_correction tuples that bounce back, etc. — is for
+  # the LVs / Channels, not us).
+  def handle_info(_msg, state), do: {:noreply, state}
 
   # Private helpers
 

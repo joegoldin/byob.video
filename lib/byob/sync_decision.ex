@@ -31,8 +31,13 @@ defmodule Byob.SyncDecision do
   """
 
   @noise_k_tolerance 4
-  @min_tolerance_ms 600
-  @max_tolerance_ms 30_000
+  # Floor / ceiling tuned for the server-driven model. Floor at 300 keeps
+  # peers tight on calm links; the post-seek bump to 600 gives breathing
+  # room while a seek lands; ceiling at 1000 prevents fighting irrecoverable
+  # links. With the v6.7.x adaptive-L learning seeks converge in 2 hops, so
+  # a ~300 ms residual is entirely reasonable.
+  @min_tolerance_ms 300
+  @max_tolerance_ms 1_000
   @post_seek_tolerance_bump_ms 300
   @post_seek_quiet_ms 5_000
 
