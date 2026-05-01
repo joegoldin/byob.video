@@ -46,7 +46,12 @@ defmodule Byob.SyncDecision do
   @seek_cooldown_base_ms 1_000
   @seek_cooldown_max_ms 5_000
   @seek_streak_reset_ms 10_000
-  @max_seek_streak 3
+  # No cap on streak: relying on the cooldown ladder (1/2/4/5 s capped at
+  # 5 s) for rate-limiting. A previous cap at 3 left peers stuck whose
+  # players were silently ignoring seek commands (iOS YT, slow Safari)
+  # for 10 s windows. Cooldown alone keeps the rate sane (max 1 seek per
+  # 5 s on chronic failures) while letting the system keep trying until
+  # something lands.
 
   # Wait at least this long after a seek before the *next* drift report
   # is allowed to update the L estimate (so the seek has had time to
@@ -164,9 +169,6 @@ defmodule Byob.SyncDecision do
           state.over_tolerance_count < @sustained_reports ->
             {:no_seek, state}
 
-          state.seek_streak >= @max_seek_streak ->
-            {:no_seek, state}
-
           cooldown_remaining_ms(state, now_ms) > 0 ->
             {:no_seek, state}
 
@@ -211,8 +213,11 @@ defmodule Byob.SyncDecision do
 
     require Logger
 
+    user_id = Map.get(data, :user_id) || "?"
+
     Logger.info(
-      "[sync_decision] seek drift=#{drift_ms}ms target=#{Float.round(target_position * 1.0, 2)} " <>
+      "[sync_decision] user=#{String.slice(to_string(user_id), 0..7)} " <>
+        "seek drift=#{drift_ms}ms target=#{Float.round(target_position * 1.0, 2)} " <>
         "overshoot=#{Float.round(overshoot_ms * 1.0, 1)}ms streak=#{new_state.seek_streak} " <>
         "learned_L=#{Float.round(state.learned_l_ms * 1.0, 1)}ms"
     )

@@ -569,7 +569,8 @@ defmodule ByobWeb.ExtensionChannel do
       drift_input = %{
         drift_ms: data.drift_ms,
         noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
-        rtt_ms: Map.get(data, :rtt_ms, 0)
+        rtt_ms: Map.get(data, :rtt_ms, 0),
+        user_id: socket.assigns[:user_id]
       }
 
       room = %{expected_position: expected, room_jitter_ms: room_jitter}

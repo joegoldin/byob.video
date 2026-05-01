@@ -3,6 +3,41 @@
 
 ---
 
+# v6.8.3
+
+### Stuck-peer handling: drop streak cap, use median for clock adjust
+
+Production logs showed a peer (MildOtter) joining with -2590 ms
+drift, server fired three seek commands (streak 1→2→3), drift
+stayed *exactly* at -2590 across all three — seeks were firing but
+not landing on the client. After streak hit 3, no more seeks for
+10 s. Meanwhile the clock adjustment (using *mean*) was being
+yanked toward the outlier and pulling everyone else's drift
+around in compensation.
+
+**Dropped `MAX_SEEK_STREAK` (was 3).** Cooldown ladder (1, 2, 4, 5
+s capped) is sufficient rate-limiting on its own. With the cap,
+peers whose players silently ignore seek commands (iOS YT,
+backgrounded tabs, autoplay-blocked) got stuck for 10 s windows
+between attempt-bursts. Without the cap, every 5 s we try once;
+the moment the player becomes responsive, the drift converges.
+
+**Median, not mean, for `room_server`'s clock adjustment.** Mean
+drift is dominated by outliers — one peer 2.5 s behind among 5
+peers at 0 ms drags mean to -500 ms, server shifts everyone
+500 ms further behind reality, in-tolerance peers fall out, then
+mean swings back, oscillation. Median ignores the outlier and
+captures "where most peers actually are". Outlier-peer's drift
+remains *their* problem to seek away.
+
+**`user_id` in seek decision logs.** `[sync_decision] user=XXXXX
+seek drift=...` so `fly logs | grep sync_decision` makes it clear
+which peer's decisions are firing.
+
+Server-only / no extension republish.
+
+---
+
 # v6.8.2
 
 ### Bands diagram tracks room jitter; SyncDecision logging

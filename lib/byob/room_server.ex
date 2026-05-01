@@ -1413,18 +1413,19 @@ defmodule Byob.RoomServer do
           state
 
         true ->
-          mean_ms = trunc(Enum.sum(active_drifts) / length(active_drifts))
+          # MEDIAN, not mean — robust to outliers. With one peer at -2590 ms
+          # while the rest are clustered around 0, mean would chase the
+          # outlier (-432 ms) and pull the in-tolerance peers OUT of
+          # tolerance, then oscillate when adjustment swings them past 0.
+          # Median represents "where most peers are" and ignores the
+          # outlier; the outlier needs to seek to fix itself.
+          median_ms = compute_median(active_drifts)
 
-          if abs(mean_ms) > @clock_adjust_min_drift_ms do
-            # Sign convention: drift = local − expected. If mean drift is
-            # negative (peers behind), expected is too HIGH — we want to
-            # *lower* current_pos. Adjustment carries mean's sign:
-            #   negative mean → negative adjustment → new_pos < current_pos
-            #   positive mean → positive adjustment → new_pos > current_pos
-            # The earlier `current_pos - adjustment / 1000` had the sign
-            # backwards and was making drift grow on every pass.
+          if abs(median_ms) > @clock_adjust_min_drift_ms do
+            # Sign: negative median → expected too HIGH → reduce current_pos
+            # (negative adjustment → new_pos < current_pos).
             adjustment_ms =
-              (mean_ms * @clock_adjust_damping)
+              (median_ms * @clock_adjust_damping)
               |> trunc()
               |> max(-@clock_adjust_max_per_pass_ms)
               |> min(@clock_adjust_max_per_pass_ms)
@@ -1442,7 +1443,7 @@ defmodule Byob.RoomServer do
             require Logger
 
             Logger.debug(
-              "[clock_adjust] room=#{state.room_id} mean=#{mean_ms}ms adj=#{adjustment_ms}ms peers=#{length(active_drifts)} new_pos=#{Float.round(new_pos * 1.0, 2)}"
+              "[clock_adjust] room=#{state.room_id} median=#{median_ms}ms adj=#{adjustment_ms}ms peers=#{length(active_drifts)} new_pos=#{Float.round(new_pos * 1.0, 2)}"
             )
 
             %{state | current_time: new_pos, last_sync_at: now}
@@ -1588,6 +1589,18 @@ defmodule Byob.RoomServer do
 
   defp broadcast(state, message) do
     Phoenix.PubSub.broadcast(Byob.PubSub, "room:#{state.room_id}", message)
+  end
+
+  defp compute_median(values) do
+    sorted = Enum.sort(values)
+    n = length(sorted)
+    mid = div(n, 2)
+
+    if rem(n, 2) == 0 do
+      div(Enum.at(sorted, mid - 1) + Enum.at(sorted, mid), 2)
+    else
+      Enum.at(sorted, mid)
+    end
   end
 
   defp username_connected?(state, username) do

@@ -643,7 +643,8 @@ defmodule ByobWeb.RoomLive do
         drift_input = %{
           drift_ms: data.drift_ms,
           noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
-          rtt_ms: Map.get(data, :rtt_ms, 0)
+          rtt_ms: Map.get(data, :rtt_ms, 0),
+          user_id: user_id
         }
 
         sync_state = socket.assigns[:user_sync_state] || Byob.SyncDecision.new()
