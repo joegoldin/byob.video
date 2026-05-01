@@ -34,14 +34,14 @@
 const TICK_MS = 100;
 const NOISE_EMA_ALPHA = 0.1;             // ~1 s horizon
 const NOISE_K_TOLERANCE = 4;             // tolerance = 4 × jitter (4σ headroom)
-// Adaptive: tight when jitter is low (peers really are in sync), loose when
-// jitter is high (don't fight network noise). Ideal would be 0 ms drift,
-// but we accept the noise floor of the link in exchange for not seeking
-// constantly. Typical: calm wired ≈ 100 ms, light wifi ≈ 120-200 ms,
-// heavy/mobile clamped at 500 ms ceiling.
-const MIN_TOLERANCE_MS = 100;
-const MAX_TOLERANCE_MS = 500;
-const POST_SEEK_TOLERANCE_BUMP_MS = 100; // small bump after a seek so the player can settle
+// Floor must be above the typical seek-completion residual (drift settles
+// to ≈ −L after a no-overshoot seek). YT/iOS L runs 500-1000 ms, so a
+// 600 ms floor keeps us in-band post-seek without re-seeking forever. The
+// proper fix (adaptive L learning) lives in the upcoming server-driven
+// rewrite; this is the conservative tolerance that works without it.
+const MIN_TOLERANCE_MS = 600;
+const MAX_TOLERANCE_MS = 1000;
+const POST_SEEK_TOLERANCE_BUMP_MS = 300; // bump after a seek to absorb the −L residual
 const POST_SEEK_QUIET_MS = 5000;
 const SEEK_CONFIRM_TICKS = 3;            // 300 ms sustained over tolerance before acting
 const SEEK_COOLDOWN_BASE_MS = 1000;      // first cooldown after a seek
@@ -208,23 +208,20 @@ export class Reconcile {
     // Sustained drift confirmed. Cooldown gate.
     if (this._cooldownRemainingMs() > 0) return;
 
-    // Seek with drift-compensating overshoot.
+    // Seek straight to expected. v6.6.2's overshoot formula
+    // (target = expected − drift) was *wrong*: it assumed drift = −L
+    // (where L is seek processing time). That holds after a previous
+    // failed seek, but NOT for first-time drift from a late join or
+    // buffering — there drift can be 1500+ ms while L is 500-700 ms.
+    // Overshooting by 1500 puts us 800 ms ahead, next iteration
+    // overshoots back to 1500 behind, infinite oscillation.
     //
-    // A seek isn't instantaneous: by the time the player lands at the
-    // target, the server clock has advanced by ~L seconds (the seek
-    // processing window). Drift = local − expected = −L when we're
-    // behind because of that lag. Seeking straight to `expectedPosition`
-    // would land us at `expected_at_seek_start` while server is now at
-    // `expected_at_seek_start + L` — same drift, infinite loop.
-    //
-    // Symmetric formula: `seek_target = expected − drift`. For drift =
-    // −800 ms we add 800; for drift = +800 ms we subtract 800. Either
-    // way we land at expected_at_completion. The rare "ahead" case
-    // (clockSync error, etc.) self-damps because if we overshoot the
-    // other way the next iteration sees a small negative drift and the
-    // same formula corrects.
-    const seekTarget = Math.max(0, expectedPosition - driftMs / 1000);
-    this.player.seekTo(seekTarget);
+    // No-overshoot result: drift converges to a residual ≈ −L (because
+    // the seek itself eats L of expected's advancement). The tolerance
+    // floor is set above typical L so the residual stays in-band and
+    // we don't seek-loop. Real fix is server-driven sync with adaptive
+    // L-learning per client; that's the next release.
+    this.player.seekTo(expectedPosition);
     this.lastSeekAt = Date.now();
     this.seekStreak++;
     this.seekCandidateTicks = 0;

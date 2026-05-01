@@ -3,6 +3,38 @@
 
 ---
 
+# v6.6.3
+
+### Hotfix: revert v6.6.2 overshoot — was oscillating
+
+User report: clients were oscillating between ~1500 ms behind and
+~800 ms ahead, never settling. Diagnosis:
+
+v6.6.2's `seek_target = expected − drift` assumed drift = −L (where L
+is seek processing time). That's true *after a previous failed seek*,
+but NOT for first-time drift coming from a late join or buffering.
+There drift can be 1500+ ms while L is 500-700 ms; overshooting by
+the full drift puts us 800 ms ahead, next iteration overshoots back
+to 1500 behind, infinite oscillation.
+
+Reverted to no-overshoot: just seek to `expectedPosition`. After the
+seek, drift converges to a residual ≈ −L (server's clock kept
+advancing during the seek processing window). To prevent re-seeking
+on that residual, bumped tolerance floor 100 → 600 ms and ceiling
+500 → 1000 ms — wide enough to absorb typical YT/iOS L without
+constant seeking.
+
+Tradeoff: peer-to-peer divergence now bounded at ~2 s worst case
+instead of ~1 s. Wider than ideal, but stable beats oscillating. The
+proper fix is the upcoming server-driven rewrite with adaptive
+per-client L learning — server observes drift after each seek
+command, learns each client's real L, includes correct overshoot in
+subsequent commands.
+
+Server-only / no extension republish.
+
+---
+
 # v6.6.2
 
 ### Drift-compensating seek overshoot — converges in one shot
