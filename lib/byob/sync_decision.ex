@@ -53,10 +53,13 @@ defmodule Byob.SyncDecision do
 
   # Seed L with a sensible default so the FIRST sync seek already
   # overshoots reasonably (rather than landing exactly on `expected`
-  # and being guaranteed to drift behind by L_actual). Most browser
-  # players resume playback ~150-400 ms after `seekTo()`, so 300
-  # converges most users in a single seek; outliers refine via EMA.
-  @default_learned_l_ms 300
+  # and being guaranteed to drift behind by L_actual). 500 ms covers
+  # most browser-player cold seeks (YT IFrame on a fresh load is
+  # usually 400-700 ms); under-overshoot from an over-conservative
+  # default was triggering follow-up SyncDecision seeks per peer.
+  # The first observed sample REPLACES this seed (see
+  # `maybe_update_l/2`), so a faster device converges immediately.
+  @default_learned_l_ms 500
 
   defstruct over_tolerance_count: 0,
             seek_streak: 0,
@@ -192,9 +195,20 @@ defmodule Byob.SyncDecision do
 
       true ->
         state = %{state | over_tolerance_count: state.over_tolerance_count + 1}
+        # Within the post-seek quiet window we already KNOW a seek just
+        # landed and may have left a residual — drop the sustained-report
+        # gate to 1 so we recover within ~1 s instead of waiting for a
+        # second confirmation. Outside the window the full gate applies
+        # to suppress one-off drift spikes.
+        sustained_required =
+          if state.last_seek_at > 0 and now_ms - state.last_seek_at < @post_seek_quiet_ms do
+            1
+          else
+            @sustained_reports
+          end
 
         cond do
-          state.over_tolerance_count < @sustained_reports ->
+          state.over_tolerance_count < sustained_required ->
             {:no_seek, state}
 
           cooldown_remaining_ms(state, now_ms) > 0 ->
@@ -246,15 +260,21 @@ defmodule Byob.SyncDecision do
   end
 
   # Client measured L_processing for its own most recent sync seek and
-  # included it in this drift report. EMA-smooth it into `learned_l_ms`
-  # at @l_ema_alpha — the seeded default (@default_learned_l_ms) lets
-  # the first sample blend immediately rather than fully replacing,
-  # which damps cold-seek outliers (initial seek can be ~2× warm).
+  # included it in this drift report. The FIRST real sample replaces
+  # the seed default outright — we'd rather use observed truth than
+  # blend it with a guess. Subsequent samples EMA-smooth at
+  # @l_ema_alpha to absorb cold/warm variance.
   defp maybe_update_l(state, data) do
     sample = Map.get(data, :observed_l_ms, 0) || 0
 
     if sample >= @l_observation_min_sample_ms and sample <= @l_observation_max_sample_ms do
-      new_l = @l_ema_alpha * sample + (1 - @l_ema_alpha) * state.learned_l_ms
+      new_l =
+        if state.learned_l_ms == @default_learned_l_ms do
+          # Haven't observed anything yet — replace the seed with truth.
+          sample
+        else
+          @l_ema_alpha * sample + (1 - @l_ema_alpha) * state.learned_l_ms
+        end
 
       require Logger
       user_short = data |> Map.get(:user_id, "?") |> to_string() |> String.slice(0..7)

@@ -1672,31 +1672,46 @@ defmodule Byob.RoomServer do
   # processing instead of L_processing behind it. Without this,
   # `Byob.SyncDecision` would have to fire a compensating seek for each
   # peer on every user-initiated event, which inflates seek streaks.
+  #
+  # We also UPDATE each targeted peer's SyncDecision state to mark a
+  # seek as just having been issued (`last_seek_at: now`, `seek_streak:
+  # 1`). That makes the post-seek tolerance bump engage on the next
+  # drift report — which absorbs the small residual when L_actual ≠
+  # learned_L instead of triggering a follow-up SyncDecision seek.
   defp broadcast_personalized_seek(state, position, server_time, exclude_user_id) do
     default_l = Byob.SyncDecision.default_learned_l_ms()
 
-    Enum.each(state.users, fn {uid, user} ->
-      cond do
-        uid == exclude_user_id ->
-          :ok
+    new_user_sync_states =
+      Enum.reduce(state.users, state.user_sync_states, fn {uid, user}, acc ->
+        cond do
+          uid == exclude_user_id ->
+            acc
 
-        not Map.get(user, :connected, false) ->
-          :ok
+          not Map.get(user, :connected, false) ->
+            acc
 
-        true ->
-          learned_l =
-            case Map.get(state.user_sync_states, uid) do
-              %{learned_l_ms: l} when l > 0 -> l
-              _ -> default_l
-            end
+          true ->
+            existing = Map.get(acc, uid) || Byob.SyncDecision.new()
 
-          target = max(0.0, position + learned_l / 1000)
-          command = %{position: target, server_time: server_time}
-          broadcast(state, {:user_seek_command, uid, command})
-      end
-    end)
+            learned_l =
+              if existing.learned_l_ms > 0, do: existing.learned_l_ms, else: default_l
 
-    state
+            target = max(0.0, position + learned_l / 1000)
+            command = %{position: target, server_time: server_time}
+            broadcast(state, {:user_seek_command, uid, command})
+
+            updated = %{
+              existing
+              | last_seek_at: server_time,
+                seek_streak: max(existing.seek_streak, 1),
+                over_tolerance_count: 0
+            }
+
+            Map.put(acc, uid, updated)
+        end
+      end)
+
+    %{state | user_sync_states: new_user_sync_states}
   end
 
   # Runs Byob.SyncDecision for ONE user. Returns

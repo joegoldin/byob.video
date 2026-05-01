@@ -3,6 +3,44 @@
 
 ---
 
+# v6.8.17
+
+### Faster scrub convergence — 1 seek per peer in the typical case
+
+User reported "5 seeks to settle when one client scrubs". Root cause:
+the personalized seek commands from v6.8.16 weren't updating each
+peer's `SyncDecision` state, so the post-seek tolerance bump (+300 ms)
+didn't engage and the small residual when `L_actual ≠ learned_L`
+fell outside the unbumped 300 ms tolerance — triggering a follow-up
+SyncDecision seek per peer per scrub. With 3 clients (2 peers), that's
+4-6 seeks per scrub.
+
+Four targeted fixes:
+
+1. **`@default_learned_l_ms` 300 → 500.** Most browser cold seeks
+   land in 400-700 ms; under-overshoot from the 300 default was the
+   primary cause of follow-up seeks.
+2. **`broadcast_personalized_seek/4` now updates each peer's
+   `SyncDecision` state** — `last_seek_at = server_time`,
+   `seek_streak = max(prev, 1)`, `over_tolerance_count = 0`. This
+   makes the post-seek tolerance bump engage on the next drift
+   report, absorbing the L-residual into in-tolerance space.
+3. **First L sample replaces the seed** instead of EMA-blending —
+   we'd rather use observed truth than blend with a guess. Each
+   peer's `learned_l_ms` converges to actual L on the first
+   completed sync seek.
+4. **`sustained_reports = 1` within `@post_seek_quiet_ms`.** When a
+   seek just landed and we KNOW the residual may be transient, drop
+   the 2-report gate. Outside the quiet window the full gate still
+   applies to suppress one-off drift spikes.
+
+Net for typical case (`L_actual ≈ 600 ms`, `learned_L = 500`): peer
+lands with `drift = -100 ms`, well within the bumped 600 ms
+tolerance. **0 follow-up seeks per peer.** Worst case (`L_actual =
+1200 ms`): 1 follow-up after a single sustained report (~1 s).
+
+---
+
 # v6.8.16
 
 ### Personalised user-seek; tightened bands-diagram label spacing
