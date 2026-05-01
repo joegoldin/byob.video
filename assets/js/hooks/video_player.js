@@ -106,10 +106,14 @@ const VideoPlayer = {
       // so peers see "no drift data" rather than misleading numbers.
       if (this._isLive) return;
       const state = this.player.getState?.();
+      const thresholds = this.reconcile.getEffectiveThresholds?.() || {};
       this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
         drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
         offset_ms: Math.round(this.reconcile.getOffsetMs?.() || 0),
         rtt_ms: Math.round(this.clockSync.getMedianRttMs?.() || 0),
+        dead_zone_ms: Math.round(thresholds.deadZoneMs || 0),
+        hard_seek_ms: Math.round(thresholds.hardSeekMs || 0),
+        rate_correcting: !!thresholds.isRateCorrecting,
         playing: state === "playing",
       });
     }, DRIFT_REPORT_INTERVAL_MS);
@@ -518,8 +522,15 @@ const VideoPlayer = {
       this.el.querySelector(".byob-click-to-play")?.remove();
     }
 
-    // Buffering is transient — don't push to server, don't update expectedPlayState
+    // Buffering is transient — don't push to server, don't update
+    // expectedPlayState. Also cancel any pending suppression settle:
+    // YouTube typically fires PLAYING → BUFFERING → PLAYING after a
+    // seek (including the seek that runs as part of joining a playing
+    // room), and we want the second PLAYING to stay suppressed instead
+    // of leaking out as a stale :sync_play that snaps every peer to our
+    // (still-settling) position.
     if (stateName === "buffering") {
+      this.suppression.cancelSettle?.();
       return;
     }
 

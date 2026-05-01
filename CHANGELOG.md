@@ -3,6 +3,68 @@
 
 ---
 
+# v6.5.48
+
+### Stats for nerds: correction bands diagram, glossary, |drift|, fix join-time hitch
+
+A few iterations on the v6.5.47 sync visualization plus a real bug fix:
+
+**Glossary.** The Stats-for-nerds panel now ends with a collapsed
+"What do these mean?" section explaining drift, offset, RTT,
+server pos, correction interval, drift tolerance, and the
+sparklines. No more guessing what each number is.
+
+**`|drift|` aggregate.** "Drift avg / min / max" became
+"|Drift| avg / min / max" — the sign is meaningless across a
+multi-peer roll-up, and signed values made min/max read backwards
+(min was the *most negative*, looking like everyone was barely
+behind when in fact one peer was way behind). Per-client rows
+keep the signed value where direction still tells you something.
+
+**Correction-bands diagram.** A new visualization under the
+local clock-sync chart shows the dead-zone / rate-correct /
+hard-seek bands as a horizontal dial, with vertical dividers at
+±dead-zone and ±hard-seek thresholds, and a white tick marking
+the current local drift. The active band is rendered at full
+opacity; inactive bands at ~18 %, so the eye snaps to "where am
+I right now". A status chip below reads things like *in sync*,
+*rate-correcting*, *hard-seek territory*. Crucially, the band
+widths are sourced from the player's *effective* thresholds —
+not the constants — so when hysteresis grows them (post-seek
+dead zone widens 50 → 500 ms; hard-seek threshold widens
+3000 → 4000 ms while rate-correcting), the green / amber bands
+visibly expand and the chip explicitly calls it out:
+*"dead zone widened (post-seek): 500 ms"*. To support this the
+drift-report payload now carries `dead_zone_ms`, `hard_seek_ms`,
+and `rate_correcting`, plumbed through the existing
+`:sync_client_stats` broadcast.
+
+**Fix: join-time hitch when peers join a playing room.** Tracing
+why hitches happen on join surfaced a real bug. After
+`_applyPendingState` runs `suppression.suppress("playing") +
+seekTo + play`, YouTube routinely fires
+`PLAYING → BUFFERING → PLAYING` (the buffering coming from the
+seek). The first PLAYING was consumed by suppression and
+scheduled the 200 ms settle timer; the BUFFERING branch in
+`_onPlayerStateChange` returned early without touching
+suppression, so the settle fired during the buffer and the
+*second* PLAYING leaked through as a `pushEvent(EV_VIDEO_PLAY,
+{position: <still-settling>})`. That broadcast as `:sync_play`
+to every peer, who all `seekTo(stalePosition) + play()` —
+visible as a hitch the moment a new peer's video became ready.
+
+Fix: `Suppression.cancelSettle()` clears the pending settle
+timer; `_onPlayerStateChange`'s buffering branch calls it before
+returning. With the settle held until the post-buffer state
+arrives, the second PLAYING is suppressed correctly and the
+spurious `:sync_play` no longer fires. The 3 s safety timeout
+still releases suppression in the worst case, so we can't get
+permanently stuck.
+
+Server-only / no extension republish.
+
+---
+
 # v6.5.47
 
 ### Stats for nerds: graph RTT / drift / offset over time

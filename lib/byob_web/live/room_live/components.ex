@@ -384,6 +384,16 @@ defmodule ByobWeb.RoomLive.Components do
               <div class="text-base-content/40 mb-1">Local clock sync (60s)</div>
               <div id="byob-local-sync-chart" phx-update="ignore"></div>
             </div>
+            <%!-- Correction bands: where the current drift sits on the
+                 dead-zone / rate-correct / hard-seek spectrum. The active
+                 band is highlighted; bands grow visually when hysteresis
+                 widens them (post-seek dead zone, mid-correction hard
+                 seek). The hook fills this from the local user's most
+                 recent sync_client_stats sample. --%>
+            <div class="mt-2">
+              <div class="text-base-content/40 mb-1">Correction bands</div>
+              <div id="byob-drift-bands" phx-update="ignore"></div>
+            </div>
             <% # Recent = drift report within the last 5s. Stale rows still
             # surface their owner via the @users walk below — we just don't
             # show stale numbers.
@@ -407,15 +417,18 @@ defmodule ByobWeb.RoomLive.Components do
               (@users || %{})
               |> Enum.filter(fn {_, u} -> Map.get(u, :connected, false) end) %>
             <%= if map_size(active_clients) > 0 do %>
-              <% drifts = active_clients |> Map.values() |> Enum.map(& &1.drift_ms) %>
-              <% avg = div(Enum.sum(drifts), length(drifts)) %>
-              <% {mn, mx} = Enum.min_max(drifts) %>
+              <%!-- Aggregate uses |drift| because direction is meaningless
+                   across a multi-peer roll-up — we want "how far off is
+                   the room", not "is everyone collectively behind". --%>
+              <% abs_drifts = active_clients |> Map.values() |> Enum.map(&abs(&1.drift_ms)) %>
+              <% avg = div(Enum.sum(abs_drifts), length(abs_drifts)) %>
+              <% {mn, mx} = Enum.min_max(abs_drifts) %>
               <div class="flex justify-between">
-                <span>Drift avg / min / max</span>
+                <span>|Drift| avg / min / max</span>
                 <span class={
                   cond do
-                    abs(avg) > 1000 -> "text-error"
-                    abs(avg) > 250 -> "text-warning"
+                    avg > 1000 -> "text-error"
+                    avg > 250 -> "text-warning"
                     true -> "text-success"
                   end
                 }>
@@ -516,6 +529,62 @@ defmodule ByobWeb.RoomLive.Components do
             <% else %>
               <div class="text-base-content/30 mt-1">No connected users</div>
             <% end %>
+            <%!-- Glossary: collapsed by default. Explains what each metric in
+                 the panel actually measures, plus the constants that govern
+                 how aggressively we correct. --%>
+            <details class="mt-3 pt-2 border-t border-base-300/50">
+              <summary class="text-base-content/40 cursor-pointer hover:text-base-content/60 select-none">
+                What do these mean?
+              </summary>
+              <dl class="mt-2 space-y-2 text-base-content/60">
+                <div>
+                  <dt class="text-base-content/80">Drift</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    How far this player's playback position is from where the server thinks it should be.
+                    <span class="text-success">+</span>
+                    means ahead of the room, <span class="text-error">−</span>
+                    means behind.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Offset</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    Learned structural latency for this player (video-decode + render + measurement bias). Subtracted from raw drift so peers with different pipelines converge on the same wall-clock moment instead of each sitting at their own bias.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">RTT</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    Round-trip time between this browser and the server, measured by NTP-style ping/pong probes (5-probe burst on join, single probe every 10 s after). The displayed value is the median of recent probes.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Server pos</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    The server's canonical playback position right now. Every peer's local position should converge here (modulo their own offset).
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Correction interval</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    How often the server broadcasts <code class="text-[10px]">sync:correction</code>
+                    while playing — a refresh of each client's reference point so drift extrapolation doesn't accumulate error between natural state changes.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Drift tolerance</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    Below this, you're "in sync" (green dead zone, no correction). Above it, proportional rate correction kicks in (0.9–1.1×) to gently catch up. Sustained drift &gt;3 s triggers a hard seek after a clock resync confirms it's real.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Sparklines</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    The line next to each peer's drift is the last ~60 s of their drift, color-graded the same way as the numeric value. The "Local clock sync" chart at the top overlays your own RTT, drift, and offset over the same window.
+                  </dd>
+                </div>
+              </dl>
+            </details>
           </div>
         </details>
         <%!-- Reset dismissed popups --%>

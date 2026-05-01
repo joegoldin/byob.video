@@ -46,6 +46,18 @@ export class Suppression {
     return this.suppressUntilGen > 0;
   }
 
+  // Abort the pending settle timer, keeping the suppression alive. Called
+  // from `_onPlayerStateChange` when the player enters BUFFERING — YouTube
+  // routinely fires PLAYING → BUFFERING → PLAYING after a seek, and the
+  // second PLAYING would otherwise leak past the 200 ms settle, echoing
+  // back to peers as a stale `:sync_play` and causing a join-time hitch.
+  cancelSettle() {
+    if (this.settleTimeout) {
+      clearTimeout(this.settleTimeout);
+      this.settleTimeout = null;
+    }
+  }
+
   _clear() {
     this.suppressUntilGen = 0;
     this.expectedState = null;

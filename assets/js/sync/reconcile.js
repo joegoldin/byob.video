@@ -91,6 +91,22 @@ export class Reconcile {
     this.offsetSamples = 0;
   }
 
+  // The thresholds the next tick will actually apply, after hysteresis
+  // (post-seek widens the dead zone, mid-rate-correction widens the
+  // hard-seek threshold). Surfaced for the stats-for-nerds panel so users
+  // can see *why* a band grew.
+  getEffectiveThresholds() {
+    const postSeek = Date.now() - this.lastHardSeekAt < POST_SEEK_QUIET_MS;
+    return {
+      deadZoneMs: postSeek ? POST_SEEK_DEAD_ZONE_MS : DEAD_ZONE_MS,
+      hardSeekMs: this.isRateCorrecting
+        ? HARD_SEEK_THRESHOLD_WHILE_CORRECTING_MS
+        : HARD_SEEK_THRESHOLD_MS,
+      isRateCorrecting: this.isRateCorrecting,
+      postSeek,
+    };
+  }
+
   // Temporarily pause reconcile (e.g., during local seek)
   pauseFor(ms) {
     this.pausedUntil = Date.now() + ms;

@@ -62,10 +62,16 @@ const StatsPanel = {
       renderSparkline(spark, ring.drift);
     }
 
-    // Local multi-line chart — only redraw when the sample is *ours*.
+    // Local multi-line chart + correction-bands diagram. The bands diagram
+    // is local-only because it visualizes our own Reconcile state (effective
+    // dead zone, hard-seek threshold, rate-correcting flag) — values that
+    // hysteresis can grow from their constants and that we want to *see*
+    // grow.
     if (this.localUserId && data.user_id === this.localUserId) {
       const chart = document.getElementById("byob-local-sync-chart");
       if (chart) renderLocalChart(chart, ring);
+      const bands = document.getElementById("byob-drift-bands");
+      if (bands) renderDriftBands(bands, data);
     }
   },
 };
@@ -187,6 +193,104 @@ function scalePositive(values, w, h) {
       return `${x.toFixed(1)},${y.toFixed(1)}`;
     })
     .join(" ");
+}
+
+// Horizontal "where on the dial are you" diagram. Three bands across the
+// full width:
+//
+//   [   hard seek   |   rate correct   | dead | rate correct |   hard seek   ]
+//                   ^-hardSeek         ^-dead  ^+dead         ^+hardSeek
+//
+// The active band (the one the current drift falls into) is rendered at full
+// opacity; inactive bands at ~25% so the eye snaps to the active one. The
+// dead-zone and hard-seek widths come from the *effective* thresholds in the
+// payload (50→500ms post-seek, 3000→4000ms while rate-correcting), so when
+// hysteresis kicks in the green / amber bands visibly grow.
+//
+// A vertical tick marks the current drift value; if it falls outside
+// ±hardSeek it's clamped to the edge with an overflow arrow.
+function renderDriftBands(host, data) {
+  const drift = data.drift_ms || 0;
+  const dead = Math.max(1, data.dead_zone_ms || 50);
+  const hard = Math.max(dead + 1, data.hard_seek_ms || 3000);
+  const rateCorrecting = !!data.rate_correcting;
+
+  // Fixed display range: ±2× the current hard-seek threshold so the hard-
+  // seek territory is visible even when hysteresis hasn't grown it.
+  const displayMax = hard * 2;
+  const xFor = (ms) => 50 + (ms / displayMax) * 50; // 0 → 50%, displayMax → 100%
+
+  const xDeadL = xFor(-dead);
+  const xDeadR = xFor(dead);
+  const xHardL = xFor(-hard);
+  const xHardR = xFor(hard);
+
+  const absDrift = Math.abs(drift);
+  let active;
+  if (absDrift <= dead) active = "dead";
+  else if (absDrift <= hard) active = "rate";
+  else active = "hard";
+
+  const band = (x1, x2, color, isActive) => {
+    const w = Math.max(0, x2 - x1);
+    const opacity = isActive ? "0.65" : "0.18";
+    return `<rect x="${x1}%" y="0" width="${w}%" height="100%" fill="${color}" fill-opacity="${opacity}"/>`;
+  };
+
+  // Outer red (hard seek) zones extend to the chart edges.
+  const segs =
+    band(0, xHardL, "#f87171", active === "hard") +
+    band(xHardL, xDeadL, "#fbbf24", active === "rate") +
+    band(xDeadL, xDeadR, "#34d399", active === "dead") +
+    band(xDeadR, xHardR, "#fbbf24", active === "rate") +
+    band(xHardR, 100, "#f87171", active === "hard");
+
+  // Threshold tick lines (vertical dividers) at ±dead and ±hard so the
+  // band edges are legible regardless of opacity.
+  const divider = (x) =>
+    `<line x1="${x}%" y1="0" x2="${x}%" y2="100%" stroke="rgba(255,255,255,0.25)" stroke-width="1"/>`;
+
+  const dividers =
+    divider(xDeadL) + divider(xDeadR) + divider(xHardL) + divider(xHardR);
+
+  // Current-drift indicator (vertical tick with diamond head). Clamped to
+  // the chart edges with an arrow if drift exceeds ±displayMax.
+  const clamped = Math.max(-displayMax, Math.min(displayMax, drift));
+  const tickX = xFor(clamped);
+  const overflowed = drift !== clamped;
+  const tick =
+    `<line x1="${tickX}%" y1="0" x2="${tickX}%" y2="100%" stroke="white" stroke-width="2"/>` +
+    (overflowed
+      ? `<polygon points="${tickX - 1},2 ${tickX + 1},2 ${tickX + (drift > 0 ? 2 : -2)},6" fill="white" />`
+      : "");
+
+  const labelStyle = "font-size:9px;fill:rgba(255,255,255,0.55);font-family:monospace";
+  const labelDead = `±${dead}ms`;
+  const labelHard = `±${hard}ms`;
+
+  // State chip text — "in dead zone" / "rate-correcting at NN%" / "hard seek
+  // pending" / "post-seek widened (NNms dz)" so the user can read off why
+  // a band changed size.
+  const stateBits = [];
+  if (active === "dead") stateBits.push("in sync");
+  else if (active === "rate") stateBits.push("rate-correcting");
+  else stateBits.push("hard-seek territory");
+  if (dead > 50) stateBits.push(`dead zone widened (post-seek): ${dead}ms`);
+  if (hard > 3000) stateBits.push(`hard-seek raised (correcting): ${hard}ms`);
+  if (rateCorrecting && active !== "rate") stateBits.push("rate active");
+  const chipColor =
+    active === "dead" ? "#34d399" : active === "rate" ? "#fbbf24" : "#f87171";
+
+  host.innerHTML =
+    `<svg width="100%" height="22" viewBox="0 0 100 22" preserveAspectRatio="none" style="display:block;border-radius:3px;background:rgba(0,0,0,0.2)">` +
+    segs +
+    dividers +
+    tick +
+    `</svg>` +
+    `<div style="display:flex;justify-content:space-between;font-size:9px;opacity:0.55;font-family:monospace;margin-top:2px">` +
+    `<span>−${hard}ms</span><span>${labelHard.replace("±", "−")}…${labelDead.replace("±", "−")}</span><span>0</span><span>${labelDead.replace("±", "+")}…${labelHard.replace("±", "+")}</span><span>+${hard}ms</span>` +
+    `</div>` +
+    `<div style="font-size:10px;margin-top:3px"><span style="color:${chipColor}">●</span> ${stateBits.join(" · ")} <span style="opacity:0.55">(drift ${drift > 0 ? "+" : ""}${drift}ms)</span></div>`;
 }
 
 // CSS.escape isn't universal in older WebViews; fall back to a small subset
