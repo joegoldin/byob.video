@@ -43,9 +43,9 @@ const HISTORY_SIZE = 5;
 const NOISE_EMA_ALPHA = 0.1;          // ~10-sample (1 s) horizon
 const NOISE_K_DEAD = 4;               // ~99 % CI of normal-distributed noise
 const NOISE_K_HARD = 30;              // ≫ noise → real desync, not jitter
-const MIN_DEAD_ZONE_MS = 100;         // floor, even on a glassy connection
+const MIN_DEAD_ZONE_MS = 250;         // floor matches UI's "in tolerance" green threshold
 const MAX_DEAD_ZONE_MS = 1500;        // ceiling — peers shouldn't drift > 1.5 s
-const MIN_HARD_SEEK_MS = 2000;        // never snap on < 2 s drift
+const MIN_HARD_SEEK_MS = 3000;        // never snap on < 3 s drift
 const MAX_HARD_SEEK_MS = 8000;        // anything beyond 8 s is pathological
 const POST_SEEK_DEAD_ZONE_BUMP_MS = 500; // additive on top of adaptive
 const POST_SEEK_QUIET_MS = 5000;
@@ -56,7 +56,7 @@ const HARD_SEEK_WHILE_CORRECTING_BUMP_MS = 1000; // additive on top of adaptive
 const HARD_SEEK_CONFIRM_TICKS = 3;
 const DIRECTION_STABILITY_SAMPLES = 3;
 const OFFSET_EMA_ALPHA = 0.02;       // ~50 samples (5s @ 100ms) to track
-const OFFSET_CAP_MS = 500;           // refuse to learn beyond this (transient protection)
+const OFFSET_CAP_MS = 1500;          // refuse to learn beyond this (transient protection)
 const OFFSET_WARMUP_SAMPLES = 10;    // ignore EMA until this many stable samples
 
 export class Reconcile {
@@ -82,6 +82,11 @@ export class Reconcile {
     // and hard-seek threshold.
     this.noiseFloorEmaMs = 0;
     this.noiseSamples = 0;
+    // Room-wide jitter consensus from the server (max of all peers'
+    // noiseFloor over the last 5 s). Used as a floor on this client's
+    // own jitter so calm peers don't rate-correct against a noisy peer's
+    // signal. Set externally via setRoomJitter().
+    this.roomJitterMs = 0;
     this.lastDriftMs = 0;   // most recent adjusted drift (for UI reporting)
     this.lastRawDriftMs = 0;
     // Latest effective thresholds (cached so getEffectiveThresholds is cheap).
@@ -116,6 +121,14 @@ export class Reconcile {
     this.offsetSamples = 0;
   }
 
+  // Apply the room-wide jitter consensus. Reconcile uses
+  // `max(localJitter, roomJitter)` as the input to its adaptive thresholds,
+  // so calm peers tolerate the room's noisiest signal. 0 falls back to
+  // local-only behavior.
+  setRoomJitter(ms) {
+    this.roomJitterMs = Math.max(0, ms || 0);
+  }
+
   // The thresholds the most recent tick actually applied. Both the dead
   // zone and the hard-seek threshold are adaptive (scale with observed
   // jitter) and additionally widened by event-driven hysteresis (post-seek
@@ -127,6 +140,7 @@ export class Reconcile {
       deadZoneMs: this._effectiveDeadZoneMs,
       hardSeekMs: this._effectiveHardSeekMs,
       noiseFloorMs: this.noiseFloorEmaMs,
+      roomJitterMs: this.roomJitterMs,
       isRateCorrecting: this.isRateCorrecting,
       postSeek,
     };
@@ -155,6 +169,7 @@ export class Reconcile {
     this.offsetSamples = 0;
     this.noiseFloorEmaMs = 0;
     this.noiseSamples = 0;
+    this.roomJitterMs = 0;
     this._effectiveDeadZoneMs = MIN_DEAD_ZONE_MS;
     this._effectiveHardSeekMs = MIN_HARD_SEEK_MS;
     try {
@@ -175,11 +190,21 @@ export class Reconcile {
 
     const postSeek = Date.now() - this.lastHardSeekAt < POST_SEEK_QUIET_MS;
 
-    // Update EMA only during stable conditions (not mid-seek, mid-correction,
-    // mid-resync). Cap prevents a transient from poisoning the learned value.
+    // Update EMA whenever raw drift is in a plausible structural-bias range
+    // and we're not in the post-seek transient. We deliberately DON'T gate
+    // on `!isRateCorrecting`: a peer with persistent structural bias (e.g.
+    // mobile decode pipeline) sits ABOVE the dead zone forever, so gating
+    // on "not correcting" meant the EMA never converged for exactly the
+    // peers that needed it most. Bootstrap loop: bias > tolerance → rate-
+    // correcting → no learning → bias never subtracted → still > tolerance,
+    // ad infinitum.
+    //
+    // Letting EMA learn during rate correction is safe: the EMA's slow
+    // alpha (~5 s horizon) averages out the transient catch-up motion
+    // that rate correction induces, and the OFFSET_CAP_MS guard rejects
+    // genuine outliers (post-seek transients, network glitches).
     const stableForLearning =
       !postSeek &&
-      !this.isRateCorrecting &&
       Math.abs(rawDriftMs) < OFFSET_CAP_MS * 2;
     if (stableForLearning) {
       if (this.offsetSamples === 0) {
@@ -214,15 +239,18 @@ export class Reconcile {
     }
     this.noiseSamples++;
 
-    // Effective thresholds: scale with observed noise, clamped, then
-    // widened by event-driven hysteresis (post-seek, mid-correction).
+    // Effective thresholds: scale with the larger of this client's own
+    // jitter and the room consensus (so calm peers don't rate-correct
+    // against a jittery peer's noise). Clamped, then widened by event-
+    // driven hysteresis (post-seek, mid-correction).
+    const effectiveJitterMs = Math.max(this.noiseFloorEmaMs, this.roomJitterMs);
     const adaptiveDeadZone = clamp(
-      NOISE_K_DEAD * this.noiseFloorEmaMs,
+      NOISE_K_DEAD * effectiveJitterMs,
       MIN_DEAD_ZONE_MS,
       MAX_DEAD_ZONE_MS
     );
     const adaptiveHardSeek = clamp(
-      NOISE_K_HARD * this.noiseFloorEmaMs,
+      NOISE_K_HARD * effectiveJitterMs,
       MIN_HARD_SEEK_MS,
       MAX_HARD_SEEK_MS
     );

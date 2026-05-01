@@ -368,8 +368,34 @@ const liveSocket = new LiveSocket("/live", Socket, {
       },
     },
     PreserveDetails: {
+      mounted() {
+        // Closing a long <details> can leave the surrounding scroll
+        // container clamped past its new content (modal-box specifically),
+        // making the click feel like the page jumped. Pin the summary in
+        // view on user toggles. Defer one frame so the browser has applied
+        // the open/close before we measure.
+        const summary = this.el.querySelector(":scope > summary");
+        if (summary) {
+          this._summaryHandler = () => {
+            requestAnimationFrame(() => {
+              try {
+                this.el.scrollIntoView({ block: "nearest", behavior: "instant" });
+              } catch (_) {
+                this.el.scrollIntoView();
+              }
+            });
+          };
+          summary.addEventListener("click", this._summaryHandler);
+        }
+      },
       beforeUpdate() { this._wasOpen = this.el.open; },
-      updated() { this.el.open = this._wasOpen; }
+      updated() { this.el.open = this._wasOpen; },
+      destroyed() {
+        if (this._summaryHandler) {
+          const summary = this.el.querySelector(":scope > summary");
+          if (summary) summary.removeEventListener("click", this._summaryHandler);
+        }
+      }
     },
     // Settings → "Forget cleared popups". Each child item declares the
     // localStorage key it represents via data-storage-key. On mount, items

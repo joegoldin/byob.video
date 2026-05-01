@@ -425,6 +425,28 @@ defmodule ByobWeb.RoomLive do
         play_state: data.play_state
       })
 
+    # Room-wide tolerance consensus: the noisiest non-stale peer sets the
+    # bar. Every client computes its own consensus from its own clients map
+    # — they all see the same broadcasts, so they converge on the same
+    # value. Pushed to JS via push_event so Reconcile can use it as the
+    # *floor* for its own jitter EMA, stopping calm peers from rate-
+    # correcting against a jittery peer's noise.
+    now_s = System.system_time(:second)
+
+    room_jitter =
+      clients
+      |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
+      |> Enum.map(fn {_, c} -> Map.get(c, :noise_floor_ms, 0) end)
+      |> case do
+        [] -> 0
+        list -> Enum.max(list)
+      end
+
+    socket =
+      Phoenix.LiveView.push_event(socket, Events.sync_room_tolerance(), %{
+        room_jitter_ms: room_jitter
+      })
+
     {:noreply, assign(socket, :sync_stats, sync_stats)}
   end
 

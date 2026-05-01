@@ -3,6 +3,60 @@
 
 ---
 
+# v6.5.51
+
+### Room-wide jitter consensus, offset bootstrap fix, scroll-stable glossary
+
+Three connected fixes:
+
+**Drift tolerance is now driven by *room* jitter, not local jitter.**
+The previous adaptive logic was per-client: each peer scaled its
+own tolerance to its own jitter EMA. That meant a calm peer (joe,
+jitter ≈ 8 ms) sat at the 100 ms tolerance floor and constantly
+rate-corrected against a jittery peer's drift; a noisy peer
+(iphone on cellular) had its own narrow tolerance and kept
+slamming into the hard-seek threshold whenever buffering pushed
+its drift past it.
+
+Now: server computes `room_jitter = max(noise_floor)` over all
+non-stale peers, pushes it to every client on each
+`:sync_client_stats`, and Reconcile uses
+`max(local, room) × K_dead` as the input to its adaptive dead
+zone (and same for hard-seek). Calm peers tolerate the room's
+noisiest signal instead of fighting it; noisy peers don't keep
+provoking buffering with a too-tight tolerance. New "Room jitter
+(consensus)" row in the panel shows the value, highlighted amber
+when a peer is setting the bar.
+
+Floors also bumped to match the UI's existing 250 ms warning
+threshold (dead zone min 100→250 ms, hard-seek min 2000→3000 ms).
+And the offset-EMA cap moved 500→1500 ms so high-bias peers
+(mobile decode pipelines) can actually have their structural
+latency learned and subtracted.
+
+**Offset EMA bootstrap fix.** The EMA was gated on
+`!isRateCorrecting`. A peer with a real structural bias sat
+ABOVE the dead zone forever → constantly rate-correcting →
+never stable conditions → EMA never converged → bias never got
+subtracted → still above tolerance. Catch-22. Removed the gate;
+the EMA's slow alpha (~5 s horizon) averages out the transient
+catch-up motion of rate correction, and the existing
+OFFSET_CAP_MS guard still rejects genuine outliers. Combined
+with the wider room tolerance, biased mobile peers should now
+settle to a stable equilibrium with offset learned and rate
+correction off.
+
+**Glossary scroll fix.** Closing the "What do these mean?"
+`<details>` inside the modal could leave the scroll container
+clamped past the new (shorter) content, making it feel like the
+page jumped. Added a click handler in the `PreserveDetails` hook
+that calls `scrollIntoView({block: "nearest"})` on the next frame
+so the summary stays where the user clicked it.
+
+Server-only / no extension republish.
+
+---
+
 # v6.5.50
 
 ### Adaptive drift thresholds + redesigned correction-bands diagram

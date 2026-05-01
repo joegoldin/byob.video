@@ -71,6 +71,12 @@ const VideoPlayer = {
     this.handleEvent(LV_EVT.SYNC_PONG, (data) => this.clockSync.handlePong(data));
     this.handleEvent(LV_EVT.SYNC_CORRECTION, (data) => this._onSyncCorrection(data));
     this.handleEvent(LV_EVT.SYNC_HEARTBEAT, (data) => this._onSyncHeartbeat(data));
+    this.handleEvent(LV_EVT.SYNC_ROOM_TOLERANCE, (data) => {
+      // Server pushes the room-wide jitter consensus on every drift
+      // report from any peer. Reconcile uses it as a floor on its own
+      // jitter EMA so we don't fight a noisy peer's signal locally.
+      this.reconcile.setRoomJitter?.(data?.room_jitter_ms || 0);
+    });
     this.handleEvent(LV_EVT.SYNC_AUTOPLAY_COUNTDOWN, (data) => this._onAutoplayCountdown(data));
     this.handleEvent(LV_EVT.SYNC_AUTOPLAY_CANCELLED, () => this._hideAutoplayCountdown());
     this.handleEvent(LV_EVT.SPONSOR_SEGMENTS, (data) => this._onSponsorSegments(data));

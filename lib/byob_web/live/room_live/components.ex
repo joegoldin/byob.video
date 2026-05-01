@@ -387,20 +387,43 @@ defmodule ByobWeb.RoomLive.Components do
             hard_seek = Map.get(local_client, :hard_seek_ms, 0)
             noise_floor = Map.get(local_client, :noise_floor_ms, 0)
             rate_correcting? = Map.get(local_client, :rate_correcting, false)
-            dead_zone = if dead_zone > 0, do: dead_zone, else: 100
-            hard_seek = if hard_seek > 0, do: hard_seek, else: 2000 %>
+            dead_zone = if dead_zone > 0, do: dead_zone, else: 250
+            hard_seek = if hard_seek > 0, do: hard_seek, else: 3000
+
+            # Room consensus: max non-stale peer jitter. The "room is as
+            # calm as its noisiest peer" — calm peers tolerate the worst
+            # client's noise instead of trying to rate-correct against it.
+            now_s = System.system_time(:second)
+
+            room_jitter =
+              (@sync_stats[:clients] || %{})
+              |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
+              |> Enum.map(fn {_, c} -> Map.get(c, :noise_floor_ms, 0) end)
+              |> case do
+                [] -> 0
+                list -> Enum.max(list)
+              end %>
             <div class="flex justify-between">
               <span>Correction interval</span>
               <span>{@sync_stats.correction_interval_ms}ms</span>
             </div>
             <div class="flex justify-between">
-              <span>Jitter (Δdrift EMA)</span>
+              <span>Local jitter (Δdrift EMA)</span>
               <span class="text-base-content/40">{noise_floor}ms</span>
             </div>
-            <%!-- Drift tolerance and hard-seek are derived from the jitter
-                 EMA above (with floors / ceilings + post-seek and rate-
-                 correcting bumps). They grow on noisy links and tighten on
-                 calm ones. --%>
+            <div class="flex justify-between">
+              <span>Room jitter (consensus)</span>
+              <span class={
+                if room_jitter > noise_floor, do: "text-warning", else: "text-base-content/40"
+              }>
+                {room_jitter}ms{if room_jitter > noise_floor, do: " (peer)", else: ""}
+              </span>
+            </div>
+            <%!-- Drift tolerance and hard-seek are derived from the *room*
+                 consensus jitter (with floors / ceilings + post-seek and
+                 rate-correcting bumps). Wider room jitter → wider local
+                 tolerance, so calm peers don't fight a noisy peer's
+                 signal. --%>
             <div class="flex justify-between">
               <span>Drift tolerance</span>
               <span class="text-base-content/70">±{dead_zone}ms</span>
@@ -609,21 +632,27 @@ defmodule ByobWeb.RoomLive.Components do
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-base-content/80">Jitter (Δdrift EMA)</dt>
+                  <dt class="text-base-content/80">Local jitter (Δdrift EMA)</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    Exponential moving average of the per-tick change in drift, |drift<sub>t</sub> − drift<sub>t-1</sub>|. A model-free measure of how much your drift signal bounces around independent of bias or slow drift. Drift tolerance and the hard-seek threshold are both derived from this — calm link → tight thresholds, flaky link → wide ones.
+                    Exponential moving average of the per-tick change in drift, |drift<sub>t</sub> − drift<sub>t-1</sub>|, on this browser. A model-free measure of how much your drift signal bounces, independent of bias or slow drift.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Room jitter (consensus)</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    The max of every connected peer's local jitter — "the room is as calm as its noisiest member". This (not local jitter) is what drives the drift tolerance below: a calm peer doesn't try to rate-correct against a jittery peer's signal. Highlighted amber when the consensus is set by someone other than you.
                   </dd>
                 </div>
                 <div>
                   <dt class="text-base-content/80">Drift tolerance</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    Adaptive: roughly 4× the jitter EMA, clamped to [100 ms, 1500 ms], plus a 500 ms post-seek bump. Below this, you're "in sync" (green dead zone, no correction). Above it, proportional rate correction kicks in (0.9–1.1×) to gently catch up.
+                    Adaptive: roughly 4× the room jitter, clamped to [250 ms, 1500 ms], plus a 500 ms post-seek bump. Below this, you're "in sync" (green dead zone, no correction). Above it, proportional rate correction kicks in (0.9–1.1×) to gently catch up.
                   </dd>
                 </div>
                 <div>
                   <dt class="text-base-content/80">Hard seek at</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    Adaptive: roughly 30× the jitter EMA, clamped to [2 s, 8 s], plus a 1 s bump while actively rate-correcting. Sustained drift over this for 300 ms triggers a clock resync, and if drift is still over after, a hard seek.
+                    Adaptive: roughly 30× the room jitter, clamped to [3 s, 8 s], plus a 1 s bump while actively rate-correcting. Sustained drift over this for 300 ms triggers a clock resync, and if drift is still over after, a hard seek.
                   </dd>
                 </div>
                 <div>
