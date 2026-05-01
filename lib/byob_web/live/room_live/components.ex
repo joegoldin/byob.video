@@ -388,13 +388,12 @@ defmodule ByobWeb.RoomLive.Components do
               |> Map.get(:clients, %{})
               |> Map.get("#{@user_id}:browser") || %{}
 
-            dead_zone = Map.get(local_client, :dead_zone_ms, 0)
-            hard_seek = Map.get(local_client, :hard_seek_ms, 0)
+            tolerance = Map.get(local_client, :tolerance_ms, 0)
             noise_floor = Map.get(local_client, :noise_floor_ms, 0)
             local_abs_drift = abs(Map.get(local_client, :drift_ms, 0))
-            rate_correcting? = Map.get(local_client, :rate_correcting, false)
-            dead_zone = if dead_zone > 0, do: dead_zone, else: 250
-            hard_seek = if hard_seek > 0, do: hard_seek, else: 3000
+            seek_streak = Map.get(local_client, :seek_streak, 0)
+            cooldown_remaining = Map.get(local_client, :cooldown_remaining_ms, 0)
+            tolerance = if tolerance > 0, do: tolerance, else: 100
 
             # Room consensus: max non-stale peer jitter AND max non-stale
             # peer |drift|. Two signals — jitter captures noise, drift
@@ -418,18 +417,12 @@ defmodule ByobWeb.RoomLive.Components do
                   }
               end
 
-            # Annotate which input is *driving* the current tolerance, so
-            # users can see at a glance whether they're tracking a noisy
-            # peer's jitter or a slow peer's offset. K factors must match
-            # reconcile.js (NOISE_K_DEAD=4, DRIFT_K_DEAD=1.5).
-            tol_from_jitter = 4 * max(noise_floor, room_jitter)
-            tol_from_drift = trunc(1.5 * room_max_drift)
-
+            # Annotate the tolerance driver: floor / ceiling / peer / local.
+            # K factor must match reconcile.js (NOISE_K_TOLERANCE=4).
             tolerance_driver =
               cond do
-                dead_zone <= 250 -> "floor"
-                dead_zone >= 1500 -> "ceiling"
-                tol_from_drift > tol_from_jitter and room_max_drift > 0 -> "peer drift"
+                tolerance <= 100 -> "floor"
+                tolerance >= 500 -> "ceiling"
                 room_jitter > noise_floor -> "peer jitter"
                 true -> "local jitter"
               end %>
@@ -457,28 +450,34 @@ defmodule ByobWeb.RoomLive.Components do
                 {room_max_drift}ms{if room_max_drift > local_abs_drift, do: " (peer)", else: ""}
               </span>
             </div>
-            <%!-- Drift tolerance and hard-seek scale with the larger of
-                 (K_jitter × jitter, K_drift × max-drift) — so noisy AND
-                 spread-out rooms both get wider tolerance. The "(driven by
-                 X)" annotation matches the style of the room jitter row's
-                 "(peer)" tag. --%>
+            <%!-- Drift tolerance: K × max(local jitter, room jitter), clamped
+                 to [100, 500] ms. Below this we're in sync; above for 300 ms
+                 we hard-seek (subject to the cooldown ladder). --%>
             <div class="flex justify-between">
               <span>Drift tolerance</span>
               <span class={
                 cond do
-                  tolerance_driver in ["peer drift", "peer jitter"] -> "text-warning"
+                  tolerance_driver == "peer jitter" -> "text-warning"
                   true -> "text-base-content/70"
                 end
               }>
-                ±{dead_zone}ms ({tolerance_driver})
+                ±{tolerance}ms ({tolerance_driver})
               </span>
             </div>
-            <div class="flex justify-between">
-              <span>Hard seek at</span>
-              <span class={if rate_correcting?, do: "text-warning", else: "text-base-content/70"}>
-                ±{hard_seek}ms{if rate_correcting?, do: " (+correcting bump)", else: ""}
-              </span>
-            </div>
+            <%= if seek_streak > 0 do %>
+              <div class="flex justify-between">
+                <span>Seek cooldown</span>
+                <span class={
+                  if cooldown_remaining > 0, do: "text-warning", else: "text-base-content/40"
+                }>
+                  <%= if cooldown_remaining > 0 do %>
+                    {div(cooldown_remaining, 100) / 10}s remaining (streak {seek_streak})
+                  <% else %>
+                    ready · streak {seek_streak}
+                  <% end %>
+                </span>
+              </div>
+            <% end %>
             <%!-- Local clock-sync chart: RTT + drift + offset over the last 60s.
                  Hook owns this element's contents; LV stays out of the way. --%>
             <div class="mt-2 pt-2 border-t border-base-300/50">
@@ -719,13 +718,13 @@ defmodule ByobWeb.RoomLive.Components do
                 <div>
                   <dt class="text-base-content/80">Drift tolerance</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    Adaptive: roughly 4× the room jitter, clamped to [250 ms, 1500 ms], plus a 500 ms post-seek bump. Below this, you're "in sync" (green dead zone, no correction). Above it, proportional rate correction kicks in (0.9–1.1×) to gently catch up.
+                    Adaptive: 4× the room jitter, clamped to [100 ms, 500 ms], plus a 100 ms post-seek bump. Within this we're "in sync" — green band on the diagram. Sustained drift past tolerance for 300 ms triggers a hard seek (gated by cooldown).
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-base-content/80">Hard seek at</dt>
+                  <dt class="text-base-content/80">Hard seek + cooldown</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    Adaptive: roughly 30× the room jitter, clamped to [3 s, 8 s], plus a 1 s bump while actively rate-correcting. Sustained drift over this for 300 ms triggers a clock resync, and if drift is still over after, a hard seek.
+                    Drift correction is seek-only (no rate correction — too unreliable across browsers). When a seek fires, the next is gated by an exponential cooldown: 1 s, 2 s, 4 s, 5 s (cap). 10 s of stability resets the ladder. Net: typical session has one seek (late join), pathological cases settle to one seek every 5 s, never more.
                   </dd>
                 </div>
                 <div>

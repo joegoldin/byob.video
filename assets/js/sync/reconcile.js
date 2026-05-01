@@ -1,68 +1,52 @@
-// Drift correction loop with proportional playbackRate and hard seek.
+// Drift correction loop — seek-only, no rate correction.
 //
-// Thresholds:
-//   * Dead zone:    < deadZone        → rate = 1.0
-//   * Rate correct: deadZone – hardSeek → proportional rate (0.9 – 1.1)
-//   * Hard seek:    > hardSeek        → seekTo; triggers resync to rule out clock skew
+// Model:
+//   * Track raw drift per tick: drift = local_position - server_expected.
+//     No offset EMA: structural decoder lag (~50-200 ms) is below the
+//     tolerance floor so it doesn't matter; bigger persistent offsets
+//     are real desyncs that should be seeked away, not "learned".
+//   * Track jitter as EMA of |Δdrift| per tick. Robust to bias and slow
+//     drift; captures actual measurement noise.
+//   * Tolerance = K × max(local jitter, room jitter), clamped to a
+//     [floor, ceiling] band. No separate "rate correction" zone — once
+//     drift exceeds tolerance for SEEK_CONFIRM_TICKS, we hard seek.
+//   * Hard seek is gated by exponential backoff cooldown: 1s, 2s, 4s,
+//     5s (cap). Streak resets after 60 s of quiet, so a single late-
+//     join seek doesn't penalize itself if everything's calm afterward.
 //
-// Both deadZone and hardSeek are *adaptive* — derived from this player's
-// observed tick-to-tick drift jitter (noiseFloorEma) so a calm link gets
-// tight thresholds and a flaky link gets wide ones. We don't fight noise.
+// Why no rate correction:
+//   On many devices (mobile Safari, ad-supported YT embeds) setPlayback-
+//   Rate is silently ignored or clamped, so the loop fires forever
+//   without making progress and we eventually fall through to a hard
+//   seek anyway — visible as a frame jump that the user attributes to
+//   "rate correction stuttering". Skip the indirection: just seek when
+//   we actually need to, rate-limit the seeks, and let the player run
+//   at native speed in between.
 //
-// Stability mechanics:
-//   * noiseFloorEma is the EMA of |Δdrift| per tick — model-free jitter
-//     measure, robust to bias and slow drift.
-//   * driftHistory rolling median kills instantaneous jitter
-//   * directionStable gate requires N consistent-sign samples before flipping rate
-//   * Hard-seek confirm window: drift must exceed threshold for N consecutive
-//     ticks before we even trigger the resync flow. A single jitter spike
-//     (common on high-RTT-variance links, e.g. cross-coast) gets filtered.
-//   * Post-seek quiet window (widened dead-zone bump for 5 s) prevents re-trigger on bounce
-//   * Before hard seek, we request a mini-burst resync. If drift is still huge after
-//     the fresh offset lands, we seek. Otherwise the rate-correction path handles it.
-//   * setServerState only clears history on genuine state transitions (play /
-//     pause / seek). Periodic reference refreshes (sync_correction every 1 s,
-//     state_heartbeat every 5 s) leave history intact so the median filter
-//     stays warm — otherwise it'd be wiped before it can smooth anything.
-//
-// Adaptive offset:
-//   Each client has a structural latency (decode + render + measurement bias).
-//   We learn it as an EMA of raw drift during stable conditions, then use
-//   `drift - offsetEma` as the correction signal. Two clients with different
-//   structural latencies converge on the same wall-clock moment instead of
-//   each sitting at their own drift within tolerance.
+// Why no offset EMA:
+//   The EMA can't distinguish "structural decoder lag" (~100 ms, fine
+//   to ignore) from "positional desync we've given up correcting"
+//   (large, definitely NOT fine to ignore). It learned both as
+//   "structural" and stopped correcting — hiding real desyncs. Better
+//   to just use raw drift and accept that small (<tolerance) decoder
+//   lag is below the threshold for action.
 
 const TICK_MS = 100;
-const HISTORY_SIZE = 5;
-// Adaptive thresholds. The dead zone and hard-seek thresholds are derived
-// from this player's observed *tick-to-tick* drift jitter (noiseFloorEma),
-// which is a model-free measure of how much our drift signal bounces
-// independent of any bias or slow steady drift. Higher jitter → wider
-// thresholds, so we don't fight noise. Calm local network → tight
-// thresholds for fast convergence.
-const NOISE_EMA_ALPHA = 0.1;          // ~10-sample (1 s) horizon
-const NOISE_K_DEAD = 4;               // ~99 % CI of normal-distributed noise
-const NOISE_K_HARD = 30;              // ≫ noise → real desync, not jitter
-// Drift K factors are smaller than jitter K because drift is a *signal*,
-// not noise — we don't need many sigmas of headroom, we just need enough
-// margin to clear the worst peer's sustained offset without correcting.
-const DRIFT_K_DEAD = 1.5;             // tolerance = 1.5 × max-peer-drift
-const DRIFT_K_HARD = 5;                // hard-seek = 5 × max-peer-drift
-const MIN_DEAD_ZONE_MS = 250;         // floor matches UI's "in tolerance" green threshold
-const MAX_DEAD_ZONE_MS = 1500;        // ceiling — peers shouldn't drift > 1.5 s
-const MIN_HARD_SEEK_MS = 3000;        // never snap on < 3 s drift
-const MAX_HARD_SEEK_MS = 8000;        // anything beyond 8 s is pathological
-const POST_SEEK_DEAD_ZONE_BUMP_MS = 500; // additive on top of adaptive
+const NOISE_EMA_ALPHA = 0.1;             // ~1 s horizon
+const NOISE_K_TOLERANCE = 4;             // tolerance = 4 × jitter (4σ headroom)
+// Adaptive: tight when jitter is low (peers really are in sync), loose when
+// jitter is high (don't fight network noise). Ideal would be 0 ms drift,
+// but we accept the noise floor of the link in exchange for not seeking
+// constantly. Typical: calm wired ≈ 100 ms, light wifi ≈ 120-200 ms,
+// heavy/mobile clamped at 500 ms ceiling.
+const MIN_TOLERANCE_MS = 100;
+const MAX_TOLERANCE_MS = 500;
+const POST_SEEK_TOLERANCE_BUMP_MS = 100; // small bump after a seek so the player can settle
 const POST_SEEK_QUIET_MS = 5000;
-const RATE_TIME_CONSTANT_S = 5; // drift/timeConstant scales into the rate delta
-const RATE_MIN = 0.9;
-const RATE_MAX = 1.1;
-const HARD_SEEK_WHILE_CORRECTING_BUMP_MS = 1000; // additive on top of adaptive
-const HARD_SEEK_CONFIRM_TICKS = 3;
-const DIRECTION_STABILITY_SAMPLES = 3;
-const OFFSET_EMA_ALPHA = 0.02;       // ~50 samples (5s @ 100ms) to track
-const OFFSET_CAP_MS = 1500;          // refuse to learn beyond this (transient protection)
-const OFFSET_WARMUP_SAMPLES = 10;    // ignore EMA until this many stable samples
+const SEEK_CONFIRM_TICKS = 3;            // 300 ms sustained over tolerance before acting
+const SEEK_COOLDOWN_BASE_MS = 1000;      // first cooldown after a seek
+const SEEK_COOLDOWN_MAX_MS = 5000;       // cap — never wait longer than this
+const SEEK_STREAK_RESET_MS = 10_000;     // 10 s quiet → cooldown ladder resets
 
 export class Reconcile {
   constructor(playerAdapter) {
@@ -70,93 +54,67 @@ export class Reconcile {
     this.player = playerAdapter;
     this.clockSync = null;
     this.serverPosition = 0; // seconds
-    this.serverTime = 0; // ms (server monotonic)
+    this.serverTime = 0;     // ms (server monotonic)
     this.interval = null;
-    this.isRateCorrecting = false;
-    this.currentRateSign = 0; // -1 (slow), 0 (none), +1 (fast)
-    this.lastHardSeekAt = 0;
-    this.pausedUntil = 0; // temporarily disable reconcile
-    this.resyncInFlight = false;
-    this.lastResyncAt = 0;
-    this.hardSeekCandidateTicks = 0; // consecutive ticks above hard-seek threshold
-    this.driftHistory = []; // rolling list of most-recent drifts (ms)
-    this.offsetEmaMs = 0;   // learned structural latency (ms)
-    this.offsetSamples = 0; // count of stable samples contributing to EMA
-    // EMA of |drift_t − drift_{t-1}| — captures tick-to-tick jitter
-    // (independent of bias and slow drift). Drives the adaptive dead zone
-    // and hard-seek threshold.
+    this.pausedUntil = 0;    // temporarily disable reconcile
+
+    // Jitter (noise) EMA — tick-to-tick |Δdrift|.
     this.noiseFloorEmaMs = 0;
     this.noiseSamples = 0;
-    // Room-wide consensus from the server. Two signals:
-    //   roomJitterMs    = max peer jitter EMA (noise floor)
-    //   roomMaxDriftMs  = max peer |drift|   (sustained offset)
-    // Reconcile uses both with different K factors so the effective
-    // dead zone widens whenever EITHER consensus is high — calm peers
-    // tolerate the worst peer's noise AND the worst peer's offset.
+
+    // Room consensus (set by VideoPlayer from `sync:room_tolerance`).
+    // jitter joins our local jitter via max(); maxDrift is informational.
     this.roomJitterMs = 0;
     this.roomMaxDriftMs = 0;
-    this.lastDriftMs = 0;   // most recent adjusted drift (for UI reporting)
-    this.lastRawDriftMs = 0;
-    // Latest effective thresholds (cached so getEffectiveThresholds is cheap).
-    this._effectiveDeadZoneMs = MIN_DEAD_ZONE_MS;
-    this._effectiveHardSeekMs = MIN_HARD_SEEK_MS;
+
+    // Seek tracking.
+    this.lastSeekAt = 0;
+    this.seekStreak = 0;
+    this.seekCandidateTicks = 0;
+
+    // Cached for stats panel.
+    this.lastDriftMs = 0;
+    this._effectiveToleranceMs = MIN_TOLERANCE_MS;
   }
 
-  // resetHistory: pass false for periodic reference refreshes (sync_correction,
-  // state_heartbeat) where the drift signal is continuous across the update.
-  // Default true preserves the original semantics for genuine state transitions
-  // (play / pause / seek), where prior drift samples no longer apply.
-  setServerState(position, serverTime, clockSync, { resetHistory = true } = {}) {
+  // resetHistory is accepted for back-compat but no longer needed without
+  // a drift-history median; the jitter EMA is continuous across reference
+  // refreshes anyway.
+  setServerState(position, serverTime, clockSync, _opts = {}) {
     this.serverPosition = position;
     this.serverTime = serverTime;
     this.clockSync = clockSync;
-    if (resetHistory) {
-      // State moved; drift history is stale. Keep offsetEma — it's a property
-      // of the player pipeline, not of any particular server reference.
-      this.driftHistory = [];
-      this.hardSeekCandidateTicks = 0;
-    }
+    this.seekCandidateTicks = 0;
   }
 
-  // Current learned offset (for UI / reporting).
-  getOffsetMs() {
-    return this.offsetSamples >= OFFSET_WARMUP_SAMPLES ? this.offsetEmaMs : 0;
-  }
-
-  // Forget the learned offset (call on source/video change).
-  resetOffset() {
-    this.offsetEmaMs = 0;
-    this.offsetSamples = 0;
-  }
-
-  // Apply the room-wide consensus values. `jitter` is max peer noise
-  // floor; `maxDrift` is max peer |drift|. They drive separate inputs to
-  // the adaptive thresholds (with different K factors). 0 falls back to
-  // local-only behavior on either dimension.
+  // Apply room-wide consensus. jitter is folded into the tolerance via
+  // max(local, room); maxDrift is informational only (no longer drives
+  // tolerance — seeks fix sustained drift, they don't tolerate it).
   setRoomTolerance({ jitter = 0, maxDrift = 0 } = {}) {
     this.roomJitterMs = Math.max(0, jitter || 0);
     this.roomMaxDriftMs = Math.max(0, maxDrift || 0);
   }
 
-  // The thresholds the most recent tick actually applied. Both the dead
-  // zone and the hard-seek threshold are adaptive (scale with observed
-  // jitter) and additionally widened by event-driven hysteresis (post-seek
-  // dead zone, mid-correction hard seek). Surfaced for the stats-for-
-  // nerds panel so users can see *why* a band grew.
+  // Snapshot exposed to the stats panel.
   getEffectiveThresholds() {
-    const postSeek = Date.now() - this.lastHardSeekAt < POST_SEEK_QUIET_MS;
+    const postSeek = Date.now() - this.lastSeekAt < POST_SEEK_QUIET_MS;
     return {
-      deadZoneMs: this._effectiveDeadZoneMs,
-      hardSeekMs: this._effectiveHardSeekMs,
+      toleranceMs: this._effectiveToleranceMs,
       noiseFloorMs: this.noiseFloorEmaMs,
       roomJitterMs: this.roomJitterMs,
       roomMaxDriftMs: this.roomMaxDriftMs,
-      isRateCorrecting: this.isRateCorrecting,
       postSeek,
+      seekStreak: this.seekStreak,
+      cooldownRemainingMs: this._cooldownRemainingMs(),
     };
   }
 
-  // Temporarily pause reconcile (e.g., during local seek)
+  // Legacy shims kept so callers don't break (offset row in panel hides
+  // when 0; resetOffset is no-op).
+  getOffsetMs() { return 0; }
+  resetOffset() {}
+
+  // Temporarily pause reconcile (e.g., during local seek).
   pauseFor(ms) {
     this.pausedUntil = Date.now() + ms;
   }
@@ -171,227 +129,88 @@ export class Reconcile {
       clearInterval(this.interval);
       this.interval = null;
     }
-    this.isRateCorrecting = false;
-    this.currentRateSign = 0;
-    this.driftHistory = [];
-    this.hardSeekCandidateTicks = 0;
-    this.offsetEmaMs = 0;
-    this.offsetSamples = 0;
     this.noiseFloorEmaMs = 0;
     this.noiseSamples = 0;
     this.roomJitterMs = 0;
     this.roomMaxDriftMs = 0;
-    this._effectiveDeadZoneMs = MIN_DEAD_ZONE_MS;
-    this._effectiveHardSeekMs = MIN_HARD_SEEK_MS;
-    try {
-      this.player.setPlaybackRate(1.0);
-    } catch (_) {}
+    this.lastSeekAt = 0;
+    this.seekStreak = 0;
+    this.seekCandidateTicks = 0;
+    this._effectiveToleranceMs = MIN_TOLERANCE_MS;
+    try { this.player.setPlaybackRate(1.0); } catch (_) {}
   }
 
   _tick() {
     if (!this.clockSync || !this.clockSync.isReady()) return;
     if (Date.now() < this.pausedUntil) return;
-    if (this.resyncInFlight) return;
 
     const now = this.clockSync.serverNow();
     const elapsed = (now - this.serverTime) / 1000;
     const expectedPosition = this.serverPosition + elapsed;
     const localPosition = this.player.getCurrentTime();
-    const rawDriftMs = (localPosition - expectedPosition) * 1000;
+    const driftMs = (localPosition - expectedPosition) * 1000;
 
-    const postSeek = Date.now() - this.lastHardSeekAt < POST_SEEK_QUIET_MS;
-
-    // Update EMA whenever raw drift is in a plausible structural-bias range
-    // and we're not in the post-seek transient. We deliberately DON'T gate
-    // on `!isRateCorrecting`: a peer with persistent structural bias (e.g.
-    // mobile decode pipeline) sits ABOVE the dead zone forever, so gating
-    // on "not correcting" meant the EMA never converged for exactly the
-    // peers that needed it most. Bootstrap loop: bias > tolerance → rate-
-    // correcting → no learning → bias never subtracted → still > tolerance,
-    // ad infinitum.
-    //
-    // Letting EMA learn during rate correction is safe: the EMA's slow
-    // alpha (~5 s horizon) averages out the transient catch-up motion
-    // that rate correction induces, and the OFFSET_CAP_MS guard rejects
-    // genuine outliers (post-seek transients, network glitches).
-    const stableForLearning =
-      !postSeek &&
-      Math.abs(rawDriftMs) < OFFSET_CAP_MS * 2;
-    if (stableForLearning) {
-      if (this.offsetSamples === 0) {
-        this.offsetEmaMs = rawDriftMs;
-      } else {
-        this.offsetEmaMs =
-          OFFSET_EMA_ALPHA * rawDriftMs + (1 - OFFSET_EMA_ALPHA) * this.offsetEmaMs;
-      }
-      this.offsetEmaMs = clamp(this.offsetEmaMs, -OFFSET_CAP_MS, OFFSET_CAP_MS);
-      this.offsetSamples++;
-    }
-
-    // Subtract learned offset so reconcile acts on drift from baseline, not
-    // from the abstract server projection. Uniform -200ms across clients →
-    // all learn -200 → all adjusted-drifts → 0 → no corrections fire.
-    const effectiveOffsetMs =
-      this.offsetSamples >= OFFSET_WARMUP_SAMPLES ? this.offsetEmaMs : 0;
-    const driftMs = rawDriftMs - effectiveOffsetMs;
-
-    // -----------------------------------------------------------------
-    // Adaptive noise estimate: tick-to-tick |Δdrift|. Robust to bias
-    // (offset already removed) and slow drift (a steady ramp produces
-    // a ~constant Δ, which is the actual rate of change, not noise —
-    // but conveniently still small). Big spikes here = real jitter.
-    // -----------------------------------------------------------------
-    const tickDelta = this.noiseSamples === 0 ? 0 : Math.abs(driftMs - this.lastDriftMs);
-    if (this.noiseSamples === 0) {
-      this.noiseFloorEmaMs = 0;
-    } else {
+    // Jitter EMA (skip the very first sample where Δ is undefined).
+    if (this.noiseSamples > 0) {
+      const tickDelta = Math.abs(driftMs - this.lastDriftMs);
       this.noiseFloorEmaMs =
         NOISE_EMA_ALPHA * tickDelta + (1 - NOISE_EMA_ALPHA) * this.noiseFloorEmaMs;
     }
     this.noiseSamples++;
 
-    // Effective thresholds: take the max of two scaled inputs so the band
-    // grows whenever EITHER signal is large.
-    //   jitter input:  K_jitter × max(local jitter, room jitter)
-    //                  — needs many sigmas of headroom over noise
-    //   drift input:   K_drift  × room max |drift|
-    //                  — only needs enough margin to clear the worst peer's
-    //                    sustained offset; not noise, so smaller K
-    // Then clamped, then widened by event-driven hysteresis.
+    // Tolerance = K × max(local, room) jitter, clamped, with post-seek
+    // bump. Wider on flaky links, tight on calm ones.
     const effectiveJitterMs = Math.max(this.noiseFloorEmaMs, this.roomJitterMs);
-    const adaptiveDeadZone = clamp(
-      Math.max(
-        NOISE_K_DEAD * effectiveJitterMs,
-        DRIFT_K_DEAD * this.roomMaxDriftMs
-      ),
-      MIN_DEAD_ZONE_MS,
-      MAX_DEAD_ZONE_MS
+    const adaptiveTolerance = clamp(
+      NOISE_K_TOLERANCE * effectiveJitterMs,
+      MIN_TOLERANCE_MS,
+      MAX_TOLERANCE_MS
     );
-    const adaptiveHardSeek = clamp(
-      Math.max(
-        NOISE_K_HARD * effectiveJitterMs,
-        DRIFT_K_HARD * this.roomMaxDriftMs
-      ),
-      MIN_HARD_SEEK_MS,
-      MAX_HARD_SEEK_MS
-    );
-    const deadZone = postSeek
-      ? Math.min(MAX_DEAD_ZONE_MS, adaptiveDeadZone + POST_SEEK_DEAD_ZONE_BUMP_MS)
-      : adaptiveDeadZone;
-    const hardSeekThreshold = this.isRateCorrecting
-      ? Math.min(MAX_HARD_SEEK_MS, adaptiveHardSeek + HARD_SEEK_WHILE_CORRECTING_BUMP_MS)
-      : adaptiveHardSeek;
-    this._effectiveDeadZoneMs = deadZone;
-    this._effectiveHardSeekMs = hardSeekThreshold;
+    const postSeek = Date.now() - this.lastSeekAt < POST_SEEK_QUIET_MS;
+    const tolerance = postSeek
+      ? Math.min(MAX_TOLERANCE_MS, adaptiveTolerance + POST_SEEK_TOLERANCE_BUMP_MS)
+      : adaptiveTolerance;
 
-    // Rolling median filter to smooth out per-tick noise (on adjusted drift)
-    this.driftHistory.push(driftMs);
-    if (this.driftHistory.length > HISTORY_SIZE) this.driftHistory.shift();
-
-    const medianDriftMs = median(this.driftHistory);
-    const absMedian = Math.abs(medianDriftMs);
-
+    this._effectiveToleranceMs = tolerance;
     this.lastDriftMs = driftMs;
-    this.lastRawDriftMs = rawDriftMs;
 
-    // -----------------------------------------------------------------
-    // Hard-seek path: require N consecutive over-threshold ticks before we
-    // even start the resync flow. A single jitter spike (common on high-
-    // RTT-variance links — e.g. cross-coast peers) gets filtered. Once we
-    // do trigger a resync and drift is still threshold-worthy after, it's
-    // real drift — seek and stop looping.
-    // -----------------------------------------------------------------
-    if (absMedian >= hardSeekThreshold) {
-      const recentlyResynced = Date.now() - this.lastResyncAt < 3000;
+    // Streak decay: a long quiet window resets the cooldown ladder.
+    if (
+      this.seekStreak > 0 &&
+      this.lastSeekAt &&
+      Date.now() - this.lastSeekAt > SEEK_STREAK_RESET_MS
+    ) {
+      this.seekStreak = 0;
+    }
 
-      // Resync just happened and drift is still huge → real drift, seek now.
-      if (recentlyResynced) {
-        this._applyHardSeek(expectedPosition);
-        return;
-      }
-
-      this.hardSeekCandidateTicks++;
-      if (this.hardSeekCandidateTicks < HARD_SEEK_CONFIRM_TICKS) {
-        return; // wait for sustained drift before acting
-      }
-
-      if (this.clockSync.resync) {
-        this.resyncInFlight = true;
-        this.clockSync
-          .resync(3)
-          .catch(() => {})
-          .finally(() => {
-            this.resyncInFlight = false;
-            this.lastResyncAt = Date.now();
-          });
-        return;
-      }
-
-      this._applyHardSeek(expectedPosition);
+    // In tolerance → nothing to do.
+    if (Math.abs(driftMs) < tolerance) {
+      this.seekCandidateTicks = 0;
       return;
     }
 
-    // Drift dropped back under threshold — start the confirm counter over.
-    this.hardSeekCandidateTicks = 0;
+    // Out of tolerance → confirm sustained drift before acting.
+    this.seekCandidateTicks++;
+    if (this.seekCandidateTicks < SEEK_CONFIRM_TICKS) return;
 
-    // -----------------------------------------------------------------
-    // Rate-correction path: proportional rate, direction-stable gate.
-    // -----------------------------------------------------------------
-    if (absMedian >= deadZone) {
-      const sign = medianDriftMs > 0 ? 1 : -1;
+    // Sustained drift confirmed. Cooldown gate.
+    if (this._cooldownRemainingMs() > 0) return;
 
-      // If already correcting in this direction: just update rate.
-      // If flipping direction: require history to agree before flipping.
-      if (this.isRateCorrecting && sign !== this.currentRateSign) {
-        if (!this._directionStable(sign)) {
-          return; // wait for stability before flipping
-        }
-      }
-
-      // Proportional rate: ±(drift / RATE_TIME_CONSTANT_S), clamped.
-      const proposedRate = 1 - medianDriftMs / 1000 / RATE_TIME_CONSTANT_S;
-      const rate = clamp(proposedRate, RATE_MIN, RATE_MAX);
-
-      this.player.setPlaybackRate(rate);
-      this.isRateCorrecting = true;
-      this.currentRateSign = sign;
-      return;
-    }
-
-    // -----------------------------------------------------------------
-    // In dead zone: release correction.
-    // -----------------------------------------------------------------
-    if (this.isRateCorrecting) {
-      this.player.setPlaybackRate(1.0);
-      this.isRateCorrecting = false;
-      this.currentRateSign = 0;
-    }
-  }
-
-  _applyHardSeek(expectedPosition) {
+    // Seek.
     this.player.seekTo(expectedPosition);
-    this.player.setPlaybackRate(1.0);
-    this.isRateCorrecting = false;
-    this.currentRateSign = 0;
-    this.lastHardSeekAt = Date.now();
-    this.driftHistory = [];
-    this.hardSeekCandidateTicks = 0;
+    this.lastSeekAt = Date.now();
+    this.seekStreak++;
+    this.seekCandidateTicks = 0;
   }
 
-  // True if the most recent DIRECTION_STABILITY_SAMPLES drifts all have the
-  // same sign as `sign`.
-  _directionStable(sign) {
-    if (this.driftHistory.length < DIRECTION_STABILITY_SAMPLES) return false;
-    const recent = this.driftHistory.slice(-DIRECTION_STABILITY_SAMPLES);
-    return recent.every((d) => (d > 0 ? 1 : -1) === sign);
+  _cooldownRemainingMs() {
+    if (!this.lastSeekAt || this.seekStreak === 0) return 0;
+    const cooldown = Math.min(
+      SEEK_COOLDOWN_BASE_MS * Math.pow(2, this.seekStreak - 1),
+      SEEK_COOLDOWN_MAX_MS
+    );
+    return Math.max(0, cooldown - (Date.now() - this.lastSeekAt));
   }
-}
-
-function median(arr) {
-  if (arr.length === 0) return 0;
-  const sorted = [...arr].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
 function clamp(n, lo, hi) {

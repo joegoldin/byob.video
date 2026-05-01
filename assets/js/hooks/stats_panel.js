@@ -195,59 +195,58 @@ function scalePositive(values, w, h) {
     .join(" ");
 }
 
-// Horizontal "where on the dial are you" diagram. Layout uses *proportional*
-// sections so the dead zone is always visible, regardless of how small it
-// is in absolute terms vs the hard-seek threshold:
+// Horizontal "where on the dial are you" diagram. Three zones, proportional
+// sections so the inner jitter band is always visible regardless of how
+// small jitter is in absolute terms:
 //
-//   [hard][- rate correct -][===  dead  ===][- rate correct -][hard]
-//    5%        20%                50%              20%          5%
+//   [seek][— tolerated —][== jitter ==][— tolerated —][seek]
+//   15%        20%             30%           20%       15%
 //
-// Within each section, drift maps linearly to position. So drift=±dead
-// always hits the section boundaries, drift=±hard always hits the outer
-// boundaries, regardless of the actual ms values. Big drift overflows
-// to the chart edges with an arrow.
+//   • green (center, ±jitter)         — within measurement noise
+//   • yellow (between, jitter→tol)    — out of sync but still tolerated
+//   • red (outer, > tolerance)        — seek territory (will hard-seek
+//                                        once sustained 300 ms, gated by
+//                                        the exponential cooldown)
 //
-// The active band (where the current drift sits) is at full saturation;
-// inactive bands are dimmed. Threshold values are sourced from the payload
-// (effective deadZone / hardSeek), so when reconcile's adaptive logic
-// grows them in response to jitter, the displayed thresholds and the
-// diagram update together.
+// Drift maps linearly within whichever section it falls in. So drift=±jitter
+// hits the green/yellow boundary; drift=±tolerance hits the yellow/red
+// boundary; bigger overflows to the chart edges with an arrow.
 function renderDriftBands(host, data) {
   const drift = data.drift_ms || 0;
-  const dead = Math.max(1, data.dead_zone_ms || 100);
-  const hard = Math.max(dead + 1, data.hard_seek_ms || 2000);
-  const noise = data.noise_floor_ms || 0;
-  const rateCorrecting = !!data.rate_correcting;
+  const tolerance = Math.max(1, data.tolerance_ms || 100);
+  const noise = Math.max(1, data.noise_floor_ms || 0);
+  // jitterBand is the "in sync" zone — capped at tolerance so green never
+  // exceeds yellow even on a very noisy link.
+  const jitterBand = Math.min(noise, tolerance);
+  const cooldownRemaining = data.cooldown_remaining_ms || 0;
+  const seekStreak = data.seek_streak || 0;
 
-  // Section boundaries (% of width):
-  //   0%–5%        : hard-seek (left)
-  //   5%–25%       : rate correct (left)
-  //   25%–75%      : dead zone
-  //   75%–95%      : rate correct (right)
-  //   95%–100%     : hard-seek (right)
-  // Linear map drift → position within whichever section it falls in.
+  // Section boundaries (% of width). Symmetric around 50%.
+  //   0–15  : red (negative seek)
+  //   15–35 : yellow (negative tolerated)
+  //   35–65 : green (in jitter)
+  //   65–85 : yellow (positive tolerated)
+  //   85–100: red (positive seek)
   const xFor = (ms) => {
     const sign = ms < 0 ? -1 : 1;
     const abs = Math.abs(ms);
-    let halfFrac; // 0..0.5 — distance from center as fraction of total width
-    if (abs <= dead) {
-      halfFrac = (abs / dead) * 0.25;
-    } else if (abs <= hard) {
-      halfFrac = 0.25 + ((abs - dead) / (hard - dead)) * 0.20;
+    let halfFrac;
+    if (abs <= jitterBand) {
+      halfFrac = (abs / jitterBand) * 0.15;
+    } else if (abs <= tolerance) {
+      halfFrac = 0.15 + ((abs - jitterBand) / (tolerance - jitterBand)) * 0.20;
     } else {
-      // Up to 2× hard, fade through the outer hard-seek band; anything
-      // beyond is clamped to the edge.
-      const beyond = Math.min((abs - hard) / hard, 1);
-      halfFrac = 0.45 + beyond * 0.05;
+      const beyond = Math.min((abs - tolerance) / tolerance, 1);
+      halfFrac = 0.35 + beyond * 0.15;
     }
     return 50 + sign * halfFrac * 100;
   };
 
   const absDrift = Math.abs(drift);
   let active;
-  if (absDrift <= dead) active = "dead";
-  else if (absDrift <= hard) active = "rate";
-  else active = "hard";
+  if (absDrift <= jitterBand) active = "jitter";
+  else if (absDrift <= tolerance) active = "tolerated";
+  else active = "seek";
 
   const band = (x1, x2, color, isActive) => {
     const w = Math.max(0, x2 - x1);
@@ -256,24 +255,20 @@ function renderDriftBands(host, data) {
   };
 
   const segs =
-    band(0, 5, "#f87171", active === "hard") +
-    band(5, 25, "#fbbf24", active === "rate") +
-    band(25, 75, "#34d399", active === "dead") +
-    band(75, 95, "#fbbf24", active === "rate") +
-    band(95, 100, "#f87171", active === "hard");
+    band(0, 15, "#f87171", active === "seek") +
+    band(15, 35, "#fbbf24", active === "tolerated") +
+    band(35, 65, "#34d399", active === "jitter") +
+    band(65, 85, "#fbbf24", active === "tolerated") +
+    band(85, 100, "#f87171", active === "seek");
 
-  // Section dividers (cleaner than separate threshold ticks — at this
-  // resolution the band edges ARE the threshold ticks).
   const divider = (x) =>
     `<line x1="${x}" y1="0" x2="${x}" y2="34" stroke="rgba(255,255,255,0.22)" stroke-width="0.4"/>`;
-  const dividers = divider(5) + divider(25) + divider(75) + divider(95);
+  const dividers = divider(15) + divider(35) + divider(65) + divider(85);
 
-  // Center line for visual reference.
   const centerLine = `<line x1="50" y1="2" x2="50" y2="32" stroke="rgba(255,255,255,0.08)" stroke-width="0.3" stroke-dasharray="1 1"/>`;
 
-  // Current-drift indicator: a chunky vertical tick + small diamond head.
   const tickX = xFor(drift);
-  const overflowed = absDrift > hard * 2;
+  const overflowed = absDrift > tolerance * 2;
   const overflowArrow = overflowed
     ? `<polygon points="${drift > 0 ? "99,2 99,8 95,5" : "1,2 1,8 5,5"}" fill="white"/>`
     : "";
@@ -283,43 +278,53 @@ function renderDriftBands(host, data) {
     `<polygon points="${tickX - 1.2},34 ${tickX + 1.2},34 ${tickX},31" fill="white"/>` +
     overflowArrow;
 
-  const stateLabel =
-    active === "dead"
-      ? "In sync"
-      : active === "rate"
-      ? "Rate-correcting"
-      : "Hard-seek territory";
-  const stateColor =
-    active === "dead" ? "#34d399" : active === "rate" ? "#fbbf24" : "#f87171";
+  // State chip text.
+  let stateLabel, stateColor, statusBits = [];
+  if (active === "jitter") {
+    stateLabel = "In sync";
+    stateColor = "#34d399";
+  } else if (active === "tolerated") {
+    stateLabel = "Within tolerance";
+    stateColor = "#fbbf24";
+  } else {
+    if (cooldownRemaining > 0) {
+      stateLabel = "Re-syncing soon";
+      statusBits.push(`cooldown ${(cooldownRemaining / 1000).toFixed(1)}s`);
+    } else {
+      stateLabel = "Re-syncing now";
+    }
+    stateColor = "#f87171";
+  }
+  if (seekStreak > 0) statusBits.push(`streak ${seekStreak}`);
 
   host.innerHTML =
-    // State chip
-    `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">` +
+    `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">` +
     `<span style="display:inline-flex;align-items:center;gap:4px;padding:1px 6px;border-radius:9999px;background:${stateColor}33;border:1px solid ${stateColor}66;color:${stateColor};font-size:10px;font-weight:600">` +
     `<span style="width:6px;height:6px;border-radius:50%;background:${stateColor}"></span>${stateLabel}` +
     `</span>` +
-    `<span style="font-size:10px;opacity:0.6;font-family:monospace">drift ${drift > 0 ? "+" : ""}${drift}ms · jitter ~${noise}ms${rateCorrecting ? " · rate active" : ""}</span>` +
+    `<span style="font-size:10px;opacity:0.6;font-family:monospace">drift ${drift > 0 ? "+" : ""}${drift}ms · jitter ~${noise}ms${statusBits.length ? " · " + statusBits.join(" · ") : ""}</span>` +
     `</div>` +
-    // The dial
     `<svg width="100%" height="34" viewBox="0 0 100 34" preserveAspectRatio="none" style="display:block;border-radius:4px;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.06)">` +
     segs +
     dividers +
     centerLine +
     tick +
     `</svg>` +
-    // Threshold labels under the section boundaries
+    // Threshold labels under the section boundaries.
     `<div style="position:relative;height:14px;margin-top:2px;font-size:9px;font-family:monospace;color:rgba(255,255,255,0.55)">` +
-    `<span style="position:absolute;left:5%;transform:translateX(-50%)">−${hard}</span>` +
-    `<span style="position:absolute;left:25%;transform:translateX(-50%)">−${dead}</span>` +
+    `<span style="position:absolute;left:15%;transform:translateX(-50%)">−${tolerance}</span>` +
+    `<span style="position:absolute;left:35%;transform:translateX(-50%)">−${jitterBand}</span>` +
     `<span style="position:absolute;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.4)">0</span>` +
-    `<span style="position:absolute;left:75%;transform:translateX(-50%)">+${dead}</span>` +
-    `<span style="position:absolute;left:95%;transform:translateX(-50%)">+${hard}</span>` +
+    `<span style="position:absolute;left:65%;transform:translateX(-50%)">+${jitterBand}</span>` +
+    `<span style="position:absolute;left:85%;transform:translateX(-50%)">+${tolerance}</span>` +
     `</div>` +
-    // Section captions (small, dimmer)
+    // Section captions.
     `<div style="position:relative;height:12px;margin-top:1px;font-size:9px;font-family:monospace;color:rgba(255,255,255,0.35)">` +
-    `<span style="position:absolute;left:15%;transform:translateX(-50%)">rate correct</span>` +
+    `<span style="position:absolute;left:7.5%;transform:translateX(-50%);color:rgba(248,113,113,0.7)">seek</span>` +
+    `<span style="position:absolute;left:25%;transform:translateX(-50%)">tolerated</span>` +
     `<span style="position:absolute;left:50%;transform:translateX(-50%);color:rgba(52,211,153,0.7)">in sync</span>` +
-    `<span style="position:absolute;left:85%;transform:translateX(-50%)">rate correct</span>` +
+    `<span style="position:absolute;left:75%;transform:translateX(-50%)">tolerated</span>` +
+    `<span style="position:absolute;left:92.5%;transform:translateX(-50%);color:rgba(248,113,113,0.7)">seek</span>` +
     `</div>`;
 }
 

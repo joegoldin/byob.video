@@ -216,10 +216,10 @@ defmodule ByobWeb.RoomLive do
       drift_ms = trunc(params["drift_ms"] || 0)
       offset_ms = trunc(params["offset_ms"] || 0)
       rtt_ms = trunc(params["rtt_ms"] || 0)
-      dead_zone_ms = trunc(params["dead_zone_ms"] || 0)
-      hard_seek_ms = trunc(params["hard_seek_ms"] || 0)
+      tolerance_ms = trunc(params["tolerance_ms"] || 0)
       noise_floor_ms = trunc(params["noise_floor_ms"] || 0)
-      rate_correcting = params["rate_correcting"] == true
+      seek_streak = trunc(params["seek_streak"] || 0)
+      cooldown_remaining_ms = trunc(params["cooldown_remaining_ms"] || 0)
       playing = params["playing"] || false
 
       state = Byob.RoomServer.get_state(room_pid)
@@ -245,10 +245,10 @@ defmodule ByobWeb.RoomLive do
            raw_drift_ms: drift_ms + offset_ms,
            offset_ms: offset_ms,
            rtt_ms: rtt_ms,
-           dead_zone_ms: dead_zone_ms,
-           hard_seek_ms: hard_seek_ms,
+           tolerance_ms: tolerance_ms,
            noise_floor_ms: noise_floor_ms,
-           rate_correcting: rate_correcting,
+           seek_streak: seek_streak,
+           cooldown_remaining_ms: cooldown_remaining_ms,
            server_position: Float.round(server_pos * 1.0, 1),
            play_state: if(playing, do: "playing", else: "paused")
          }}
@@ -396,10 +396,10 @@ defmodule ByobWeb.RoomLive do
         raw_drift_ms: Map.get(data, :raw_drift_ms, data.drift_ms),
         offset_ms: Map.get(data, :offset_ms, 0),
         rtt_ms: Map.get(data, :rtt_ms, 0),
-        dead_zone_ms: Map.get(data, :dead_zone_ms, 0),
-        hard_seek_ms: Map.get(data, :hard_seek_ms, 0),
+        tolerance_ms: Map.get(data, :tolerance_ms, 0),
         noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
-        rate_correcting: Map.get(data, :rate_correcting, false),
+        seek_streak: Map.get(data, :seek_streak, 0),
+        cooldown_remaining_ms: Map.get(data, :cooldown_remaining_ms, 0),
         username: Map.get(data, :username),
         server_position: data.server_position,
         play_state: data.play_state,
@@ -418,10 +418,10 @@ defmodule ByobWeb.RoomLive do
         drift_ms: data.drift_ms,
         offset_ms: Map.get(data, :offset_ms, 0),
         rtt_ms: Map.get(data, :rtt_ms, 0),
-        dead_zone_ms: Map.get(data, :dead_zone_ms, 0),
-        hard_seek_ms: Map.get(data, :hard_seek_ms, 0),
+        tolerance_ms: Map.get(data, :tolerance_ms, 0),
         noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
-        rate_correcting: Map.get(data, :rate_correcting, false),
+        seek_streak: Map.get(data, :seek_streak, 0),
+        cooldown_remaining_ms: Map.get(data, :cooldown_remaining_ms, 0),
         play_state: data.play_state
       })
 

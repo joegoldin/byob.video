@@ -121,12 +121,12 @@ const VideoPlayer = {
       const thresholds = this.reconcile.getEffectiveThresholds?.() || {};
       this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
         drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
-        offset_ms: Math.round(this.reconcile.getOffsetMs?.() || 0),
+        offset_ms: 0, // browser no longer uses offset EMA; legacy field kept for the extension path
         rtt_ms: Math.round(this.clockSync.getMedianRttMs?.() || 0),
-        dead_zone_ms: Math.round(thresholds.deadZoneMs || 0),
-        hard_seek_ms: Math.round(thresholds.hardSeekMs || 0),
+        tolerance_ms: Math.round(thresholds.toleranceMs || 0),
         noise_floor_ms: Math.round(thresholds.noiseFloorMs || 0),
-        rate_correcting: !!thresholds.isRateCorrecting,
+        seek_streak: thresholds.seekStreak || 0,
+        cooldown_remaining_ms: Math.round(thresholds.cooldownRemainingMs || 0),
         playing: state === "playing",
       });
     }, DRIFT_REPORT_INTERVAL_MS);

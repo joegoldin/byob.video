@@ -3,6 +3,67 @@
 
 ---
 
+# v6.6.0
+
+### Drift correction: seek-only, exponential cooldown, no more rate correction
+
+Major sync rewrite. Rate correction is gone, offset EMA is gone,
+and the resulting model is much simpler — and much closer to "what
+the user actually sees".
+
+**Why ditch rate correction?** Mobile Safari and ad-supported YT
+embeds silently ignore `setPlaybackRate`, so the loop fires forever
+without making progress. The visible "rate correction stuttering"
+was almost always a *hard seek* firing once drift overshot the
+threshold while we thought we were rate-correcting. Removing the
+illusion: just seek when we actually need to, rate-limit how often
+we can, run at native 1.0× the rest of the time.
+
+**Why ditch offset EMA?** It was supposed to absorb structural
+decoder lag (~100 ms) but it can't distinguish that from "real
+positional desync we've given up correcting". When you joined a
+playing room a second late, the EMA learned the 1 s desync as
+"structural" → adjusted drift = 0 → reconcile thought everything
+was fine → desync became permanent and *invisible*. The whole
+mechanism was hiding bugs we should be fixing.
+
+**The new model.** Use raw drift. Tolerance is an adaptive band
+driven by the jitter EMA only: `4 × max(local_jitter, room_jitter)`
+clamped to `[100 ms, 500 ms]`. Inside tolerance: in sync, do
+nothing. Outside for 300 ms sustained: hard seek. Seeks gated by
+exponential cooldown — 1 s, 2 s, 4 s, 5 s (cap) — with the streak
+reset after 10 s of quiet. Net: typical session is *one* seek
+(late join), worst case settles to one seek every 5 s.
+
+**Convergence guarantee.** With ceiling at 500 ms, peer-to-peer
+divergence is bounded at ≈ 1 s worst case (two peers drifting in
+opposite directions); typical case is ≈ 200-400 ms because the
+floor wins on calm links. After every seek, drift snaps back to
+~0 and bounces around 0 with magnitude ≤ jitter. No more 1500 ms
+"learned offsets" hiding desyncs.
+
+**Panel updates.**
+- Bands diagram redesigned with three zones — green (jitter),
+  yellow (tolerated), red (seek) — plus a state chip ("In sync" /
+  "Within tolerance" / "Re-syncing soon" / "Re-syncing now") that
+  shows cooldown remaining when relevant.
+- "Hard seek at" row removed (it was the same as tolerance now).
+- "Seek cooldown" row appears when a streak is active.
+- Per-peer "Offset" row auto-hides for browser peers (always 0
+  now); still shown for extension peers (where it's a manual
+  config).
+- "Local clock sync" multi-line chart simplified — no more
+  offset trace.
+
+**Tradeoff.** Devices with very slow decode pipelines play
+~100 ms behind everyone else's display, and we no longer
+compensate. The 100 ms gap is invisible in practice and we were
+never compensating cleanly anyway — we were just hiding it.
+
+Server-only / no extension republish.
+
+---
+
 # v6.5.54
 
 ### Settings modal scroll position survives LV updates; (peer) tag on max-drift
