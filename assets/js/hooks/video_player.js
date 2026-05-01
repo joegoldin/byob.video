@@ -344,6 +344,9 @@ const VideoPlayer = {
     // so the previous index-based check accepted any :ended whose
     // pending_advance ref slot was empty.
     this._currentItemId = mediaItem?.id || null;
+    // Reset the per-item "have we sent video:loaded yet" flag — used
+    // by _signalLoaded to avoid double-pushing for the same item.
+    this._loadedReportedFor = null;
     this._lastTitle = mediaItem?.title || url;
     this._lastThumb = mediaItem?.thumbnail_url ||
       (sourceType === "youtube" && sourceId ? `https://img.youtube.com/vi/${sourceId}/hqdefault.jpg` : null);
@@ -403,6 +406,7 @@ const VideoPlayer = {
         // leaving the initial seek as a no-op.
         if (player) this.player = player;
         this.isReady = true;
+        this._signalLoaded();
         this._applyPendingState();
         this._startSeekDetector();
         this._retrySponsorBar();
@@ -462,6 +466,7 @@ const VideoPlayer = {
       onReady: (player) => {
         if (player) this.player = player;
         this.isReady = true;
+        this._signalLoaded();
         this._applyPendingState();
         this._startSeekDetector();
       },
@@ -487,6 +492,7 @@ const VideoPlayer = {
     const callbacks = {
       onReady: () => {
         this.isReady = true;
+        this._signalLoaded();
         this._applyPendingState();
         this._startSeekDetector();
       },
@@ -539,6 +545,7 @@ const VideoPlayer = {
     const callbacks = {
       onReady: () => {
         this.isReady = true;
+        this._signalLoaded();
         this._applyPendingState();
       },
     };
@@ -615,13 +622,11 @@ const VideoPlayer = {
     // commands like loadVideoById) still mark the player as ready.
     if (!this._playerSettled && (stateName === "playing" || stateName === "paused")) {
       this._playerSettled = true;
-      // Tell the server we're loaded for the current item — this
-      // releases the server's ready-then-play hold for this peer.
-      // Tagged with item_id so the server can ignore stale loads if
-      // the video already changed again.
-      if (this._currentItemId) {
-        this.pushEvent(LV_EVT.EV_VIDEO_LOADED, { item_id: this._currentItemId });
-      }
+      // Belt-and-suspenders: also signal loaded here in case the
+      // player adapter's onReady fired before _currentItemId was set
+      // (rare but possible during reuse paths). _signalLoaded is
+      // idempotent per item_id.
+      this._signalLoaded();
       // If we were loading-for-pause, the pause has landed — don't push it
       if (this._loadingPaused && stateName === "paused") {
         this._loadingPaused = false;
@@ -1602,18 +1607,33 @@ const VideoPlayer = {
       }
       overlay = document.createElement("div");
       overlay.className = "byob-syncing";
-      overlay.style.cssText =
-        "position:absolute;inset:0;z-index:8;display:flex;align-items:center;justify-content:center;" +
-        "background:rgba(0,0,0,0.45);pointer-events:none;transition:opacity 200ms;";
+      // Compact bottom-right pill — same anchor area as the autoplay
+      // countdown wheel — instead of a full-screen dimming overlay.
+      // Doesn't obscure the video; just signals "background sync in
+      // progress". pointer-events:none keeps clicks passing through.
+      overlay.style.cssText = [
+        "position:absolute",
+        "bottom:16px",
+        "right:16px",
+        "z-index:30",
+        "display:flex",
+        "align-items:center",
+        "gap:8px",
+        "padding:6px 12px 6px 8px",
+        "background:rgba(0,0,0,0.7)",
+        "border-radius:9999px",
+        "box-shadow:0 2px 12px rgba(0,0,0,0.4)",
+        "color:white",
+        "font:600 12px/1 system-ui",
+        "pointer-events:none",
+        "transition:opacity 200ms",
+      ].join(";");
       overlay.innerHTML =
-        `<div style="display:flex;flex-direction:column;align-items:center;gap:10px;color:white;` +
-        `text-shadow:0 1px 3px rgba(0,0,0,0.6);">` +
-        `<svg width="32" height="32" viewBox="0 0 24 24" style="animation:byob-spin 0.8s linear infinite">` +
-        `<circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" stroke-width="2" fill="none"/>` +
-        `<path d="M12 2 a10 10 0 0 1 10 10" stroke="white" stroke-width="2" fill="none" stroke-linecap="round"/>` +
+        `<svg width="16" height="16" viewBox="0 0 24 24" style="animation:byob-spin 0.8s linear infinite;flex:0 0 auto">` +
+        `<circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" stroke-width="3" fill="none"/>` +
+        `<path d="M12 2 a10 10 0 0 1 10 10" stroke="white" stroke-width="3" fill="none" stroke-linecap="round"/>` +
         `</svg>` +
-        `<span data-byob-syncing-label style="font-size:13px;font-weight:600">${text}</span>` +
-        `</div>`;
+        `<span data-byob-syncing-label>${text}</span>`;
       this.el.appendChild(overlay);
     }
 
@@ -1656,6 +1676,21 @@ const VideoPlayer = {
     if (!overlay) return;
     overlay.style.opacity = "0";
     setTimeout(() => overlay.remove(), 200);
+  },
+
+  // Tell the server we've loaded the current media item. Called
+  // from each player adapter's onReady (which fires regardless of
+  // whether autoplay succeeded) AND as a belt-and-suspenders signal
+  // from the first stable state in _onPlayerStateChange. Idempotent
+  // per item_id via _loadedReportedFor — autoplay-blocked peers
+  // therefore still release the server's ready-then-play hold even
+  // though they can't actually start playing until the user clicks.
+  _signalLoaded() {
+    const itemId = this._currentItemId;
+    if (!itemId) return;
+    if (this._loadedReportedFor === itemId) return;
+    this._loadedReportedFor = itemId;
+    this.pushEvent(LV_EVT.EV_VIDEO_LOADED, { item_id: itemId });
   },
 
   // Push a single drift report to the server. Called both by the

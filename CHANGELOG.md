@@ -3,6 +3,49 @@
 
 ---
 
+# v6.8.21
+
+### Fix ready-then-play stranding autoplay-blocked peers
+
+**Bug:** the v6.8.18 ready-then-play hold was only releasing each peer
+once their player reached a "playing" or "paused" state — but a
+freshly-joined tab that hasn't received a user gesture sits in
+`unstarted` / `cued` indefinitely (browser autoplay policy). The
+ready check therefore never completed for that peer; the room
+either timed out (8 s) or stayed paused if the peer was the slowest.
+Result: stutter and weird "won't start" behaviour any time someone
+joined without first clicking.
+
+**Fix:** new `_signalLoaded()` helper pushes `video:loaded` from
+each player adapter's `onReady` callback — which fires when the
+player has the URL loaded and is ready to receive commands,
+regardless of whether autoplay succeeded. Idempotent per `item_id`
+via a new `_loadedReportedFor` flag. The first-stable-state push in
+`_onPlayerStateChange` is kept as a belt-and-suspenders fallback.
+
+Autoplay-blocked peers now:
+1. Load the player → `onReady` fires → `video:loaded` sent → server
+   counts them ready
+2. Sit on the existing "Click to join the room" overlay until the
+   user clicks
+3. When they click, the player starts at whatever position the
+   `:sync_play` carried (or whatever `current_time` says if the
+   room already started)
+
+Compact "Re-syncing…" pill (added in v6.8.20) also remains in the
+bottom-right of the player instead of the old full-screen dim.
+
+### Bonus: bottom-right "Re-syncing…" pill
+
+Replaces the full-screen dimming overlay with a compact pill anchored
+at `bottom:16px; right:16px` (same anchor as the autoplay countdown
+wheel). 16 px spinner + label text inline ("Re-syncing…" / "Joining…"
+/ "Catching up…"). Same `_lastSyncingShownAt` stickiness (1500 ms
+grace) and 5 s safety timer. `pointer-events:none` so it doesn't
+block player interaction.
+
+---
+
 # v6.8.20
 
 ### Fix spurious cascade caused by stale post-seek drift report
