@@ -3,6 +3,36 @@
 
 ---
 
+# v6.8.9
+
+### Stop Drift-tolerance label flicker; pull thresholds from constants
+
+Two cleanups:
+
+**Hysteresis on the "(peer)" label flips.** Comparisons like
+`room_jitter > noise_floor` (and friends) flipped every render
+when the two EMAs bounced within a couple ms of each other,
+making the "(peer jitter)" / "(local jitter)" / "(peer)" labels
+flicker on every drift report. Added a 5-ms margin for jitter
+comparisons and a 20-ms margin for drift comparisons.
+
+**Drop magic numbers.** `SyncDecision` now exposes public getters
+for `min_tolerance_ms`, `max_tolerance_ms`, `seek_cooldown_*`,
+etc. Templates and hooks reach for those instead of hard-coded
+values that drift out of sync with the constants. Also fixed:
+- `tolerance` fallback for new clients was 100 ms (old floor) →
+  now `min_tolerance_ms()` (300 ms).
+- Per-peer drift coloring used 250 / 1000 thresholds → now
+  `min_tolerance_ms` / `max_tolerance_ms`.
+- `|Drift|` aggregate same fix.
+- Per-peer Jitter "warn" threshold derived from
+  `min_tolerance_ms / 4` (the K factor).
+- Bands diagram fallback tolerance 100 → 300, matches floor.
+
+Server-only / no extension republish.
+
+---
+
 # v6.8.8
 
 ### Fix bands diagram showing stale tolerance / streak

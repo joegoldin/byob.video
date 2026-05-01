@@ -96,6 +96,16 @@ defmodule Byob.SyncDecision do
   @spec new() :: t()
   def new, do: %__MODULE__{}
 
+  # Public getters for the threshold constants. Templates / panels reach
+  # for these so they don't have to know about the private @attrs.
+  def min_tolerance_ms, do: @min_tolerance_ms
+  def max_tolerance_ms, do: @max_tolerance_ms
+  def post_seek_tolerance_bump_ms, do: @post_seek_tolerance_bump_ms
+  def sustained_reports, do: @sustained_reports
+  def seek_cooldown_base_ms, do: @seek_cooldown_base_ms
+  def seek_cooldown_max_ms, do: @seek_cooldown_max_ms
+  def seek_streak_reset_ms, do: @seek_streak_reset_ms
+
   @doc """
   Compute the effective tolerance for the current report. Exposed
   separately so callers can echo it to clients for stats display.

@@ -27,6 +27,12 @@ const SPARK_H = 20;
 const COLOR_RTT = "#60a5fa";    // blue
 const COLOR_DRIFT = "#fbbf24";  // amber
 
+// Display-only fallback before the first real `tolerance_ms` arrives
+// from the server (within 1 s of the panel opening). Match the floor
+// in lib/byob/sync_decision.ex (`@min_tolerance_ms`) so the diagram
+// doesn't snap from one number to a different one once data lands.
+const FALLBACK_TOLERANCE_MS = 300;
+
 const StatsPanel = {
   mounted() {
     // user_key → { drift: number[], rtt: number[], offset: number[] }
@@ -206,7 +212,7 @@ function scalePositive(values, w, h) {
 // boundary; bigger overflows to the chart edges with an arrow.
 function renderDriftBands(host, data) {
   const drift = data.drift_ms || 0;
-  const tolerance = Math.max(1, data.tolerance_ms || 100);
+  const tolerance = Math.max(1, data.tolerance_ms || FALLBACK_TOLERANCE_MS);
   // The green "in sync" band sizes to ROOM jitter consensus, not local
   // jitter — that's the value driving the tolerance and what "in sync"
   // actually means relative to the whole room's calibration. Falls back

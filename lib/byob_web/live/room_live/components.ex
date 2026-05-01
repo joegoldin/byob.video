@@ -393,7 +393,8 @@ defmodule ByobWeb.RoomLive.Components do
             local_abs_drift = abs(Map.get(local_client, :drift_ms, 0))
             seek_streak = Map.get(local_client, :seek_streak, 0)
             cooldown_remaining = Map.get(local_client, :cooldown_remaining_ms, 0)
-            tolerance = if tolerance > 0, do: tolerance, else: 100
+            tolerance =
+              if tolerance > 0, do: tolerance, else: Byob.SyncDecision.min_tolerance_ms()
 
             # Room consensus: max non-stale peer jitter AND max non-stale
             # peer |drift|. Two signals — jitter captures noise, drift
@@ -417,13 +418,18 @@ defmodule ByobWeb.RoomLive.Components do
                   }
               end
 
+            # Hysteresis margins for the "(peer)" annotations — keep the
+            # comparison from flipping every render when two EMAs bounce
+            # within a couple ms of each other.
+            jitter_hysteresis_ms = 5
+            drift_hysteresis_ms = 20
+
             # Annotate the tolerance driver: floor / ceiling / peer / local.
-            # K factor must match reconcile.js (NOISE_K_TOLERANCE=4).
             tolerance_driver =
               cond do
-                tolerance <= 100 -> "floor"
-                tolerance >= 500 -> "ceiling"
-                room_jitter > noise_floor -> "peer jitter"
+                tolerance <= Byob.SyncDecision.min_tolerance_ms() -> "floor"
+                tolerance >= Byob.SyncDecision.max_tolerance_ms() -> "ceiling"
+                room_jitter > noise_floor + jitter_hysteresis_ms -> "peer jitter"
                 true -> "local jitter"
               end %>
             <div class="flex justify-between">
@@ -434,25 +440,29 @@ defmodule ByobWeb.RoomLive.Components do
               <span>Local jitter (Δdrift EMA)</span>
               <span class="text-base-content/40">{noise_floor}ms</span>
             </div>
+            <% room_jitter_is_peer? = room_jitter > noise_floor + jitter_hysteresis_ms
+            room_max_drift_is_peer? = room_max_drift > local_abs_drift + drift_hysteresis_ms %>
             <div class="flex justify-between">
               <span>Room jitter (consensus)</span>
               <span class={
-                if room_jitter > noise_floor, do: "text-warning", else: "text-base-content/40"
+                if room_jitter_is_peer?, do: "text-warning", else: "text-base-content/40"
               }>
-                {room_jitter}ms{if room_jitter > noise_floor, do: " (peer)", else: ""}
+                {room_jitter}ms{if room_jitter_is_peer?, do: " (peer)", else: ""}
               </span>
             </div>
             <div class="flex justify-between">
               <span>Room max |drift|</span>
               <span class={
-                if room_max_drift > local_abs_drift, do: "text-warning", else: "text-base-content/40"
+                if room_max_drift_is_peer?, do: "text-warning", else: "text-base-content/40"
               }>
-                {room_max_drift}ms{if room_max_drift > local_abs_drift, do: " (peer)", else: ""}
+                {room_max_drift}ms{if room_max_drift_is_peer?, do: " (peer)", else: ""}
               </span>
             </div>
             <%!-- Drift tolerance: K × max(local jitter, room jitter), clamped
-                 to [100, 500] ms. Below this we're in sync; above for 300 ms
-                 we hard-seek (subject to the cooldown ladder). --%>
+                 to [@min_tolerance_ms, @max_tolerance_ms] in SyncDecision.
+                 Below this we're in sync; sustained drift over it for
+                 @sustained_reports cycles triggers a hard seek (subject
+                 to the cooldown ladder). --%>
             <div class="flex justify-between">
               <span>Drift tolerance</span>
               <span class={
@@ -527,8 +537,8 @@ defmodule ByobWeb.RoomLive.Components do
                 <span>|Drift| avg / min / max</span>
                 <span class={
                   cond do
-                    avg > 1000 -> "text-error"
-                    avg > 250 -> "text-warning"
+                    avg > Byob.SyncDecision.max_tolerance_ms() -> "text-error"
+                    avg > Byob.SyncDecision.min_tolerance_ms() -> "text-warning"
                     true -> "text-success"
                   end
                 }>
@@ -616,9 +626,14 @@ defmodule ByobWeb.RoomLive.Components do
                           </div>
                           <span class={
                             cond do
-                              abs(info.drift_ms) > 1000 -> "text-error"
-                              abs(info.drift_ms) > 250 -> "text-warning"
-                              true -> "text-success"
+                              abs(info.drift_ms) > Byob.SyncDecision.max_tolerance_ms() ->
+                                "text-error"
+
+                              abs(info.drift_ms) > Byob.SyncDecision.min_tolerance_ms() ->
+                                "text-warning"
+
+                              true ->
+                                "text-success"
                             end
                           }>
                             {if info.drift_ms > 0, do: "+", else: ""}{info.drift_ms}ms
@@ -638,12 +653,17 @@ defmodule ByobWeb.RoomLive.Components do
                             <span class="text-base-content/40">{info.rtt_ms}ms</span>
                           </div>
                         <% end %>
-                        <% jitter_ms = Map.get(info, :noise_floor_ms, 0) %>
+                        <% jitter_ms = Map.get(info, :noise_floor_ms, 0)
+                        # Warning above (min_tolerance / NOISE_K_TOLERANCE)
+                        # — that's the jitter level at which the adaptive
+                        # tolerance starts growing past its floor. Below 1
+                        # ms is "≈ 0" practically.
+                        jitter_warn_threshold_ms = div(Byob.SyncDecision.min_tolerance_ms(), 4) %>
                         <div class="flex justify-between">
                           <span>Jitter</span>
                           <span class={
                             cond do
-                              jitter_ms > 200 -> "text-warning"
+                              jitter_ms > jitter_warn_threshold_ms -> "text-warning"
                               jitter_ms < 1 -> "text-success"
                               true -> "text-base-content/40"
                             end
