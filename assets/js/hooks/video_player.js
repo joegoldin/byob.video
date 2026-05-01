@@ -28,7 +28,15 @@ const VideoPlayer = {
     this._playerSettled = true;
     this.reconcile = new Reconcile({
       getCurrentTime: () => this._getCurrentTime(),
-      seekTo: (t) => this._seekTo(t),
+      // Reconcile-initiated seeks are *corrective* — they shouldn't echo
+      // back to peers as new sync events, and on iOS the seek causes a
+      // PAUSED → BUFFERING → PLAYING flicker that, unsuppressed, would
+      // push :sync_pause to the room and pause everyone. Suppress before
+      // the seek so the resulting state-change burst is swallowed.
+      seekTo: (t) => {
+        this.suppression.suppress("playing");
+        this._seekTo(t);
+      },
       setPlaybackRate: (r) => this._setPlaybackRate(r),
     });
 

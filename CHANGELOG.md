@@ -3,6 +3,35 @@
 
 ---
 
+# v6.6.1
+
+### Hotfix: stop seek-loop on iOS, stop spurious pause broadcasts
+
+v6.6.0's first user observation: "jumps all over the place and then
+paused". Two compounding bugs:
+
+**Seek loop on iOS YT embeds.** `getCurrentTime` lags the actual
+seek by 1-2 s on mobile Safari. Reconcile would seek, cooldown
+elapses (1 s), re-measure drift, *still huge* (because the seek
+hadn't visibly landed yet), re-seek, repeat. Fixed by calling
+`pauseFor(2000)` after every seek so the player gets a quiet window
+to actually land before we re-evaluate. Also added a streak cap:
+after 3 consecutive seeks without settling, give up for this
+session (resets after 10 s quiet) — better than thrashing on a
+device where seeks fundamentally aren't sticking.
+
+**Spurious pause broadcast on seek.** Reconcile-driven seeks
+weren't suppressing player state events. On iOS the seek triggers
+a PAUSED → BUFFERING → PLAYING flicker; the unsuppressed PAUSED
+got pushed as `EV_VIDEO_PAUSE`, server broadcast pause to the
+room, everyone paused. Fixed by wrapping the reconcile `seekTo`
+callback to call `suppression.suppress("playing")` before the
+seek, swallowing the flicker.
+
+Server-only / no extension republish.
+
+---
+
 # v6.6.0
 
 ### Drift correction: seek-only, exponential cooldown, no more rate correction

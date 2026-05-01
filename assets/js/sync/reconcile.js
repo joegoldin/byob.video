@@ -47,6 +47,8 @@ const SEEK_CONFIRM_TICKS = 3;            // 300 ms sustained over tolerance befo
 const SEEK_COOLDOWN_BASE_MS = 1000;      // first cooldown after a seek
 const SEEK_COOLDOWN_MAX_MS = 5000;       // cap — never wait longer than this
 const SEEK_STREAK_RESET_MS = 10_000;     // 10 s quiet → cooldown ladder resets
+const SEEK_POST_PAUSE_MS = 2000;         // post-seek: pause reconcile to let the player settle
+const MAX_SEEK_STREAK = 3;               // seeks not landing → stop trying this session
 
 export class Reconcile {
   constructor(playerAdapter) {
@@ -193,14 +195,24 @@ export class Reconcile {
     this.seekCandidateTicks++;
     if (this.seekCandidateTicks < SEEK_CONFIRM_TICKS) return;
 
+    // Hard cap: if we've already tried MAX_SEEK_STREAK times without
+    // settling, the seeks aren't taking effect on this device (iOS
+    // YouTube embed delay, network unable to keep up, etc.). Stop
+    // trying — no point making it worse. Streak resets after 10 s of
+    // quiet, so this isn't permanent for the session.
+    if (this.seekStreak >= MAX_SEEK_STREAK) return;
+
     // Sustained drift confirmed. Cooldown gate.
     if (this._cooldownRemainingMs() > 0) return;
 
-    // Seek.
+    // Seek. Pause reconcile so the seek has a quiet window to actually
+    // land — `getCurrentTime` on iOS YouTube embeds can lag the seek
+    // by 1-2 s, and without this pause we'd race the seek and seek-loop.
     this.player.seekTo(expectedPosition);
     this.lastSeekAt = Date.now();
     this.seekStreak++;
     this.seekCandidateTicks = 0;
+    this.pauseFor(SEEK_POST_PAUSE_MS);
   }
 
   _cooldownRemainingMs() {
