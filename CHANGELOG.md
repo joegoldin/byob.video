@@ -3,6 +3,39 @@
 
 ---
 
+# v6.5.47
+
+### Stats for nerds: graph RTT / drift / offset over time
+
+The Stats-for-nerds panel now visualizes sync history, not just
+the latest snapshot. Useful for diagnosing the kind of cross-coast
+flakiness that motivated v6.5.46.
+
+**Local clock-sync chart** at the top of the panel: a 60-second
+multi-line chart showing this browser's RTT (blue), drift (amber),
+and learned offset (violet) sourced from the existing `clockSync`
+samples and `Reconcile` instance. Auto-scaled per metric, with a
+live legend underneath. Inline SVG, ~360×80 px.
+
+**Per-peer drift sparkline** inside each connected-clients row: a
+60-sample sparkline of that peer's `drift_ms`, color-graded
+green / amber / red to match the existing numeric drift cell. Lets
+you see at a glance who's drifting and when, instead of just the
+single most-recent value.
+
+The browser-side drift report now includes `rtt_ms` (median over
+`clockSync.samples`) so each peer's RTT is also visible to others
+in their row. Server forwards every `:sync_client_stats` broadcast
+to a new `sync:client_stats` `push_event`; a small `StatsPanel`
+hook owns ring buffers keyed by `<user_id>:<tab>` and redraws the
+relevant SVG on each sample. SVG containers use `phx-update="ignore"`
+so server re-renders of the panel don't clobber the drawings. No
+chart libraries — pure inline SVG, ~150 LOC.
+
+Server-only / no extension republish.
+
+---
+
 # v6.5.46
 
 ### Smoother sync for high-RTT-variance peers (cross-coast 3+ users)

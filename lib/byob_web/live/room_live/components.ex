@@ -260,6 +260,7 @@ defmodule ByobWeb.RoomLive.Components do
   attr :show_comments, :boolean, default: true
   attr :sync_stats, :any, default: nil
   attr :users, :any, default: %{}
+  attr :user_id, :string, default: nil
 
   def settings_modal(assigns) do
     ~H"""
@@ -363,7 +364,12 @@ defmodule ByobWeb.RoomLive.Components do
           <summary class="text-xs text-base-content/40 cursor-pointer hover:text-base-content/60 select-none">
             Stats for nerds
           </summary>
-          <div class="mt-2 text-xs text-base-content/50 space-y-1 font-mono">
+          <div
+            id="stats-panel-content"
+            phx-hook="StatsPanel"
+            data-byob-local-user-id={@user_id}
+            class="mt-2 text-xs text-base-content/50 space-y-1 font-mono"
+          >
             <div class="flex justify-between">
               <span>Correction interval</span>
               <span>{@sync_stats.correction_interval_ms}ms</span>
@@ -371,6 +377,12 @@ defmodule ByobWeb.RoomLive.Components do
             <div class="flex justify-between">
               <span>Drift tolerance</span>
               <span>250ms</span>
+            </div>
+            <%!-- Local clock-sync chart: RTT + drift + offset over the last 60s.
+                 Hook owns this element's contents; LV stays out of the way. --%>
+            <div class="mt-2 pt-2 border-t border-base-300/50">
+              <div class="text-base-content/40 mb-1">Local clock sync (60s)</div>
+              <div id="byob-local-sync-chart" phx-update="ignore"></div>
             </div>
             <% # Recent = drift report within the last 5s. Stale rows still
             # surface their owner via the @users walk below — we just don't
@@ -449,8 +461,17 @@ defmodule ByobWeb.RoomLive.Components do
                           >{username}</span>
                           <span class="text-base-content/30">({id_label})</span>
                         </div>
-                        <div class="flex justify-between">
+                        <div class="flex justify-between items-center gap-2">
                           <span>Drift</span>
+                          <%!-- StatsPanel hook fills this with an inline-SVG
+                               sparkline of the last 60s of drift_ms. --%>
+                          <div
+                            id={"byob-spark-#{client_id}"}
+                            class="flex-1 min-w-0"
+                            data-byob-spark-key={client_id}
+                            phx-update="ignore"
+                          >
+                          </div>
                           <span class={
                             cond do
                               abs(info.drift_ms) > 1000 -> "text-error"
@@ -467,6 +488,12 @@ defmodule ByobWeb.RoomLive.Components do
                             <span class="text-base-content/40">
                               {if info.offset_ms > 0, do: "+", else: ""}{info.offset_ms}ms
                             </span>
+                          </div>
+                        <% end %>
+                        <%= if Map.get(info, :rtt_ms, 0) > 0 do %>
+                          <div class="flex justify-between">
+                            <span>RTT</span>
+                            <span class="text-base-content/40">{info.rtt_ms}ms</span>
                           </div>
                         <% end %>
                         <div class="flex justify-between">

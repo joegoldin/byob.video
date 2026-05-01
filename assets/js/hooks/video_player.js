@@ -109,6 +109,7 @@ const VideoPlayer = {
       this.pushEvent(LV_EVT.EV_VIDEO_DRIFT_REPORT, {
         drift_ms: Math.round(this.reconcile.lastDriftMs || 0),
         offset_ms: Math.round(this.reconcile.getOffsetMs?.() || 0),
+        rtt_ms: Math.round(this.clockSync.getMedianRttMs?.() || 0),
         playing: state === "playing",
       });
     }, DRIFT_REPORT_INTERVAL_MS);

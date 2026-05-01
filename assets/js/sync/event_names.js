@@ -28,6 +28,7 @@ export const LV_EVT = Object.freeze({
   READY_COUNT: "ready:count",
   LIVE_STATUS: "live:status",
   NOTIFY: "notify",
+  SYNC_CLIENT_STATS: "sync:client_stats",
 
   // Browser → server (pushEvent in hook, handle_event in LV)
   EV_VIDEO_PLAY: "video:play",

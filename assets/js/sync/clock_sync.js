@@ -104,6 +104,19 @@ export class ClockSync {
     return this.ready;
   }
 
+  // Median RTT (ms) over the last few samples — meant for stats reporting.
+  // The full sample list (max 20) is available via `samples`; this helper
+  // smooths short-term jitter without exposing the array shape.
+  getMedianRttMs(window = 5) {
+    if (this.samples.length === 0) return 0;
+    const recent = this.samples.slice(-window).map((s) => s.rtt);
+    recent.sort((a, b) => a - b);
+    const mid = Math.floor(recent.length / 2);
+    return recent.length % 2 === 0
+      ? (recent[mid - 1] + recent[mid]) / 2
+      : recent[mid];
+  }
+
   _sendPing() {
     this.pushEvent(LV_EVT.EV_SYNC_PING, { t1: performance.now() });
   }

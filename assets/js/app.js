@@ -29,6 +29,7 @@ import { LV_EVT } from "./sync/event_names"
 import CopyUrl from "./hooks/copy_url"
 import RouletteWheel from "./hooks/roulette_wheel"
 import RoundTimer from "./hooks/round_timer"
+import StatsPanel from "./hooks/stats_panel"
 
 const ReplaceLayoutNav = {
   mounted() {
@@ -324,7 +325,7 @@ const liveSocket = new LiveSocket("/live", Socket, {
     has_extension: document.documentElement.hasAttribute("data-byob-extension"),
     show_comments: localStorage.getItem("byob_show_comments") !== "false",
   }),
-  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu, ExpandWhenCramped, ScrollBottom, RouletteWheel, RoundTimer,
+  hooks: {...colocatedHooks, VideoPlayer, CopyUrl, ReplaceLayoutNav, LocalTime, ExtOpenBtn, DragSort, QueueContextMenu, ExpandWhenCramped, ScrollBottom, RouletteWheel, RoundTimer, StatsPanel,
     PreserveModal: {
       beforeUpdate() { this._wasOpen = this.el.open; },
       updated() { if (this._wasOpen && !this.el.open) this.el.showModal(); }

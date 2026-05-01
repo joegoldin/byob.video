@@ -215,6 +215,7 @@ defmodule ByobWeb.RoomLive do
     if user_id && room_id && room_pid do
       drift_ms = trunc(params["drift_ms"] || 0)
       offset_ms = trunc(params["offset_ms"] || 0)
+      rtt_ms = trunc(params["rtt_ms"] || 0)
       playing = params["playing"] || false
 
       state = Byob.RoomServer.get_state(room_pid)
@@ -239,6 +240,7 @@ defmodule ByobWeb.RoomLive do
            drift_ms: drift_ms,
            raw_drift_ms: drift_ms + offset_ms,
            offset_ms: offset_ms,
+           rtt_ms: rtt_ms,
            server_position: Float.round(server_pos * 1.0, 1),
            play_state: if(playing, do: "playing", else: "paused")
          }}
@@ -385,6 +387,7 @@ defmodule ByobWeb.RoomLive do
         drift_ms: data.drift_ms,
         raw_drift_ms: Map.get(data, :raw_drift_ms, data.drift_ms),
         offset_ms: Map.get(data, :offset_ms, 0),
+        rtt_ms: Map.get(data, :rtt_ms, 0),
         username: Map.get(data, :username),
         server_position: data.server_position,
         play_state: data.play_state,
@@ -392,6 +395,20 @@ defmodule ByobWeb.RoomLive do
       })
 
     sync_stats = Map.put(socket.assigns.sync_stats, :clients, clients)
+
+    # Forward to the StatsPanel JS hook so the sparklines / local-sync chart
+    # can append the latest sample to their ring buffers without waiting for
+    # a server-side re-render.
+    socket =
+      Phoenix.LiveView.push_event(socket, Events.sync_client_stats(), %{
+        key: key,
+        user_id: data.user_id,
+        drift_ms: data.drift_ms,
+        offset_ms: Map.get(data, :offset_ms, 0),
+        rtt_ms: Map.get(data, :rtt_ms, 0),
+        play_state: data.play_state
+      })
+
     {:noreply, assign(socket, :sync_stats, sync_stats)}
   end
 
@@ -521,6 +538,7 @@ defmodule ByobWeb.RoomLive do
       show_comments={@show_comments}
       sync_stats={@sync_stats}
       users={@users}
+      user_id={@user_id}
     />
     <Components.autoplay_help_modal />
     <div id="byob-tab-notifier" phx-hook="TabNotifier" class="hidden"></div>
