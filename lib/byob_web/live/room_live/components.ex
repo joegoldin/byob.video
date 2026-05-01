@@ -385,24 +385,30 @@ defmodule ByobWeb.RoomLive.Components do
 
             dead_zone = Map.get(local_client, :dead_zone_ms, 0)
             hard_seek = Map.get(local_client, :hard_seek_ms, 0)
-            dead_zone = if dead_zone > 0, do: dead_zone, else: 50
-            hard_seek = if hard_seek > 0, do: hard_seek, else: 3000
-            dz_widened? = dead_zone > 50
-            hs_widened? = hard_seek > 3000 %>
+            noise_floor = Map.get(local_client, :noise_floor_ms, 0)
+            rate_correcting? = Map.get(local_client, :rate_correcting, false)
+            dead_zone = if dead_zone > 0, do: dead_zone, else: 100
+            hard_seek = if hard_seek > 0, do: hard_seek, else: 2000 %>
             <div class="flex justify-between">
               <span>Correction interval</span>
               <span>{@sync_stats.correction_interval_ms}ms</span>
             </div>
             <div class="flex justify-between">
+              <span>Jitter (Δdrift EMA)</span>
+              <span class="text-base-content/40">{noise_floor}ms</span>
+            </div>
+            <%!-- Drift tolerance and hard-seek are derived from the jitter
+                 EMA above (with floors / ceilings + post-seek and rate-
+                 correcting bumps). They grow on noisy links and tighten on
+                 calm ones. --%>
+            <div class="flex justify-between">
               <span>Drift tolerance</span>
-              <span class={if dz_widened?, do: "text-warning", else: ""}>
-                ±{dead_zone}ms{if dz_widened?, do: " (post-seek)", else: ""}
-              </span>
+              <span class="text-base-content/70">±{dead_zone}ms</span>
             </div>
             <div class="flex justify-between">
               <span>Hard seek at</span>
-              <span class={if hs_widened?, do: "text-warning", else: ""}>
-                ±{hard_seek}ms{if hs_widened?, do: " (correcting)", else: ""}
+              <span class={if rate_correcting?, do: "text-warning", else: "text-base-content/70"}>
+                ±{hard_seek}ms{if rate_correcting?, do: " (+correcting bump)", else: ""}
               </span>
             </div>
             <%!-- Local clock-sync chart: RTT + drift + offset over the last 60s.
@@ -603,9 +609,21 @@ defmodule ByobWeb.RoomLive.Components do
                   </dd>
                 </div>
                 <div>
+                  <dt class="text-base-content/80">Jitter (Δdrift EMA)</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    Exponential moving average of the per-tick change in drift, |drift<sub>t</sub> − drift<sub>t-1</sub>|. A model-free measure of how much your drift signal bounces around independent of bias or slow drift. Drift tolerance and the hard-seek threshold are both derived from this — calm link → tight thresholds, flaky link → wide ones.
+                  </dd>
+                </div>
+                <div>
                   <dt class="text-base-content/80">Drift tolerance</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    Below this, you're "in sync" (green dead zone, no correction). Above it, proportional rate correction kicks in (0.9–1.1×) to gently catch up. Sustained drift &gt;3 s triggers a hard seek after a clock resync confirms it's real.
+                    Adaptive: roughly 4× the jitter EMA, clamped to [100 ms, 1500 ms], plus a 500 ms post-seek bump. Below this, you're "in sync" (green dead zone, no correction). Above it, proportional rate correction kicks in (0.9–1.1×) to gently catch up.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Hard seek at</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    Adaptive: roughly 30× the jitter EMA, clamped to [2 s, 8 s], plus a 1 s bump while actively rate-correcting. Sustained drift over this for 300 ms triggers a clock resync, and if drift is still over after, a hard seek.
                   </dd>
                 </div>
                 <div>

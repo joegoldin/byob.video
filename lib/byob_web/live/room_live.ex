@@ -218,6 +218,7 @@ defmodule ByobWeb.RoomLive do
       rtt_ms = trunc(params["rtt_ms"] || 0)
       dead_zone_ms = trunc(params["dead_zone_ms"] || 0)
       hard_seek_ms = trunc(params["hard_seek_ms"] || 0)
+      noise_floor_ms = trunc(params["noise_floor_ms"] || 0)
       rate_correcting = params["rate_correcting"] == true
       playing = params["playing"] || false
 
@@ -246,6 +247,7 @@ defmodule ByobWeb.RoomLive do
            rtt_ms: rtt_ms,
            dead_zone_ms: dead_zone_ms,
            hard_seek_ms: hard_seek_ms,
+           noise_floor_ms: noise_floor_ms,
            rate_correcting: rate_correcting,
            server_position: Float.round(server_pos * 1.0, 1),
            play_state: if(playing, do: "playing", else: "paused")
@@ -394,6 +396,10 @@ defmodule ByobWeb.RoomLive do
         raw_drift_ms: Map.get(data, :raw_drift_ms, data.drift_ms),
         offset_ms: Map.get(data, :offset_ms, 0),
         rtt_ms: Map.get(data, :rtt_ms, 0),
+        dead_zone_ms: Map.get(data, :dead_zone_ms, 0),
+        hard_seek_ms: Map.get(data, :hard_seek_ms, 0),
+        noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
+        rate_correcting: Map.get(data, :rate_correcting, false),
         username: Map.get(data, :username),
         server_position: data.server_position,
         play_state: data.play_state,
@@ -414,6 +420,7 @@ defmodule ByobWeb.RoomLive do
         rtt_ms: Map.get(data, :rtt_ms, 0),
         dead_zone_ms: Map.get(data, :dead_zone_ms, 0),
         hard_seek_ms: Map.get(data, :hard_seek_ms, 0),
+        noise_floor_ms: Map.get(data, :noise_floor_ms, 0),
         rate_correcting: Map.get(data, :rate_correcting, false),
         play_state: data.play_state
       })

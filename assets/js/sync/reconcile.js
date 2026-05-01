@@ -1,17 +1,23 @@
 // Drift correction loop with proportional playbackRate and hard seek.
 //
 // Thresholds:
-//   * Dead zone:    < 50 ms drift → rate = 1.0
-//   * Rate correct: 50 ms – hardSeekThreshold → proportional rate (0.9 – 1.1)
-//   * Hard seek:    > hardSeekThreshold  → seekTo; triggers resync to rule out clock skew
+//   * Dead zone:    < deadZone        → rate = 1.0
+//   * Rate correct: deadZone – hardSeek → proportional rate (0.9 – 1.1)
+//   * Hard seek:    > hardSeek        → seekTo; triggers resync to rule out clock skew
+//
+// Both deadZone and hardSeek are *adaptive* — derived from this player's
+// observed tick-to-tick drift jitter (noiseFloorEma) so a calm link gets
+// tight thresholds and a flaky link gets wide ones. We don't fight noise.
 //
 // Stability mechanics:
+//   * noiseFloorEma is the EMA of |Δdrift| per tick — model-free jitter
+//     measure, robust to bias and slow drift.
 //   * driftHistory rolling median kills instantaneous jitter
 //   * directionStable gate requires N consistent-sign samples before flipping rate
 //   * Hard-seek confirm window: drift must exceed threshold for N consecutive
 //     ticks before we even trigger the resync flow. A single jitter spike
 //     (common on high-RTT-variance links, e.g. cross-coast) gets filtered.
-//   * Post-seek quiet window (widened dead-zone for 5 s) prevents re-trigger on bounce
+//   * Post-seek quiet window (widened dead-zone bump for 5 s) prevents re-trigger on bounce
 //   * Before hard seek, we request a mini-burst resync. If drift is still huge after
 //     the fresh offset lands, we seek. Otherwise the rate-correction path handles it.
 //   * setServerState only clears history on genuine state transitions (play /
@@ -28,14 +34,25 @@
 
 const TICK_MS = 100;
 const HISTORY_SIZE = 5;
-const DEAD_ZONE_MS = 50;
-const POST_SEEK_DEAD_ZONE_MS = 500;
+// Adaptive thresholds. The dead zone and hard-seek thresholds are derived
+// from this player's observed *tick-to-tick* drift jitter (noiseFloorEma),
+// which is a model-free measure of how much our drift signal bounces
+// independent of any bias or slow steady drift. Higher jitter → wider
+// thresholds, so we don't fight noise. Calm local network → tight
+// thresholds for fast convergence.
+const NOISE_EMA_ALPHA = 0.1;          // ~10-sample (1 s) horizon
+const NOISE_K_DEAD = 4;               // ~99 % CI of normal-distributed noise
+const NOISE_K_HARD = 30;              // ≫ noise → real desync, not jitter
+const MIN_DEAD_ZONE_MS = 100;         // floor, even on a glassy connection
+const MAX_DEAD_ZONE_MS = 1500;        // ceiling — peers shouldn't drift > 1.5 s
+const MIN_HARD_SEEK_MS = 2000;        // never snap on < 2 s drift
+const MAX_HARD_SEEK_MS = 8000;        // anything beyond 8 s is pathological
+const POST_SEEK_DEAD_ZONE_BUMP_MS = 500; // additive on top of adaptive
 const POST_SEEK_QUIET_MS = 5000;
 const RATE_TIME_CONSTANT_S = 5; // drift/timeConstant scales into the rate delta
 const RATE_MIN = 0.9;
 const RATE_MAX = 1.1;
-const HARD_SEEK_THRESHOLD_MS = 3000;
-const HARD_SEEK_THRESHOLD_WHILE_CORRECTING_MS = 4000;
+const HARD_SEEK_WHILE_CORRECTING_BUMP_MS = 1000; // additive on top of adaptive
 const HARD_SEEK_CONFIRM_TICKS = 3;
 const DIRECTION_STABILITY_SAMPLES = 3;
 const OFFSET_EMA_ALPHA = 0.02;       // ~50 samples (5s @ 100ms) to track
@@ -60,8 +77,16 @@ export class Reconcile {
     this.driftHistory = []; // rolling list of most-recent drifts (ms)
     this.offsetEmaMs = 0;   // learned structural latency (ms)
     this.offsetSamples = 0; // count of stable samples contributing to EMA
+    // EMA of |drift_t − drift_{t-1}| — captures tick-to-tick jitter
+    // (independent of bias and slow drift). Drives the adaptive dead zone
+    // and hard-seek threshold.
+    this.noiseFloorEmaMs = 0;
+    this.noiseSamples = 0;
     this.lastDriftMs = 0;   // most recent adjusted drift (for UI reporting)
     this.lastRawDriftMs = 0;
+    // Latest effective thresholds (cached so getEffectiveThresholds is cheap).
+    this._effectiveDeadZoneMs = MIN_DEAD_ZONE_MS;
+    this._effectiveHardSeekMs = MIN_HARD_SEEK_MS;
   }
 
   // resetHistory: pass false for periodic reference refreshes (sync_correction,
@@ -91,17 +116,17 @@ export class Reconcile {
     this.offsetSamples = 0;
   }
 
-  // The thresholds the next tick will actually apply, after hysteresis
-  // (post-seek widens the dead zone, mid-rate-correction widens the
-  // hard-seek threshold). Surfaced for the stats-for-nerds panel so users
-  // can see *why* a band grew.
+  // The thresholds the most recent tick actually applied. Both the dead
+  // zone and the hard-seek threshold are adaptive (scale with observed
+  // jitter) and additionally widened by event-driven hysteresis (post-seek
+  // dead zone, mid-correction hard seek). Surfaced for the stats-for-
+  // nerds panel so users can see *why* a band grew.
   getEffectiveThresholds() {
     const postSeek = Date.now() - this.lastHardSeekAt < POST_SEEK_QUIET_MS;
     return {
-      deadZoneMs: postSeek ? POST_SEEK_DEAD_ZONE_MS : DEAD_ZONE_MS,
-      hardSeekMs: this.isRateCorrecting
-        ? HARD_SEEK_THRESHOLD_WHILE_CORRECTING_MS
-        : HARD_SEEK_THRESHOLD_MS,
+      deadZoneMs: this._effectiveDeadZoneMs,
+      hardSeekMs: this._effectiveHardSeekMs,
+      noiseFloorMs: this.noiseFloorEmaMs,
       isRateCorrecting: this.isRateCorrecting,
       postSeek,
     };
@@ -128,6 +153,10 @@ export class Reconcile {
     this.hardSeekCandidateTicks = 0;
     this.offsetEmaMs = 0;
     this.offsetSamples = 0;
+    this.noiseFloorEmaMs = 0;
+    this.noiseSamples = 0;
+    this._effectiveDeadZoneMs = MIN_DEAD_ZONE_MS;
+    this._effectiveHardSeekMs = MIN_HARD_SEEK_MS;
     try {
       this.player.setPlaybackRate(1.0);
     } catch (_) {}
@@ -145,10 +174,6 @@ export class Reconcile {
     const rawDriftMs = (localPosition - expectedPosition) * 1000;
 
     const postSeek = Date.now() - this.lastHardSeekAt < POST_SEEK_QUIET_MS;
-    const deadZone = postSeek ? POST_SEEK_DEAD_ZONE_MS : DEAD_ZONE_MS;
-    const hardSeekThreshold = this.isRateCorrecting
-      ? HARD_SEEK_THRESHOLD_WHILE_CORRECTING_MS
-      : HARD_SEEK_THRESHOLD_MS;
 
     // Update EMA only during stable conditions (not mid-seek, mid-correction,
     // mid-resync). Cap prevents a transient from poisoning the learned value.
@@ -173,6 +198,42 @@ export class Reconcile {
     const effectiveOffsetMs =
       this.offsetSamples >= OFFSET_WARMUP_SAMPLES ? this.offsetEmaMs : 0;
     const driftMs = rawDriftMs - effectiveOffsetMs;
+
+    // -----------------------------------------------------------------
+    // Adaptive noise estimate: tick-to-tick |Δdrift|. Robust to bias
+    // (offset already removed) and slow drift (a steady ramp produces
+    // a ~constant Δ, which is the actual rate of change, not noise —
+    // but conveniently still small). Big spikes here = real jitter.
+    // -----------------------------------------------------------------
+    const tickDelta = this.noiseSamples === 0 ? 0 : Math.abs(driftMs - this.lastDriftMs);
+    if (this.noiseSamples === 0) {
+      this.noiseFloorEmaMs = 0;
+    } else {
+      this.noiseFloorEmaMs =
+        NOISE_EMA_ALPHA * tickDelta + (1 - NOISE_EMA_ALPHA) * this.noiseFloorEmaMs;
+    }
+    this.noiseSamples++;
+
+    // Effective thresholds: scale with observed noise, clamped, then
+    // widened by event-driven hysteresis (post-seek, mid-correction).
+    const adaptiveDeadZone = clamp(
+      NOISE_K_DEAD * this.noiseFloorEmaMs,
+      MIN_DEAD_ZONE_MS,
+      MAX_DEAD_ZONE_MS
+    );
+    const adaptiveHardSeek = clamp(
+      NOISE_K_HARD * this.noiseFloorEmaMs,
+      MIN_HARD_SEEK_MS,
+      MAX_HARD_SEEK_MS
+    );
+    const deadZone = postSeek
+      ? Math.min(MAX_DEAD_ZONE_MS, adaptiveDeadZone + POST_SEEK_DEAD_ZONE_BUMP_MS)
+      : adaptiveDeadZone;
+    const hardSeekThreshold = this.isRateCorrecting
+      ? Math.min(MAX_HARD_SEEK_MS, adaptiveHardSeek + HARD_SEEK_WHILE_CORRECTING_BUMP_MS)
+      : adaptiveHardSeek;
+    this._effectiveDeadZoneMs = deadZone;
+    this._effectiveHardSeekMs = hardSeekThreshold;
 
     // Rolling median filter to smooth out per-tick noise (on adjusted drift)
     this.driftHistory.push(driftMs);

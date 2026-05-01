@@ -113,6 +113,7 @@ const VideoPlayer = {
         rtt_ms: Math.round(this.clockSync.getMedianRttMs?.() || 0),
         dead_zone_ms: Math.round(thresholds.deadZoneMs || 0),
         hard_seek_ms: Math.round(thresholds.hardSeekMs || 0),
+        noise_floor_ms: Math.round(thresholds.noiseFloorMs || 0),
         rate_correcting: !!thresholds.isRateCorrecting,
         playing: state === "playing",
       });

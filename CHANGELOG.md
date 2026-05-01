@@ -3,6 +3,56 @@
 
 ---
 
+# v6.5.50
+
+### Adaptive drift thresholds + redesigned correction-bands diagram
+
+The drift-tolerance and hard-seek thresholds were static constants
+(50 ms / 3000 ms), with only event-driven hysteresis to widen them
+post-seek or while rate-correcting. That's wrong: the *whole point*
+of hysteresis on a sync system is that it should adapt to what
+each client actually sees. A peer with 700 ms of network jitter
+needs a wider tolerance than 500 ms; a peer on the same LAN as the
+server doesn't need 250 ms.
+
+**Adaptive thresholds.** Reconcile now tracks a per-tick jitter
+EMA — `|drift_t − drift_{t-1}|`. Robust to bias (offset is already
+subtracted) and to slow drift (a steady ramp produces a small,
+constant Δ). The effective dead zone is roughly `4 × jitter`,
+clamped to `[100 ms, 1500 ms]`. The effective hard-seek threshold
+is roughly `30 × jitter`, clamped to `[2 s, 8 s]`. Post-seek and
+mid-correction hysteresis still apply as additive bumps on top.
+
+Knock-on benefit: the offset EMA finally has a chance to converge
+on cross-coast links. Old 50 ms dead zone meant rate correction
+fired on almost every tick, and offset learning is gated on
+`!isRateCorrecting` — so the EMA stayed pinned at 0 and structural
+latency never got subtracted. With an adaptive baseline, calm
+moments exist for the EMA to learn during.
+
+**Stats panel: jitter row + cleaner band diagram.** Added a new
+"Jitter (Δdrift EMA)" row showing the live noise estimate. The
+correction-bands diagram was redesigned with proportional sections
+(5 % / 20 % / 50 % / 20 % / 5 %) so the dead zone is always
+visible regardless of how small ±dead is in absolute terms. Big
+state chip up top reads "In sync" / "Rate-correcting" /
+"Hard-seek territory" with matching color; threshold values
+labeled under section boundaries; section captions ("rate
+correct", "in sync", "rate correct") below.
+
+Also fixed: `handle_info({:sync_client_stats, ...})` was missing
+`dead_zone_ms`/`hard_seek_ms`/`rate_correcting` from the stored
+client map, so the "Hard seek at" line at the top of the panel
+showed the static fallback (3000 ms) even when the bands diagram
+below it had the live value (4000 ms while correcting). Same
+data source now feeds both.
+
+Glossary updated to describe the adaptive logic.
+
+Server-only / no extension republish.
+
+---
+
 # v6.5.49
 
 ### Stats for nerds: tolerance / hard-seek track hysteresis, persist glossary
