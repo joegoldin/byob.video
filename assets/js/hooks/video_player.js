@@ -1540,6 +1540,18 @@ const VideoPlayer = {
   },
 
   _maybeShowAutoplayHelp() {
+    // Mobile browsers (iOS Safari, Android Chrome, etc.) don't support
+    // the desktop "always allow autoplay for this site" toggle the
+    // dialog walks the user through — autoplay is gated per-gesture
+    // there regardless of any setting. Showing the help would just
+    // confuse mobile users with instructions that don't apply, so
+    // skip it entirely on touch-primary devices.
+    const isMobile =
+      typeof window !== "undefined" &&
+      (window.matchMedia?.("(pointer: coarse)")?.matches ||
+        /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || ""));
+    if (isMobile) return;
+
     try {
       if (localStorage.getItem("byob_autoplay_help_dismissed") === "1") return;
     } catch (_) {

@@ -640,21 +640,13 @@ defmodule ByobWeb.RoomLive.Components do
                             {if info.drift_ms > 0, do: "+", else: ""}{info.drift_ms}ms
                           </span>
                         </div>
-                        <% peer_offset_ms = Map.get(info, :offset_ms, 0)
-                           peer_rtt_ms = Map.get(info, :rtt_ms, 0)
+                        <% peer_rtt_ms = Map.get(info, :rtt_ms, 0)
                            peer_jitter_ms = Map.get(info, :noise_floor_ms, 0)
                            peer_l_ms = Map.get(info, :learned_l_ms, 0)
-                           peer_tolerance_ms = Map.get(info, :tolerance_ms, 0)
                            peer_streak = Map.get(info, :seek_streak, 0)
                            # Warn level at the jitter at which adaptive tolerance starts
                            # growing past its floor (= floor / K_jitter).
                            jitter_warn_threshold_ms = div(Byob.SyncDecision.min_tolerance_ms(), 4) %>
-                        <div class="flex justify-between">
-                          <span>Offset</span>
-                          <span class="text-base-content/40">
-                            {if peer_offset_ms > 0, do: "+", else: ""}{peer_offset_ms}ms
-                          </span>
-                        </div>
                         <div class="flex justify-between">
                           <span>RTT</span>
                           <span class="text-base-content/40">{peer_rtt_ms}ms</span>
@@ -670,10 +662,6 @@ defmodule ByobWeb.RoomLive.Components do
                           }>
                             {if peer_jitter_ms < 1, do: "<1ms", else: "#{peer_jitter_ms}ms"}
                           </span>
-                        </div>
-                        <div class="flex justify-between">
-                          <span>Tolerance</span>
-                          <span class="text-base-content/40">±{peer_tolerance_ms}ms</span>
                         </div>
                         <div class="flex justify-between">
                           <span>Learned seek lag</span>
@@ -721,13 +709,7 @@ defmodule ByobWeb.RoomLive.Components do
                     How far this player's playback position is from where the server thinks it should be.
                     <span class="text-success">+</span>
                     means ahead of the room, <span class="text-error">−</span>
-                    means behind.
-                  </dd>
-                </div>
-                <div>
-                  <dt class="text-base-content/80">Offset</dt>
-                  <dd class="pl-2 text-[10px] leading-snug">
-                    Learned structural latency for this player (video-decode + render + measurement bias). Subtracted from raw drift so peers with different pipelines converge on the same wall-clock moment instead of each sitting at their own bias.
+                    means behind. Pinned to 0 while paused — the player position is frozen, so there's nothing to drift against.
                   </dd>
                 </div>
                 <div>
@@ -739,14 +721,7 @@ defmodule ByobWeb.RoomLive.Components do
                 <div>
                   <dt class="text-base-content/80">Server pos</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    The server's canonical playback position right now. Every peer's local position should converge here (modulo their own offset).
-                  </dd>
-                </div>
-                <div>
-                  <dt class="text-base-content/80">Correction interval</dt>
-                  <dd class="pl-2 text-[10px] leading-snug">
-                    How often the server broadcasts <code class="text-[10px]">sync:correction</code>
-                    while playing — a refresh of each client's reference point so drift extrapolation doesn't accumulate error between natural state changes.
+                    The server's canonical playback position right now. Every peer's local position should converge here.
                   </dd>
                 </div>
                 <div>
@@ -758,25 +733,62 @@ defmodule ByobWeb.RoomLive.Components do
                 <div>
                   <dt class="text-base-content/80">Room jitter (consensus)</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    The max of every connected peer's local jitter — "the room is as calm as its noisiest member". This (not local jitter) is what drives the drift tolerance below: a calm peer doesn't try to rate-correct against a jittery peer's signal. Highlighted amber when the consensus is set by someone other than you.
+                    The max of every connected peer's local jitter — "the room is as calm as its noisiest member". This (not local jitter) is what drives the drift tolerance: a calm peer doesn't seek against a jittery peer's signal. Highlighted amber when the consensus is set by someone other than you.
                   </dd>
                 </div>
                 <div>
                   <dt class="text-base-content/80">Drift tolerance</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    Adaptive: 4× the room jitter, clamped to [100 ms, 500 ms], plus a 100 ms post-seek bump. Within this we're "in sync" — green band on the diagram. Sustained drift past tolerance for 300 ms triggers a hard seek (gated by cooldown).
+                    Adaptive: 4× the room jitter, clamped to [300 ms, 1000 ms], plus a 300 ms post-seek bump for the 5 s after a seek lands. Within this we're "in sync" — green band on the bands diagram. Sustained drift past tolerance for 2 reports (1 in the post-seek window) triggers a sync seek, gated by cooldown.
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-base-content/80">Hard seek + cooldown</dt>
+                  <dt class="text-base-content/80">Learned seek lag</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    Drift correction is seek-only (no rate correction — too unreliable across browsers). When a seek fires, the next is gated by an exponential cooldown: 1 s, 2 s, 4 s, 5 s (cap). 10 s of stability resets the ladder. Net: typical session has one seek (late join), pathological cases settle to one seek every 5 s, never more.
+                    Each time the player is told to seek, the browser measures how long it takes to actually resume playback (seekTo → "playing" state) and reports that to the server. The server EMA-smooths it into a per-peer L_processing estimate (default 500 ms seed; replaced by the first real sample). Future seek targets are pre-shifted by this so the player lands on the canonical position instead of L behind it — typically converges in 1 seek.
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-base-content/80">Sparklines</dt>
+                  <dt class="text-base-content/80">Personalised peer seeks</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    The line next to each peer's drift is the last ~60 s of their drift, color-graded the same way as the numeric value. The "Peer drift" chart at the top overlays every connected client's drift on a shared signed axis — your own line is amber, peers get a stable hue from their user_id.
+                    When someone scrubs the timeline, the server sends each connected peer their own seek command pre-shifted by that peer's learned seek lag (originator excluded — they're already at the new position). Everyone lands at the same canonical position simultaneously instead of cascading corrections.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Ready-then-play (new videos)</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    When a video changes the room holds at paused. Each client signals <code class="text-[10px]">video:loaded</code>
+                    when its player is ready. Once every connected peer reports in (or 8 s elapses), the server broadcasts play and everyone starts simultaneously — no load-delay drift to compensate. Autoplay-blocked tabs are released on player-ready so they don't strand the room.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Room clock freeze</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    For 5 s after any user-initiated seek, the server's periodic clock-shift pass is suppressed. Otherwise the originator's natural −L_processing drift while their player settles would drag the canonical clock toward them, forcing every other peer to seek again to stay aligned.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Seek cooldown + streak</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    Drift correction is seek-only (no rate correction — too unreliable across browsers). When a seek fires, the next is gated by an exponential cooldown ladder: 500 ms, 1 s, 2 s, 4 s, 5 s cap. 10 s of stability resets the ladder. Streak counts consecutive seeks within the reset window.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Correction bands diagram</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    Where your current drift sits on the dial: red = past tolerance ("seek territory"), yellow = past in-sync but within tolerance, green = in-sync. Green is sized at 3× room jitter (clamped to tolerance). Bar ends are scaled to the worst peer drift in the room, capped at 2.5× tolerance so a single far-off peer can't squash the in-tolerance bands into a sliver.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">"Re-syncing…" pill</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    Bottom-right of the player when a sync seek is in flight. Stays visible across cascading seeks (sticky for ~1.5 s after each), suppressed entirely while click-to-play is up, and shown at most once per pause session so paused-room cascades don't flicker.
+                  </dd>
+                </div>
+                <div>
+                  <dt class="text-base-content/80">Sparklines &amp; charts</dt>
+                  <dd class="pl-2 text-[10px] leading-snug">
+                    The line next to each peer's drift is the last ~60 s of their drift, color-graded the same way as the numeric value. The "Peer drift (60s)" chart overlays every connected client's drift on a shared signed axis — your own line is amber, peers get a stable hue from their user_id. White dots on a sparkline mark seek events.
                   </dd>
                 </div>
               </dl>

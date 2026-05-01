@@ -3,6 +3,36 @@
 
 ---
 
+# v6.8.24
+
+### Mobile autoplay-help skip, glossary refresh, panel trim
+
+- **Mobile browsers no longer see the desktop autoplay-help dialog.**
+  iOS Safari / Android Chrome don't expose the "always allow autoplay
+  for this site" toggle the dialog walks the user through, so the
+  instructions are useless there. `_maybeShowAutoplayHelp` now early-
+  returns when `(pointer: coarse)` matches OR the user-agent looks
+  mobile (`/Mobi|Android|iPhone|iPad|iPod/i`). The "Click to join
+  playback" overlay still appears — that's the cross-platform
+  gesture-to-unlock-autoplay path that does work everywhere.
+
+- **Stats-panel "What do these mean?" glossary fully rewritten** to
+  match the post-rewrite engine. Removed obsolete `Offset` and
+  `Correction interval` entries. Updated `Drift tolerance` (now
+  `[300, 1000] ms` with `+300 ms` post-seek bump) and `Seek
+  cooldown + streak` (ladder `500 ms / 1 / 2 / 4 / 5 s`). Added new
+  entries for `Learned seek lag`, `Personalised peer seeks`,
+  `Ready-then-play (new videos)`, `Room clock freeze`, `Correction
+  bands diagram`, and the bottom-right "Re-syncing…" pill.
+
+- **Per-peer connected-clients rows trimmed.** Removed `Offset`
+  (always 0 in the server-driven model — was a legacy passthrough)
+  and `Tolerance` (already shown at the top of the panel — having
+  it per-row was redundant). Each peer row now shows: Drift, RTT,
+  Jitter, Learned seek lag, Seek streak, State.
+
+---
+
 # v6.8.23
 
 ### Stop the paused-drift sawtooth (and assorted pill cleanup)
