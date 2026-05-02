@@ -1673,6 +1673,9 @@ const VideoPlayer = {
       // countdown wheel — instead of a full-screen dimming overlay.
       // Doesn't obscure the video; just signals "background sync in
       // progress". pointer-events:none keeps clicks passing through.
+      // Background uses daisyUI's --color-primary (purple) so the
+      // pill reads as a byob branded indicator rather than a generic
+      // dark chip.
       overlay.style.cssText = [
         "position:absolute",
         "bottom:16px",
@@ -1682,10 +1685,10 @@ const VideoPlayer = {
         "align-items:center",
         "gap:8px",
         "padding:6px 12px 6px 8px",
-        "background:rgba(0,0,0,0.7)",
+        "background:var(--color-primary, oklch(58% 0.233 277.117))",
         "border-radius:9999px",
-        "box-shadow:0 2px 12px rgba(0,0,0,0.4)",
-        "color:white",
+        "box-shadow:0 2px 12px rgba(0,0,0,0.5)",
+        "color:var(--color-primary-content, white)",
         "font:600 12px/1 system-ui",
         "pointer-events:none",
         "transition:opacity 200ms",

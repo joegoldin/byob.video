@@ -3,6 +3,19 @@
 
 ---
 
+# v6.8.29
+
+### Re-syncing pill picks up the byob brand purple
+
+The bottom-right "Waiting for room…" / "Re-syncing…" / "Joining…"
+/ "Catching up…" pill now uses daisyUI's `--color-primary` for its
+background and `--color-primary-content` for the foreground —
+matching buttons and the "(re-syncing)" label in the user list.
+Falls back to a literal `oklch(58% 0.233 277.117)` if the CSS vars
+aren't available yet.
+
+---
+
 # v6.8.28
 
 ### Connected-clients dedup + "Waiting for room…" pill on video change
