@@ -1643,6 +1643,12 @@ const VideoPlayer = {
   _showSyncingOverlay(text = "Syncing…") {
     if (this.el.querySelector(".byob-click-to-play")) return;
     if (this.el.querySelector(".byob-join-ready")) return;
+    // Placeholder players (extension-required content with no real
+    // <video> on this peer) don't actually sync — the extension peer
+    // in another tab does. The pill would be misleading next to the
+    // "Open Player Window" placeholder UI which has its own status
+    // text ("Waiting for external player…").
+    if (this.player?.isPlaceholder) return;
     // While paused, show the pill ONCE per pause session (first sync
     // command after the pause), then suppress subsequent shows so we
     // don't get a flicker of repeating Re-syncing… pills as the

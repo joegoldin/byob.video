@@ -3,6 +3,32 @@
 
 ---
 
+# v6.8.35
+
+### Single-popup enforcement: kill the wrong-username bug at the source
+
+The actual root cause of the "extension joined as the wrong user" bug
+was that two popups could exist concurrently (e.g. user clicks "Open
+Player Window" twice rapidly, or an old popup hadn't been cleaned up
+yet). Each popup independently called `BYOB_CHECK_MANAGED` and one
+of them would race-claim the OTHER popup's pending entry, joining
+the channel under the wrong username/token. v6.8.33's URL-fallback
+ordering was a band-aid; this is the fix.
+
+`BYOB_OPEN_EXTERNAL` handler now CLOSES any existing managed popup
+tabs (`chrome.tabs.remove(...)`) before storing the new pending
+entry. Single-popup invariant holds end-to-end: byob room sends
+open → BG closes any existing popup (which fires their
+`tabs.onRemoved` and pushes their `tab_closed`) → BG stores new
+pending → window.open creates the new popup → that popup claims
+the only pending entry, no race possible.
+
+`pendingByobOpens` is back to a Map keyed by `openerTabId` (one
+entry per opener) since the invariant guarantees we'll never have
+overlapping pendings from the same byob tab.
+
+---
+
 # v6.8.34
 
 ### Fix close-detection race: defer channel.leave until tab_closed flushes

@@ -99,6 +99,11 @@ const EVT = Object.freeze({
 // when the new tab's content script later asks BYOB_CHECK_MANAGED
 // we resolve via sender.tab.openerTabId. byobManagedTabs is the
 // authoritative set; pendingByobOpens is the inbox.
+//
+// Single popup at a time — when a new BYOB_OPEN_EXTERNAL arrives
+// the BG closes any existing managed popup tabs first, then
+// stores the new pending entry. Map keyed by openerTabId is fine
+// because only one popup ever exists for a given byob tab.
 const pendingByobOpens = new Map(); // openerTabId -> {config, expiresAt}
 const PENDING_OPEN_TTL_MS = 30000;
 const MANAGED_TABS_STORAGE_KEY = "byob_managed_tabs";
@@ -765,15 +770,28 @@ function connectToRoom(roomId, serverUrl, token, username) {
 // Listen for messages from content scripts (cross-origin safe)
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === EVT.BYOB_OPEN_EXTERNAL) {
-    // byob.video page asked to open a popup. Record the *opener*
-    // tabId so the new tab's content script can claim it via
-    // BYOB_CHECK_MANAGED. The window.open() that follows on the
-    // page side may or may not have already created the new tab by
-    // the time this message lands — we don't care, because
-    // BYOB_CHECK_MANAGED resolves by openerTabId either way.
+    // byob.video page asked to open a popup. Single-popup enforcement:
+    // close any existing managed popup tabs FIRST so we don't leave
+    // an orphaned popup running with stale config. Without this, an
+    // earlier popup that got configA could still be active when
+    // configB arrives, and the BG would have two popups in
+    // byobManagedTabs (configA / configB), each thinking it's the
+    // current player tab.
     const openerTabId = sender.tab?.id;
     console.log(`[byob/bg] BYOB_OPEN_EXTERNAL openerTabId=${openerTabId} hasConfig=${!!msg.config} url=${msg.config?.target_url}`);
     if (openerTabId != null && msg.config) {
+      // Close any existing managed popups before claiming the new one.
+      // This also fires chrome.tabs.onRemoved for those tabs, which
+      // pushes their tab_closed events to the server (correctly
+      // attributed because byobManagedTabs[tabId] still has each
+      // tab's original config until the listener clears it).
+      const existing = [...byobManagedTabs.keys()];
+      if (existing.length > 0) {
+        console.log(`[byob/bg] BYOB_OPEN_EXTERNAL → closing existing managed tabs: ${existing}`);
+        for (const t of existing) {
+          try { chrome.tabs.remove(t); } catch (_) {}
+        }
+      }
       expirePendingOpens();
       pendingByobOpens.set(openerTabId, {
         config: msg.config,
@@ -796,6 +814,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       await loadManagedTabs();
       let cfg = byobManagedTabs.get(tabId);
       let claimedFrom = cfg ? "managed" : null;
+      let claimedKey = null;
+
       // Path 1: openerTabId match (Chrome — `window.open()` from a
       // content script sets sender.tab.openerTabId correctly).
       if (!cfg && openerTabId != null) {
@@ -804,47 +824,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (pending) {
           cfg = pending.config;
           claimedFrom = "opener";
-          pendingByobOpens.delete(openerTabId);
-          byobManagedTabs.set(tabId, cfg);
-          persistManagedTabs();
+          claimedKey = openerTabId;
         }
       }
+
       // Path 2: URL match (Firefox — sender.tab.openerTabId is
-      // undefined for window.open() popups). Prefer most recent
-      // pending entry first, and exact URL match over hostname
-      // match — otherwise opening multiple Crunchyroll videos
-      // (or having a stale entry from a previous session) would
-      // claim the oldest matching pending and adopt the WRONG
-      // room's config (wrong username, wrong token), producing
-      // join/leave events under the other room's identity.
+      // undefined for window.open() popups). With single-popup
+      // enforcement we expect only ONE pending entry; if there's
+      // somehow more, prefer exact URL > hostname.
       if (!cfg && tabUrl) {
         expirePendingOpens();
         const tabHost = hostnameOf(tabUrl);
-        // Sort by expiresAt descending = insertion time descending
-        // (TTL is constant), so the FRESHEST pending entry is
-        // considered first.
-        const sorted = [...pendingByobOpens.entries()].sort(
+        const entries = [...pendingByobOpens.entries()].sort(
           ([, a], [, b]) => b.expiresAt - a.expiresAt
         );
-        // First pass: exact URL match — unambiguous.
-        let matched = sorted.find(
-          ([, p]) => p.config?.target_url === tabUrl
-        );
-        // Second pass: hostname match — broader, but still newest-first.
+        let matched = entries.find(([, p]) => p.config?.target_url === tabUrl);
         if (!matched && tabHost) {
-          matched = sorted.find(
-            ([, p]) => hostnameOf(p.config?.target_url) === tabHost
-          );
+          matched = entries.find(([, p]) => hostnameOf(p.config?.target_url) === tabHost);
         }
         if (matched) {
           const [openerKey, pending] = matched;
           cfg = pending.config;
           claimedFrom = pending.config?.target_url === tabUrl ? "url-exact" : "url-host";
-          pendingByobOpens.delete(openerKey);
-          byobManagedTabs.set(tabId, cfg);
-          persistManagedTabs();
+          claimedKey = openerKey;
         }
       }
+
+      if (cfg && claimedKey != null) {
+        pendingByobOpens.delete(claimedKey);
+        byobManagedTabs.set(tabId, cfg);
+        persistManagedTabs();
+      }
+
       console.log(
         `[byob/bg] BYOB_CHECK_MANAGED tabId=${tabId} openerTabId=${openerTabId} ` +
           `tabUrl=${tabUrl} claimedFrom=${claimedFrom || "none"} ` +
