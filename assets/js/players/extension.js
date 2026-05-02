@@ -116,6 +116,25 @@ export function create(el, callbacks, opts) {
   // room_live.ex). Label "Open" vs "Focus" derives from the room's
   // ready_count payload so it survives YT's COOP-broken
   // `_byobPlayerWindow.closed` lie.
+  // sessionStorage marker keyed per room so multiple rooms in different
+  // tabs don't bleed into each other. sessionStorage survives refresh
+  // (per-tab), so a popup the user opened pre-refresh remains marked.
+  // Closing the byob tab clears it (sessionStorage is tab-scoped); the
+  // popup might still exist as a separate window, but if the user
+  // returns via a fresh tab they'll see "Open" — the worst case is one
+  // wasted click that opens a duplicate popup, which is far less
+  // frustrating than a permanent stuck-on-Focus.
+  const sessionKey = "byob_popup_open:" + (el.dataset.roomId || "");
+  function setPopupSessionFlag() {
+    try { sessionStorage.setItem(sessionKey, "1"); } catch (_) {}
+  }
+  function clearPopupSessionFlag() {
+    try { sessionStorage.removeItem(sessionKey); } catch (_) {}
+  }
+  function hasPopupSessionFlag() {
+    try { return sessionStorage.getItem(sessionKey) === "1"; } catch (_) { return false; }
+  }
+
   function wireOpenBtn() {
     const btn = el.querySelector("#ext-open-btn-inline");
     if (!btn) return;
@@ -142,18 +161,35 @@ export function create(el, callbacks, opts) {
           url, "byob_player",
           "width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no"
         );
+        setPopupSessionFlag();
       }
       setTimeout(refreshLabel, 100);
     });
   }
 
+  // Two-source AND check:
+  //  1. THIS tab session opened the popup (sessionStorage flag) — false
+  //     after a fresh tab open or after the popup close cleared it
+  //  2. Server agrees the user has an open tab (ready_count) — flips
+  //     to false the moment tab_closed lands server-side
+  //
+  // Both must be true. The sessionStorage gate kills the post-refresh
+  // "Focus" flash that used to happen while the resync was in flight.
   function userHasPopup() {
+    if (!hasPopupSessionFlag()) return false;
     if (!hook) return false;
     const username = el.dataset.username;
     const rc = hook._lastReadyCount;
-    if (!username || !rc) return false;
+    // Server hasn't reported yet — trust the local flag for now. Once
+    // ready_count lands the server's view will take precedence.
+    if (!username || !rc) return true;
     const needsOpen = Array.isArray(rc.needs_open) ? rc.needs_open : [];
-    return !needsOpen.includes(username);
+    const serverSaysOpen = !needsOpen.includes(username);
+    // If server says no open tab, sync our flag to match so a future
+    // refresh doesn't briefly resurrect "Focus" before the next
+    // ready_count arrives.
+    if (!serverSaysOpen) clearPopupSessionFlag();
+    return serverSaysOpen;
   }
 
   function refreshLabel() {

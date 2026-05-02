@@ -3,6 +3,37 @@
 
 ---
 
+# v6.8.46
+
+### Placeholder button reads sessionStorage — no more "Focus → Open" flash on refresh
+
+Even with the resync wired up, refreshing was still showing
+"Focus Player Window" briefly (sometimes for 100-300 ms, sometimes
+permanently if the BG service worker had been suspended): the
+LV peer's join broadcasts the *stale* `ready_count` first, the
+resync arrives as a second broadcast a tick later, and the button
+flickered between the two states.
+
+Fix: gate the "Focus" label on a per-tab `sessionStorage` flag
+(`byob_popup_open:<room_id>`) set when the user clicks Open and
+cleared the moment a `ready_count` payload says no popup exists.
+`sessionStorage` survives F5 within the same tab, so a popup the
+user opened pre-refresh still shows "Focus" — but a popup that's
+been closed (server-side flag cleared in the previous broadcast)
+shows "Open" *immediately* on the next mount, regardless of any
+in-flight server state.
+
+The label is now `(sessionStorage flag) AND (server agrees)`, so:
+- never opened a popup → "Open" instantly ✓
+- opened, popup still alive across refresh → "Focus" ✓
+- opened, properly closed before refresh → "Open" instantly ✓
+- opened, closed-while-SW-suspended → flag stays set, server still
+  reports stale "open"; button briefly shows "Focus" until the
+  resync completes (mitigation: still better than the old
+  permanent-stuck state, and clears in <1 s)
+
+---
+
 # v6.8.45
 
 ### Tab resync: re-establish the BG channel if it died
