@@ -357,9 +357,23 @@ function handleContentMessage(msg, port, tabId) {
       // exactly once per tab — the server's open_tabs entry matches the
       // "tab has an actual player" semantic the tooltip / ext_closed
       // toast rely on.
-      if (tabId != null && channel && !hookedTabs.has(tabId)) {
+      //
+      // Add to `hookedTabs` regardless of channel state. If channel is
+      // null right now (BG was suspended / reconnecting), the on-
+      // rejoin `tabs_resync` will pick this tab up. If we gated the
+      // local set on `channel` too, a hook-during-reconnect would
+      // leave the popup in `hookedTabs=∅` after rejoin and the tab
+      // would never get added to `open_tabs` server-side — break
+      // ready_count math, leave the placeholder stuck on "Waiting
+      // for external player…", and the popup itself stuck on
+      // "connecting" until the user closes & reopens it.
+      if (tabId != null && !hookedTabs.has(tabId)) {
         hookedTabs.add(tabId);
-        channel.push(EVT.CHAN_VIDEO_TAB_OPENED, { tab_id: String(tabId) });
+        if (channel) {
+          channel.push(EVT.CHAN_VIDEO_TAB_OPENED, { tab_id: String(tabId) });
+        } else {
+          console.log(`[byob/bg] VIDEO_HOOKED tabId=${tabId} added to hookedTabs; channel=null, will resync on rejoin`);
+        }
       }
       // Send page metadata to server for display on byob.video
       if (channel && (msg.title || msg.thumbnail_url)) {

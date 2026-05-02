@@ -983,6 +983,18 @@
         updateSyncBarStatus("searching");
         showJoinToast("Play the video to start syncing");
       }
+      // We may have hooked the video BEFORE the BG channel was ready
+      // (BG was suspended, or reconnecting from token-mismatch — the
+      // VIDEO_HOOKED we sent then silently no-oped because the BG's
+      // `if (channel)` guard saw null). On BYOB_CHANNEL_READY we
+      // know the channel is back; if we're hooked but not yet
+      // synced, kick off a sync request now so we don't sit on
+      // "connecting" forever waiting for a COMMAND_INITIAL_STATE
+      // that's never coming.
+      if (hookedVideo && !synced && port) {
+        _log("BYOB_CHANNEL_READY while hooked & unsynced — re-requesting sync");
+        try { port.postMessage({ type: EVT.VIDEO_REQUEST_SYNC }); } catch (_) {}
+      }
       return;
     }
     if (msg.type === EVT.BYOB_VIDEO_HOOKED && window === window.top) {

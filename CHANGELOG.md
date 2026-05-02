@@ -3,6 +3,47 @@
 
 ---
 
+# v6.8.54
+
+### Popup stuck on "connecting" when BG channel was reconnecting
+
+Symptom: open the third-party player window, the popup hooks the
+video and clock-syncs, but then sits forever on "connecting" —
+closing and reopening fixes it.
+
+Two-side bug, both rooted in the BG channel being null at the
+moment the popup hooks:
+
+1. **Content script (`content.js`)**: when the popup hooks the
+   video, it sends `VIDEO_HOOKED` to the BG. If the BG's channel
+   was null at that instant (Chrome MV3 SW suspension, or the
+   v6.8.52 token-mismatch reconnect was mid-tear-down), the BG's
+   `if (channel)` guard skipped the `request_state` push that
+   normally answers with `COMMAND_INITIAL_STATE` →
+   `COMMAND_SYNCED`. The popup's `synced` flag never flipped to
+   true; without it, all state reporting (including the periodic
+   `VIDEO_STATE` that drives the byob page's
+   "Playing in external window" status) silently no-ops.
+
+   Fix: when the popup receives `BYOB_CHANNEL_READY`, if it's
+   already hooked but not yet synced, re-issue
+   `VIDEO_REQUEST_SYNC` so the BG can finally answer with the
+   state it couldn't deliver before.
+
+2. **BG (`background.js`)**: same window — when channel was null,
+   the entire `VIDEO_HOOKED` handler was gated, so the tab wasn't
+   even added to local `hookedTabs`. On the next channel rejoin
+   the `tabs_resync` push (v6.8.42) shipped an empty list; server
+   never registered the popup in `open_tabs`; `ready_count` math
+   stayed wrong; placeholder kept reading "Waiting for external
+   player…" forever.
+
+   Fix: add to `hookedTabs` regardless of channel state. The
+   server-side push is still gated, but the local set is now
+   authoritative and the on-rejoin resync includes the tab.
+
+---
+
 # v6.8.53
 
 ### Dedup self-join activity entry
