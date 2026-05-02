@@ -975,9 +975,23 @@ const VideoPlayer = {
     this._pausedSyncPillShown = false;
     this.el.querySelector(".byob-click-to-play")?.remove();
     this.el.querySelector(".byob-join-ready")?.remove();
-    const overlayText =
-      pendingPlayState === "paused" ? "Waiting for room…" : "Joining…";
-    this._showSyncingOverlay(overlayText);
+    // Extension-required content has its own placeholder UI ("Open
+    // Player Window" / "Waiting for external player…") that does the
+    // job of the pill. The placeholder peer also has no real player
+    // to "sync" — the extension in another tab is the actual player.
+    // Skip the pill so we don't double up. _showSyncingOverlay also
+    // checks `this.player.isPlaceholder` after _loadVideo runs, but
+    // that check fires too late: at this point this.player is still
+    // the PREVIOUS video's player (or null), not the new placeholder.
+    const newIsPlaceholder = item && item.source_type === "extension_required";
+    if (!newIsPlaceholder) {
+      const overlayText =
+        pendingPlayState === "paused" ? "Waiting for room…" : "Joining…";
+      this._showSyncingOverlay(overlayText);
+    } else {
+      // Make sure no stale pill from the previous video sticks around.
+      this._hideSyncingOverlayNow?.();
+    }
     this._loadVideo(item.source_type, item.source_id, item.url, item);
   },
 

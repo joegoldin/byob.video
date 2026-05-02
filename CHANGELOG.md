@@ -3,6 +3,44 @@
 
 ---
 
+# v6.8.37
+
+### Extension identity tied to byob session — proper fix for wrong-user
+
+The wrong-user bug had a deeper architectural cause beyond the
+v6.8.36 channel-reuse race: the extension was passing `username`
+through as the only identifier tying its peer to the human, with
+no link back to the byob session. Random usernames if dataset was
+stale, collisions when two humans share a username, no way to
+prove the extension peer is the same person as the byob page.
+
+**Fix:** the signed extension token now encodes
+`{room_id, owner_user_id}` instead of just `room_id`. On
+`ExtensionSocket.connect/2`, the extension's user_id is derived
+deterministically as `"ext:" <> owner_user_id` — provably the
+same human's session, immune to renames, no username-as-identity
+dependence. The owner is also exposed in socket assigns so the
+channel can look the owner up in `RoomServer` state.
+
+`ExtensionChannel.join_room/3` now resolves the username in this
+priority:
+1. The owner LV peer's current username from `state.users` —
+   authoritative source, survives renames.
+2. The username string the extension sent in join params (legacy
+   builds, or before the LV peer has registered).
+3. Hard fallback to "ExtensionUser" — should be unreachable now.
+
+Backward compatibility: `Phoenix.Token.verify` recognises both
+the new `{room_id, owner_user_id}` payload and the legacy
+`room_id`-only payload. Old extension builds get a random user_id
+(old behavior) until they update.
+
+`room_live.ex:725` passes `@user_id` to `generate_token`.
+Localstorage username band-aid in `extension.js` reverted — server
+resolves the right name regardless of what the dataset says.
+
+---
+
 # v6.8.36
 
 ### Wrong-user bug — actual root cause: stale channel reuse race

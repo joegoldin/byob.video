@@ -37,7 +37,25 @@ defmodule ByobWeb.ExtensionChannel do
   defp join_room(room_id, params, socket) do
     {:ok, pid} = RoomManager.ensure_room(room_id)
     user_id = socket.assigns.user_id
-    username = (params["username"] || "ExtensionUser") |> String.slice(0, 30)
+    owner_user_id = socket.assigns[:owner_user_id]
+
+    # Resolve username, in priority order:
+    # 1. The owner LV peer's current username from RoomServer state —
+    #    this is the authoritative source, survives renames, and is
+    #    immune to stale dataset attributes on the byob page (the
+    #    player div lives inside `phx-update="ignore"` so its
+    #    data-username can be obsolete after a rename).
+    # 2. The username string the extension sent in join params (legacy
+    #    extension builds, or the brief window before the LV peer
+    #    has registered).
+    # 3. Hard fallback to "ExtensionUser" — should be unreachable now
+    #    that we always know the owner_user_id from the signed token.
+    server_state = if owner_user_id, do: RoomServer.get_state(pid), else: nil
+    owner_username = owner_user_id && get_in(server_state, [Access.key(:users), owner_user_id, Access.key(:username)])
+
+    username =
+      (owner_username || params["username"] || "ExtensionUser")
+      |> String.slice(0, 30)
 
     {:ok, state} = RoomServer.join(pid, user_id, username, is_extension: true)
     SyncLog.ext_join(room_id, user_id)

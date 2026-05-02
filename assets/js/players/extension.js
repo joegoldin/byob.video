@@ -90,7 +90,12 @@ export function create(el, callbacks, opts) {
         window.postMessage({ type: LV_EVT.PW_FOCUS_EXTERNAL }, "*");
       } else {
         // Use window.location.origin so LAN-access sessions don't end up
-        // with server_url=http://localhost:4000.
+        // with server_url=http://localhost:4000. Username is now
+        // resolved server-side from the owner_user_id encoded in the
+        // signed token (see ExtensionSocket.connect/2), so we don't
+        // need to ship it from here — the dataset value can be stale
+        // after a rename anyway because of phx-update="ignore" on the
+        // player wrapper. Pass it as a best-effort fallback only.
         window.postMessage({
           type: LV_EVT.PW_OPEN_EXTERNAL,
           url,

@@ -721,7 +721,7 @@ defmodule ByobWeb.RoomLive do
             data-current-index={@current_index}
             data-room-id={@room_id}
             data-server-url={ByobWeb.Endpoint.url()}
-            data-token={ByobWeb.ExtensionSocket.generate_token(@room_id)}
+            data-token={ByobWeb.ExtensionSocket.generate_token(@room_id, @user_id)}
             data-username={@username}
             class="relative bg-base-300 rounded-lg overflow-hidden"
           >
