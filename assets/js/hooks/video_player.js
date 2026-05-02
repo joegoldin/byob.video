@@ -1751,6 +1751,13 @@ const VideoPlayer = {
     if (!this.player || !this.isReady) return;
     if (!this.clockSync?.isReady?.()) return;
     if (this._isLive) return;
+    // Placeholder players (extension-required content with no real
+    // <video> attached on this peer) have getCurrentTime = 0 forever.
+    // Reporting that as drift would tell the server we're 136 s behind
+    // a 136-s-into-the-video room, triggering an endless seek cascade
+    // at a no-op shell. Stay silent — the extension peer in another
+    // tab is the one actually playing and reporting drift.
+    if (this.player?.isPlaceholder) return;
     const state = this.player.getState?.();
     const observedL = this._lastObservedL;
     this._lastObservedL = 0;

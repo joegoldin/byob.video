@@ -115,6 +115,13 @@ export function create(el, callbacks, opts) {
   callbacks.onReady();
 
   return {
+    // Marker for the VideoPlayer hook: this is the inert "Open
+    // Player Window" placeholder, not a real player. The hook skips
+    // drift reports for placeholder peers so a fixed `getCurrentTime
+    // = 0` doesn't get reported as a multi-second drift against the
+    // server's advancing clock — which would otherwise trigger
+    // SyncDecision to cascade seeks at a no-op shell forever.
+    isPlaceholder: true,
     raw: null,
 
     play() { /* no-op — extension manages playback */ },

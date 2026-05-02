@@ -359,7 +359,10 @@
     });
 
     const tryActivate = async (attempt) => {
-      if (attempt > 5) return;
+      if (attempt > 5) {
+        _log(`tryActivate giving up — BG never returned managed=true (host=${window.location.hostname})`);
+        return;
+      }
       const host = window.location.hostname;
       if (host === "byob.video" || host === "localhost") return;
       try {
@@ -368,15 +371,27 @@
         // the byob.video page are managed. Any tab the user landed on
         // via other means (another extension's popup, manual nav,
         // etc.) gets {managed: false} and we stay dormant.
-        const response = await chrome.runtime.sendMessage({ type: EVT.BYOB_CHECK_MANAGED });
+        const response = await chrome.runtime.sendMessage({
+          type: EVT.BYOB_CHECK_MANAGED,
+          // Firefox MV3 doesn't populate `sender.tab.openerTabId`
+          // for windows opened via `window.open()` from a content
+          // script. The BG falls back to a hostname match against
+          // pending entries; passing our URL explicitly covers any
+          // edge case where `sender.tab.url` isn't filled in either.
+          url: window.location.href,
+        });
+        _log(`tryActivate attempt=${attempt} host=${host} response=`, response);
         if (response?.managed && response.config) {
           const { room_id, server_url, token, username } = response.config;
           const isTopFrame = window === window.top;
           if (isTopFrame) showJoinToast("Loading byob sync...");
+          _log(`activating room=${room_id} server=${server_url} user=${username}`);
           activate(room_id, server_url, token, username);
           return;
         }
-      } catch (_) {}
+      } catch (e) {
+        _log(`tryActivate attempt=${attempt} error:`, e);
+      }
       setTimeout(() => tryActivate(attempt + 1), ACTIVATE_RETRY_MS);
     };
     tryActivate(0);

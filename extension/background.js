@@ -126,6 +126,11 @@ async function persistManagedTabs() {
   } catch (_) {}
 }
 
+function hostnameOf(url) {
+  if (!url || typeof url !== "string") return null;
+  try { return new URL(url).hostname; } catch { return null; }
+}
+
 function expirePendingOpens() {
   const now = Date.now();
   for (const [k, v] of pendingByobOpens) {
@@ -692,35 +697,69 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // the time this message lands — we don't care, because
     // BYOB_CHECK_MANAGED resolves by openerTabId either way.
     const openerTabId = sender.tab?.id;
+    console.log(`[byob/bg] BYOB_OPEN_EXTERNAL openerTabId=${openerTabId} hasConfig=${!!msg.config} url=${msg.config?.target_url}`);
     if (openerTabId != null && msg.config) {
       expirePendingOpens();
       pendingByobOpens.set(openerTabId, {
         config: msg.config,
         expiresAt: Date.now() + PENDING_OPEN_TTL_MS,
       });
+      console.log(`[byob/bg] pendingByobOpens set: ${[...pendingByobOpens.keys()]}`);
     }
     return false;
   }
   if (msg.type === EVT.BYOB_CHECK_MANAGED) {
     const tabId = sender.tab?.id;
     const openerTabId = sender.tab?.openerTabId;
+    const tabUrl = sender.tab?.url || sender.url || msg.url;
     if (tabId == null) {
+      console.log(`[byob/bg] BYOB_CHECK_MANAGED no sender.tab.id — sender:`, sender);
       sendResponse({ managed: false });
       return false;
     }
     (async () => {
       await loadManagedTabs();
       let cfg = byobManagedTabs.get(tabId);
+      let claimedFrom = cfg ? "managed" : null;
+      // Path 1: openerTabId match (Chrome — `window.open()` from a
+      // content script sets sender.tab.openerTabId correctly).
       if (!cfg && openerTabId != null) {
         expirePendingOpens();
         const pending = pendingByobOpens.get(openerTabId);
         if (pending) {
           cfg = pending.config;
+          claimedFrom = "opener";
           pendingByobOpens.delete(openerTabId);
           byobManagedTabs.set(tabId, cfg);
           persistManagedTabs();
         }
       }
+      // Path 2: URL-hostname match (Firefox — sender.tab.openerTabId
+      // is undefined for window.open() popups, so we fall back to
+      // matching the new tab's hostname against any pending entry's
+      // target_url hostname). First match wins.
+      if (!cfg && tabUrl) {
+        expirePendingOpens();
+        const tabHost = hostnameOf(tabUrl);
+        if (tabHost) {
+          for (const [openerKey, pending] of pendingByobOpens) {
+            const pendingHost = hostnameOf(pending.config?.target_url);
+            if (pendingHost && pendingHost === tabHost) {
+              cfg = pending.config;
+              claimedFrom = "url";
+              pendingByobOpens.delete(openerKey);
+              byobManagedTabs.set(tabId, cfg);
+              persistManagedTabs();
+              break;
+            }
+          }
+        }
+      }
+      console.log(
+        `[byob/bg] BYOB_CHECK_MANAGED tabId=${tabId} openerTabId=${openerTabId} ` +
+          `tabUrl=${tabUrl} claimedFrom=${claimedFrom || "none"} ` +
+          `pending=[${[...pendingByobOpens.keys()]}] managed=[${[...byobManagedTabs.keys()]}]`
+      );
       sendResponse(cfg ? { managed: true, config: cfg } : { managed: false });
     })();
     return true; // async response

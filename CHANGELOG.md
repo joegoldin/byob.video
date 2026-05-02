@@ -3,6 +3,46 @@
 
 ---
 
+# v6.8.27
+
+### Fix Firefox extension activation + cascade-vs-shell drift bug
+
+**Two unrelated regressions that both caused major room dysfunction.**
+
+**1. Firefox extension wasn't activating on opened tabs.**
+`window.open()` from a content script doesn't set
+`sender.tab.openerTabId` in Firefox MV3 (Chrome does). The new tab
+called `BYOB_CHECK_MANAGED` with `openerTabId=undefined`, the BG
+couldn't find a pending entry by that key, returned `{managed:
+false}`, and the content script stayed dormant — no UI, no sync.
+
+Fix: when the openerTabId path fails, the BG now falls back to
+matching the new tab's URL hostname against any pending entry's
+`target_url` hostname. Content script also explicitly sends
+`window.location.href` in `BYOB_CHECK_MANAGED` as a backup in case
+`sender.tab.url` isn't populated either. Logs the chosen path
+(`claimedFrom=opener|url|managed|none`) for future debuggability.
+
+**2. Browser peers using the extension-required placeholder were
+cascading SyncDecision seeks against a no-op shell.** The
+`ExtensionPlayer` placeholder's `getCurrentTime()` returns `0`
+forever (it's just a "Open Player Window" UI, no real `<video>`).
+So `_pushDriftReport` was reporting `drift_ms = 0 −
+server_position*1000` — easily -100000 ms+ when the room had been
+playing for two minutes. SyncDecision saw a 100-second drift and
+fired seek after seek at a player whose `seek()` is a no-op,
+producing the `streak 35 / cooldown 4.5 s` cascades visible in the
+panel.
+
+Fix: `ExtensionPlayer` exports an `isPlaceholder: true` marker.
+`_pushDriftReport` skips entirely for placeholder peers — they're
+inert by design, the actual drift reporting comes from the
+extension peer in a separate tab. Placeholder still emits
+`video:loaded` via `onReady` so it doesn't strand the
+ready-then-play hold.
+
+---
+
 # v6.8.26
 
 ### "Hidden help" section in settings is cleaner
