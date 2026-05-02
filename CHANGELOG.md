@@ -3,6 +3,18 @@
 
 ---
 
+# v6.8.32
+
+### "Re-syncing" → "Syncing" copy rename
+
+The user-facing label for the bottom-right pill, the stats-panel
+status chip, the per-user tag in the Users card, and the glossary
+heading all now read "Syncing" instead of "Re-syncing". Internal
+field names (`resyncing` map keys, `updateSyncBarStatus("resyncing")`
+state name) are unchanged.
+
+---
+
 # v6.8.31
 
 ### Black-screen pill fix, URL normaliser, live-stream banner

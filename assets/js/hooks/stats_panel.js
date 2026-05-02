@@ -367,10 +367,10 @@ function renderDriftBands(host, data) {
     stateColor = "#fbbf24";
   } else {
     if (cooldownRemaining > 0) {
-      stateLabel = "Re-syncing soon";
+      stateLabel = "Syncing soon";
       statusBits.push(`cooldown ${(cooldownRemaining / 1000).toFixed(1)}s`);
     } else {
-      stateLabel = "Re-syncing now";
+      stateLabel = "Syncing now";
     }
     stateColor = "#f87171";
   }

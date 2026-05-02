@@ -806,7 +806,7 @@ defmodule ByobWeb.RoomLive.Components do
                   </dd>
                 </div>
                 <div>
-                  <dt class="text-base-content/80">"Re-syncing…" pill</dt>
+                  <dt class="text-base-content/80">"Syncing…" pill</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
                     Bottom-right of the player when a sync seek is in flight. Stays visible across cascading seeks (sticky for ~1.5 s after each), suppressed entirely while click-to-play is up, and shown at most once per pause session so paused-room cascades don't flicker.
                   </dd>
@@ -1499,7 +1499,7 @@ defmodule ByobWeb.RoomLive.Components do
             <span
               :if={user.connected and Map.get(status, :resyncing, false)}
               class="flex-shrink-0 inline-flex items-center justify-center w-3 h-3"
-              title="Re-syncing playback"
+              title="Syncing playback"
             >
               <svg width="12" height="12" viewBox="0 0 24 24" class="text-warning" style="animation:byob-spin 0.8s linear infinite">
                 <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-opacity="0.3" stroke-width="3" fill="none"/>
@@ -1525,7 +1525,7 @@ defmodule ByobWeb.RoomLive.Components do
               :if={!is_self_user(uid, @user_id)}
               class="truncate flex-1"
               data-byob-username={user.username}
-            >{user.username}<span :if={user.connected and Map.get(status, :resyncing, false)} class="text-warning text-xs ml-1">(re-syncing)</span></span>
+            >{user.username}<span :if={user.connected and Map.get(status, :resyncing, false)} class="text-warning text-xs ml-1">(syncing)</span></span>
             <%!-- Self: show name + tab indicator --%>
             <span
               :if={is_self_user(uid, @user_id) && !@editing_username}
@@ -1536,7 +1536,7 @@ defmodule ByobWeb.RoomLive.Components do
               <span :if={uid != @user_id} class="text-base-content/30 font-normal text-xs">
                 (other tab)
               </span>
-              <span :if={user.connected and Map.get(status, :resyncing, false)} class="text-warning text-xs ml-1">(re-syncing)</span>
+              <span :if={user.connected and Map.get(status, :resyncing, false)} class="text-warning text-xs ml-1">(syncing)</span>
             </span>
             <button
               :if={uid == @user_id && !@editing_username}

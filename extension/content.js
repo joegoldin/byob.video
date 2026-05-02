@@ -1729,7 +1729,7 @@
       syncing:   { color: "#ff9900", text: "Syncing...",                         tip: "Applying room state to this player" },
       joining:   { color: "#7c3aed", text: "Joining...",                         tip: "Initial seek + adaptive seek-lag learning (1-3s)" },
       catching_up: { color: "#7c3aed", text: "Catching up...",                   tip: "Following a peer's seek" },
-      resyncing: { color: "#7c3aed", text: "Re-syncing...",                      tip: "Server detected drift — seeking to compensate" },
+      resyncing: { color: "#7c3aed", text: "Syncing...",                         tip: "Server detected drift — seeking to compensate" },
       clickjoin: { color: "#ff9900", text: "Click play to sync",                 tip: "Click play on the video player above to start syncing with the room" },
       playing:   { color: "#00d400", text: "Playing",                            tip: "Video is playing in sync with the room" },
       paused:    { color: "#ff9900", text: "Paused",                             tip: "Video is paused — synced with room" },

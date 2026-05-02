@@ -120,7 +120,7 @@ const VideoPlayer = {
       // events to the room.
       this.suppression.suppress("playing");
       this._seekIssuedAt = performance.now();
-      this._showSyncingOverlay("Re-syncing…");
+      this._showSyncingOverlay("Syncing…");
       this.reconcile.executeSeek?.(data?.position || 0, data?.server_time);
     });
     this.handleEvent(LV_EVT.SYNC_AUTOPLAY_COUNTDOWN, (data) => this._onAutoplayCountdown(data));
