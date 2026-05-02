@@ -3,6 +3,55 @@
 
 ---
 
+# v6.8.42
+
+### "Focus Player Window" stuck after refresh — authoritative tab resync on BG channel join
+
+Symptom: open the popup, close the popup (button correctly flips to
+"Open Player Window"), then refresh the byob room (or leave and
+rejoin) — the button now wrongly shows "Focus Player Window" and
+clicking it does nothing useful, because no popup actually exists.
+
+Root cause was a Chrome MV3 service-worker suspension hole. The BG
+maintains an in-memory `hookedTabs` set as the source of truth for
+"which player tabs has this ext_user_id opened". When a popup
+closes, `chrome.tabs.onRemoved` fires, the SW wakes briefly, deletes
+the tab from `hookedTabs`, and tries to push `video:tab_closed` to
+the server — BUT inside the handler:
+
+```js
+if (channel) { channel.push(EVT.CHAN_VIDEO_TAB_CLOSED, ...) }
+```
+
+If the SW had already been suspended, `channel` is null. The push
+silently no-ops. The server's `open_tabs[tab_id]` survives. On the
+user's next byob refresh, the server's `broadcast_ready_count` sees
+the stale entry, rebuilds `needs_open` without the user, and the
+placeholder's "Focus / Open" label resolves to "Focus".
+
+The previous mitigation re-pushed `tab_opened` for everything in
+`hookedTabs` on channel rejoin, which handled the "still-open tabs
+need re-marking" case but did nothing for "tabs that closed while
+the channel was down". So the stale entry persisted indefinitely.
+
+Fix: replace the per-tab re-push with an authoritative resync. BG
+now sends a single `video:tabs_resync` event on every channel
+(re)join with the full current `hookedTabs` list. The server
+handler:
+
+1. Removes every `open_tabs` entry whose owner is this ext_user_id
+2. Adds entries for each tab_id in the resync payload
+3. Cleans matching `ready_tabs` entries that no longer have an
+   open partner
+4. Broadcasts a fresh `ready_count`
+
+Because `hookedTabs` is in-memory and gets rebuilt from live ports
+on SW revival, this is self-healing — any popup that's actually
+gone gets cleaned up the next time the channel comes online,
+regardless of whether `tab_closed` ever made it through.
+
+---
+
 # v6.8.41
 
 ### Extension placeholder: kill the leaking "Loading…" pill, gate CTA on install

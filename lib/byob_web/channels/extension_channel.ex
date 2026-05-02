@@ -15,6 +15,7 @@ defmodule ByobWeb.ExtensionChannel do
   @in_video_media_info Events.in_video_media_info()
   @in_video_tab_opened Events.in_video_tab_opened()
   @in_video_tab_closed Events.in_video_tab_closed()
+  @in_video_tabs_resync Events.in_video_tabs_resync()
   @in_video_ready Events.in_video_ready()
   @in_video_unready Events.in_video_unready()
   @in_video_loaded Events.in_video_loaded()
@@ -231,6 +232,18 @@ defmodule ByobWeb.ExtensionChannel do
   def handle_in(@in_video_tab_closed, payload, socket) do
     tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
     RoomServer.clear_tab_opened(socket.assigns.room_pid, tab_id)
+    {:noreply, socket}
+  end
+
+  # BG pushes this on every (re)join with the authoritative list of
+  # currently-hooked tabs. Recovers from the Chrome MV3 SW-suspended
+  # window-close case where `tab_closed` couldn't be sent because the
+  # channel was null at the time of `chrome.tabs.onRemoved`.
+  def handle_in(@in_video_tabs_resync, payload, socket) do
+    raw = payload["tab_ids"] || []
+    user_id = socket.assigns.user_id
+    tab_ids = Enum.map(raw, fn id -> "#{user_id}:#{id}" end)
+    RoomServer.resync_open_tabs(socket.assigns.room_pid, user_id, tab_ids)
     {:noreply, socket}
   end
 

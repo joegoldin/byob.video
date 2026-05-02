@@ -27,6 +27,7 @@ defmodule Byob.Events do
   def in_video_media_info, do: "video:media_info"
   def in_video_tab_opened, do: "video:tab_opened"
   def in_video_tab_closed, do: "video:tab_closed"
+  def in_video_tabs_resync, do: "video:tabs_resync"
   def in_video_ready, do: "video:ready"
   def in_video_loaded, do: "video:loaded"
   def in_video_unready, do: "video:unready"

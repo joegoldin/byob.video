@@ -51,6 +51,7 @@ const EVT = Object.freeze({
   CHAN_VIDEO_LIVE_STATUS: "video:live_status",
   CHAN_VIDEO_TAB_OPENED: "video:tab_opened",
   CHAN_VIDEO_TAB_CLOSED: "video:tab_closed",
+  CHAN_VIDEO_TABS_RESYNC: "video:tabs_resync",
   CHAN_VIDEO_ALL_CLOSED: "video:all_closed",
   CHAN_SYNC_PING: "sync:ping",
   CHAN_SYNC_REQUEST_STATE: "sync:request_state",
@@ -768,11 +769,18 @@ function connectToRoom(roomId, serverUrl, token, username) {
       // Kick off NTP clock sync and schedule maintenance.
       doClockSync();
       startClockSyncMaintenance();
-      // Re-announce only tabs that had previously hooked a video —
-      // non-player tabs stay out of open_tabs.
-      for (const tId of hookedTabs) {
-        channel.push(EVT.CHAN_VIDEO_TAB_OPENED, { tab_id: String(tId) });
-      }
+      // Authoritative tab resync. Sends our current `hookedTabs` set
+      // as the full list of open player tabs for this ext_user_id.
+      // The server clears any other open_tabs entries owned by us
+      // before applying — so a popup that closed while the SW was
+      // suspended (Chrome MV3 — `chrome.tabs.onRemoved` wakes the SW
+      // briefly enough to delete from `hookedTabs` but `channel` is
+      // null so the `tab_closed` push is a no-op) gets cleaned up on
+      // the next channel join. Without this, the stale entry would
+      // survive across the user's next byob page refresh and the
+      // "Open / Focus Player Window" button would stick on "Focus".
+      const resyncIds = [...hookedTabs].map(String);
+      channel.push(EVT.CHAN_VIDEO_TABS_RESYNC, { tab_ids: resyncIds });
     })
     .receive("error", (resp) => {
       console.error("[byob] Failed to join room", roomId, resp);

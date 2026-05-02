@@ -152,6 +152,10 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:clear_tab_opened, tab_id})
   end
 
+  def resync_open_tabs(pid, ext_user_id, tab_ids) do
+    GenServer.call(pid, {:resync_open_tabs, ext_user_id, tab_ids})
+  end
+
   def mark_tab_ready(pid, tab_id, ext_user_id) do
     GenServer.call(pid, {:mark_tab_ready, tab_id, ext_user_id})
   end
@@ -500,6 +504,50 @@ defmodule Byob.RoomServer do
   end
 
   def handle_call({:clear_tab_opened, _}, _from, state), do: {:reply, :ok, state}
+
+  # Authoritative resync — replace all open_tabs entries owned by this
+  # ext_user_id with the provided list of tab_ids. Pushed by the BG on
+  # every channel join, which is the recovery path for the case where a
+  # popup closed while the BG service worker was suspended (Chrome MV3):
+  # `chrome.tabs.onRemoved` wakes the SW briefly enough to delete from
+  # `hookedTabs`, but the `channel.push(tab_closed)` call is a no-op
+  # because `channel` is null. The stale `open_tabs` entry would then
+  # survive across the user's next byob page refresh and "Focus Player
+  # Window" would stick. Resync makes the BG's in-memory `hookedTabs`
+  # the source of truth on every (re)join, so any closed-while-dead
+  # tabs get cleaned up.
+  def handle_call({:resync_open_tabs, ext_user_id, tab_ids}, _from, state)
+      when is_binary(ext_user_id) and is_list(tab_ids) do
+    open_tabs = Map.get(state, :open_tabs, %{})
+    ready_tabs = Map.get(state, :ready_tabs, %{})
+
+    cleared_open =
+      open_tabs |> Enum.reject(fn {_, owner} -> owner == ext_user_id end) |> Map.new()
+
+    new_open =
+      Enum.reduce(tab_ids, cleared_open, fn tab_id, acc ->
+        if is_binary(tab_id), do: Map.put(acc, tab_id, ext_user_id), else: acc
+      end)
+
+    new_open_keys = MapSet.new(Map.keys(new_open))
+
+    cleaned_ready =
+      ready_tabs
+      |> Enum.reject(fn {tab_id, owner} ->
+        owner == ext_user_id and not MapSet.member?(new_open_keys, tab_id)
+      end)
+      |> Map.new()
+
+    state =
+      state
+      |> Map.put(:open_tabs, new_open)
+      |> Map.put(:ready_tabs, cleaned_ready)
+
+    broadcast_ready_count(state)
+    {:reply, :ok, state}
+  end
+
+  def handle_call({:resync_open_tabs, _, _}, _from, state), do: {:reply, :ok, state}
 
   def handle_call({:mark_tab_ready, tab_id, ext_user_id}, _from, state) when is_binary(tab_id) do
     ready_tabs = Map.get(state, :ready_tabs, %{})
