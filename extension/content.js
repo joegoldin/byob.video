@@ -74,6 +74,7 @@
     BYOB_CLEAR_EXTERNAL: "byob:clear-external",
     BYOB_OPEN_EXTERNAL: "byob:open-external",
     BYOB_FOCUS_EXTERNAL: "byob:focus-external",
+    BYOB_REQUEST_TAB_RESYNC: "byob:request-tab-resync",
     BYOB_RELAY: "byob:relay",
     BYOB_SPONSOR_SEGMENTS: "byob:sponsor-segments",
   });
@@ -334,6 +335,13 @@
           // Hop through chrome.runtime so the BG can use chrome.tabs.update
           // / chrome.windows.update to switch focus to the popup tab.
           try { chrome.runtime.sendMessage({ type: EVT.BYOB_FOCUS_EXTERNAL }); } catch (_) {}
+          return;
+        }
+        if (e.data?.type === EVT.BYOB_REQUEST_TAB_RESYNC) {
+          // The placeholder mounted on the byob page and wants the
+          // server's open_tabs view refreshed against BG's actual
+          // hookedTabs. Hop to BG which pushes a tabs_resync.
+          try { chrome.runtime.sendMessage({ type: EVT.BYOB_REQUEST_TAB_RESYNC }); } catch (_) {}
           return;
         }
         if (e.data?.type === EVT.BYOB_OPEN_EXTERNAL) {

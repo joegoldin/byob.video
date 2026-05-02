@@ -165,6 +165,16 @@ export function create(el, callbacks, opts) {
   render();
   refreshLabel();
 
+  // Belt-and-braces: tell the BG to push a fresh tabs_resync to the
+  // server so the placeholder's "Open / Focus" label reflects the
+  // BG's actual hookedTabs (not whatever the server has cached).
+  // The on-channel-rejoin resync only fires if the BG channel
+  // actually reconnects — but the BG socket survives byob page
+  // refreshes, so without this signal a popup that closed while
+  // the BG SW was suspended (Chrome MV3) would leave a stale
+  // open_tabs entry the user couldn't clear without re-clicking.
+  try { window.postMessage({ type: LV_EVT.PW_REQUEST_TAB_RESYNC }, "*"); } catch (_) {}
+
   // Poll for extension install — when the content script attaches
   // `data-byob-extension` we re-render to swap the install CTA for the
   // open-window button.

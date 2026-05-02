@@ -77,6 +77,7 @@ const EVT = Object.freeze({
   BYOB_USER_ACTIVE: "byob:user-active",
   BYOB_FOCUS_EXTERNAL: "byob:focus-external",
   BYOB_OPEN_EXTERNAL: "byob:open-external",
+  BYOB_REQUEST_TAB_RESYNC: "byob:request-tab-resync",
   BYOB_CHECK_MANAGED: "byob:check-managed",
   BYOB_CHANNEL_READY: "byob:channel-ready",
   BYOB_CLOCK_SYNC: "byob:clock-sync",
@@ -952,6 +953,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       }
       void focused;
+    })();
+  }
+  if (msg.type === EVT.BYOB_REQUEST_TAB_RESYNC) {
+    // The byob page placeholder mounted and wants the server's
+    // open_tabs view refreshed against our actual hookedTabs. This
+    // handles the case where a popup closed while the SW was
+    // suspended — the BG channel survives across byob page
+    // refreshes (so the on-rejoin resync never fires) but the
+    // server's open_tabs still has the stale entry. Validate the
+    // set against live chrome.tabs first, drop phantoms, then push.
+    (async () => {
+      const tabIds = [...hookedTabs];
+      for (const tabId of tabIds) {
+        try {
+          await chrome.tabs.get(tabId);
+        } catch (_) {
+          hookedTabs.delete(tabId);
+        }
+      }
+      if (channel) {
+        const resyncIds = [...hookedTabs].map(String);
+        console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC pushing tabs_resync=[${resyncIds.join(",")}]`);
+        try {
+          channel.push(EVT.CHAN_VIDEO_TABS_RESYNC, { tab_ids: resyncIds });
+        } catch (_) {}
+      }
     })();
   }
 });

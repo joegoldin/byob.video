@@ -47,5 +47,6 @@ export const LV_EVT = Object.freeze({
   PW_CLEAR_EXTERNAL: "byob:clear-external",
   PW_OPEN_EXTERNAL: "byob:open-external",
   PW_FOCUS_EXTERNAL: "byob:focus-external",
+  PW_REQUEST_TAB_RESYNC: "byob:request-tab-resync",
   PW_SPONSOR_SEGMENTS: "byob:sponsor-segments",
 });

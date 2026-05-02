@@ -3,6 +3,35 @@
 
 ---
 
+# v6.8.43
+
+### Placeholder triggers tab resync on mount (fixes "Focus" stuck after refresh)
+
+v6.8.42 added an authoritative `video:tabs_resync` push from BG to
+server, but only on **channel rejoin**. The BG socket survives byob
+page refreshes (it's an independent connection), so the trigger
+never fired and the bug stayed.
+
+This release wires up a second trigger that's actually exercised on
+every refresh:
+
+1. Placeholder mount postMessages `byob:request-tab-resync` to the
+   page world.
+2. byob.video's content script forwards it to the BG via
+   `chrome.runtime.sendMessage`.
+3. BG validates `hookedTabs` against live `chrome.tabs` (drops any
+   that 404), then pushes `video:tabs_resync` with the cleaned set.
+4. Server's `:resync_open_tabs` handler (added in v6.8.42) replaces
+   all `open_tabs` entries owned by this ext_user_id, then
+   broadcasts a fresh `ready_count`.
+
+So every byob page load now reconciles server state to BG state,
+regardless of whether the BG channel rejoined. Stale entries from
+a closed-while-SW-suspended popup get cleaned up on the next
+placeholder render.
+
+---
+
 # v6.8.42
 
 ### "Focus Player Window" stuck after refresh — authoritative tab resync on BG channel join
