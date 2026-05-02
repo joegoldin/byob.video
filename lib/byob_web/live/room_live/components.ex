@@ -515,18 +515,29 @@ defmodule ByobWeb.RoomLive.Components do
               |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
               |> Map.new()
 
-            # Group recent drift rows by owner (everything before the LAST
-            # `:`, because LV per-tab user_ids are themselves `session:tab`).
-            clients_by_owner =
+            # Group recent drift rows by USERNAME so the same human's
+            # browser tab + extension tab + other tabs collapse into a
+            # single Connected-clients row instead of looking like
+            # multiple peers. Falls back to user_id-prefix grouping for
+            # entries that don't have a username yet.
+            clients_by_username =
               active_clients
-              |> Enum.group_by(fn {client_id, _} ->
-                parts = String.split(client_id, ":")
-                parts |> Enum.drop(-1) |> Enum.join(":")
-              end)
+              |> Enum.group_by(fn {_id, c} -> Map.get(c, :username) end)
+
+            # Pick one canonical client per username — the freshest
+            # `updated_at`. The extension tab (actively reporting) wins
+            # over a placeholder browser tab that's gone silent (and
+            # over a stale entry from a prior session of the same human).
+            best_client_per_username =
+              for {username, entries} <- clients_by_username, username != nil, into: %{} do
+                {client_id, info} = Enum.max_by(entries, fn {_, c} -> Map.get(c, :updated_at, 0) end)
+                {username, {client_id, info}}
+              end
 
             connected_users =
               (@users || %{})
-              |> Enum.filter(fn {_, u} -> Map.get(u, :connected, false) end) %>
+              |> Enum.filter(fn {_, u} -> Map.get(u, :connected, false) end)
+              |> Enum.uniq_by(fn {_id, u} -> u.username end) %>
             <%= if map_size(active_clients) > 0 do %>
               <%!-- Aggregate uses |drift| because direction is meaningless
                    across a multi-peer roll-up — we want "how far off is
@@ -570,8 +581,8 @@ defmodule ByobWeb.RoomLive.Components do
               <div class="mt-2 pt-2 border-t border-base-300/50">
                 <div class="text-base-content/40 mb-1">Connected clients</div>
                 <%= for {user_id, user} <- connected_users do %>
-                  <% user_clients = Map.get(clients_by_owner, user_id, []) %>
-                  <%= if user_clients == [] do %>
+                  <% best = Map.get(best_client_per_username, user.username) %>
+                  <%= if best == nil do %>
                     <% owner_short = String.slice(user_id, 0..7) %>
                     <div class="mb-2 p-1.5 rounded bg-base-200/50">
                       <div class="text-[10px] truncate mb-0.5" title={user_id}>
@@ -584,19 +595,19 @@ defmodule ByobWeb.RoomLive.Components do
                       <div class="text-base-content/30 italic">no drift data</div>
                     </div>
                   <% else %>
-                    <%= for {client_id, info} <- user_clients do %>
-                      <% parts = String.split(client_id, ":")
-                         {_owner_parts, [tab_id]} = Enum.split(parts, length(parts) - 1)
-                         username =
-                           Map.get(info, :username) || user.username || "(unknown)"
-                         owner_short = String.slice(user_id, 0..7)
-                         tab_short =
-                           if is_binary(tab_id) and tab_id != "",
-                             do: String.slice(tab_id, 0..7),
-                             else: nil
-                         id_label =
-                           if tab_short, do: "#{owner_short}:#{tab_short}", else: owner_short %>
-                      <% is_local? = user_id == @user_id %>
+                    <% {client_id, info} = best
+                       username =
+                         Map.get(info, :username) || user.username || "(unknown)"
+                       owner_short = String.slice(user_id, 0..7)
+                       parts = String.split(client_id, ":")
+                       {_owner_parts, [tab_id]} = Enum.split(parts, length(parts) - 1)
+                       tab_short =
+                         if is_binary(tab_id) and tab_id != "",
+                           do: String.slice(tab_id, 0..7),
+                           else: nil
+                       id_label =
+                         if tab_short, do: "#{owner_short}:#{tab_short}", else: owner_short %>
+                      <% is_local? = is_self_user(user_id, @user_id) %>
                       <div class={[
                         "mb-2 p-1.5 rounded",
                         if(is_local?, do: "bg-primary/10 border border-primary/30", else: "bg-base-200/50")
@@ -684,7 +695,6 @@ defmodule ByobWeb.RoomLive.Components do
                           </span>
                         </div>
                       </div>
-                    <% end %>
                   <% end %>
                 <% end %>
               </div>

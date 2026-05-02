@@ -952,6 +952,20 @@ const VideoPlayer = {
       current_time: 0,
       server_time: this.clockSync.serverNow(),
     };
+    // Show the bottom-right pill while the player loads + the
+    // ready-then-play handshake completes. Without this the user just
+    // sees a black YouTube embed for several seconds before the
+    // server's `:sync_play` arrives and playback actually starts.
+    // _hideSyncingOverlay's existing 1.5 s grace lets it stay
+    // continuously visible across the load → sync_play → first
+    // PLAYING transition; the 5 s safety timer covers the worst case.
+    // Fresh video = fresh logical session — clear the per-pause-
+    // session pill throttle so the "Waiting for room…" pill can pop
+    // even if the previous pause session already used its one show.
+    this._pausedSyncPillShown = false;
+    const overlayText =
+      pendingPlayState === "paused" ? "Waiting for room…" : "Joining…";
+    this._showSyncingOverlay(overlayText);
     this._loadVideo(item.source_type, item.source_id, item.url, item);
   },
 

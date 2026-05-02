@@ -3,6 +3,33 @@
 
 ---
 
+# v6.8.28
+
+### Connected-clients dedup + "Waiting for room…" pill on video change
+
+- **Connected clients dedupe by username.** A single human's
+  byob.video tab + extension tab were showing as two rows: the
+  active one with drift/RTT/jitter and the placeholder one with
+  "no drift data". Same person, same username, just two clients.
+  The Connected-clients section now picks the freshest-updating
+  client per username and renders one row. `is_local?`
+  highlighting works whether the chosen client is your browser
+  tab or your extension tab (`is_self_user` prefix-match).
+
+- **"Waiting for room…" pill while a new video loads.** The
+  YouTube embed used to load and sit on a black frame for several
+  seconds (during the ready-then-play handshake) with no visual
+  cue. `_onVideoChange` now pops the bottom-right pill — text is
+  "Waiting for room…" while the room is paused waiting for peers
+  to load, "Joining…" if we land in a playing room mid-stream.
+  Stays visible across the load → sync_play → first PLAYING
+  transition; auto-hides on PLAYING with the existing 1.5 s
+  grace, 5 s safety timeout otherwise. Per-pause-session pill
+  throttle is reset on each video change so a stale "already
+  showed one this pause" flag can't suppress it.
+
+---
+
 # v6.8.27
 
 ### Fix Firefox extension activation + cascade-vs-shell drift bug
