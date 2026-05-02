@@ -3,6 +3,40 @@
 
 ---
 
+# v6.8.49
+
+### Fix orphaned ext peer + don't destroy live popups on Open click
+
+Two related fixes for the "ExtensionUser" ghost the user was
+still seeing in the Connected clients panel:
+
+1. **Server (`room_server.ex` `:join`)**: when a LV peer joins
+   and the stale-LV cleanup removes one or more disconnected
+   entries with the same username, ALSO walk every ext peer and
+   rename the ones whose owner_user_id matched a removed entry.
+   Previously the cleanup wiped the LV record but left the ext
+   peer pointing at a now-vanished owner; subsequent BG channel
+   joins couldn't resolve `owner_username` and fell back to the
+   "ExtensionUser" literal — showing up as a phantom human in
+   the user list, activity log, and ready_count math
+   (which is what was sticking the placeholder button on
+   "Open" instead of "Focus" even when a popup was open).
+
+2. **BG (`background.js` `BYOB_OPEN_EXTERNAL`)**: the click
+   handler used to unconditionally close every existing managed
+   popup before opening a new one. That made sense for the
+   "stale state recovery" case, but if the user clicks Open
+   when a working popup actually exists (e.g. because the
+   placeholder label said "Open" due to the bug above), the
+   single-popup enforcement nuked their live window. Now
+   validate `byobManagedTabs` against `chrome.tabs.get` first;
+   if any entry still resolves to a live tab, focus it and
+   skip the destructive open path entirely. Phantom entries
+   (404 from chrome.tabs.get) get dropped and the open
+   proceeds normally.
+
+---
+
 # v6.8.48
 
 ### Stop shipping stale `data-username` to the BG; LV pushes per-peer popup status

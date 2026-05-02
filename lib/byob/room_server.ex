@@ -417,26 +417,37 @@ defmodule Byob.RoomServer do
       })
       |> maybe_set_host(user_id)
 
-    # Heal the BG-joined-as-"ExtensionUser" race: the BG channel's
-    # join_room runs RoomServer.get_state to look up the owner LV
-    # peer's username. If the BG channel.join() lands BEFORE the LV
-    # mount's RoomServer.join (content script can run faster than
-    # LiveSocket on quick refreshes), the lookup returns nil and the
-    # ext peer joins as the literal "ExtensionUser" fallback —
-    # showing up in the activity log + dedup logic as a stranger.
-    # Once the real LV peer joins, propagate its username down to
-    # any matching ext peer so the names line up retroactively.
+    # Heal the BG-joined-as-"ExtensionUser" race + the multi-tab
+    # orphaned-ext-peer problem. When a LV peer joins, walk every
+    # ext peer in state.users and rename them to this user's
+    # username if either:
+    #
+    #   (a) the ext peer's `"ext:" <> user_id` matches this LV peer
+    #       directly (the v6.8.47 same-tab race) OR
+    #   (b) the ext peer's owner_user_id refers to one of the stale
+    #       LV peers we just removed above (the cross-tab case where
+    #       the user opened a popup from tab A, closed tab A, then
+    #       opened byob in tab B — tab B's join wiped tab A's LV
+    #       entry, leaving the ext peer pointing at a now-vanished
+    #       owner_user_id). Without (b), the BG's next channel join
+    #       can't resolve owner_username, falls back to
+    #       "ExtensionUser", and the activity log + ready_count
+    #       computation start treating the popup as a different
+    #       human.
     state =
       if not is_extension do
-        ext_user_id = "ext:" <> user_id
+        stale_ext_owner_ids = Enum.map(stale_ids, fn id -> "ext:" <> id end)
+        target_ext_owner_id = "ext:" <> user_id
 
-        case get_in(state, [Access.key(:users), ext_user_id]) do
-          %{username: existing} when existing != username ->
-            put_in(state.users[ext_user_id].username, username)
-
-          _ ->
-            state
-        end
+        Enum.reduce(state.users, state, fn {uid, u}, acc ->
+          if Map.get(u, :is_extension, false) and
+               u.username != username and
+               (uid == target_ext_owner_id or uid in stale_ext_owner_ids) do
+            put_in(acc.users[uid].username, username)
+          else
+            acc
+          end
+        end)
       else
         state
       end

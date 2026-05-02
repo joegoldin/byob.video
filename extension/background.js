@@ -805,40 +805,66 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         `url=${msg.config?.target_url}`
     );
     if (openerTabId != null && msg.config) {
-      // Close any existing managed popups before claiming the new one.
-      // chrome.tabs.remove fires tabs.onRemoved → tab_closed pushes to
-      // the server, but the cleanup is ASYNC. The new popup's CONNECT
-      // can arrive before port.onDisconnect for the old popup, hitting
-      // the "already connected, reuse channel" branch in our CONNECT
-      // handler — and the reused channel was joined under the OLD
-      // user's name. So we ALSO tear down the channel + socket
-      // synchronously here so the new popup is forced through a fresh
-      // connectToRoom (which joins as the new username).
-      const existing = [...byobManagedTabs.keys()];
-      if (existing.length > 0) {
-        console.log(`[byob/bg] BYOB_OPEN_EXTERNAL → closing existing managed tabs: ${existing}`);
-        for (const t of existing) {
-          try { chrome.tabs.remove(t); } catch (_) {}
+      // If a managed popup already exists AND is still alive, focus it
+      // instead of destroying + reopening. The page sends OPEN whenever
+      // userHasPopup() is false; that can be a stale-state false (e.g.
+      // server briefly thinks no popup, ext peer was named wrong, etc.)
+      // even when a real popup is sitting right there. Old behaviour
+      // was to nuke the existing popup and open a new one, which is
+      // destructive if the user actually had a working window.
+      //
+      // Async self-IIFE because we need chrome.tabs.get to validate
+      // each candidate, but Chrome's onMessage listeners don't await.
+      (async () => {
+        const candidates = [...byobManagedTabs.keys()];
+        for (const tabId of candidates) {
+          try {
+            const tab = await chrome.tabs.get(tabId);
+            await chrome.tabs.update(tabId, { active: true });
+            if (tab && tab.windowId !== undefined) {
+              await chrome.windows.update(tab.windowId, { focused: true });
+            }
+            console.log(`[byob/bg] BYOB_OPEN_EXTERNAL → existing popup tab=${tabId}, focused instead of opening new`);
+            return; // done — do NOT close/reopen, do NOT store pending
+          } catch (_) {
+            // Tab is gone (404 from chrome.tabs.get) — drop the
+            // phantom and keep walking. Without this we'd never reach
+            // the fall-through to open a new popup if the only entries
+            // in byobManagedTabs were ghosts.
+            byobManagedTabs.delete(tabId);
+            persistManagedTabs();
+            if (hookedTabs.has(tabId)) {
+              hookedTabs.delete(tabId);
+              if (channel) {
+                try {
+                  channel.push(EVT.CHAN_VIDEO_TAB_CLOSED, { tab_id: String(tabId) });
+                  channel.push(EVT.CHAN_VIDEO_UNREADY, { tab_id: String(tabId) });
+                } catch (_) {}
+              }
+            }
+          }
         }
-      }
-      if (channel || socket || currentRoomId) {
-        console.log(`[byob/bg] BYOB_OPEN_EXTERNAL → tearing down stale channel/socket synchronously`);
-        try { if (channel) channel.leave(); } catch (_) {}
-        try { if (socket) socket.disconnect(); } catch (_) {}
-        channel = null;
-        socket = null;
-        currentRoomId = null;
-        currentServerUrl = null;
-        hookedTabs.clear();
-        lastReadyCount = null;
-        initialRoomState = null;
-      }
-      expirePendingOpens();
-      pendingByobOpens.set(openerTabId, {
-        config: msg.config,
-        expiresAt: Date.now() + PENDING_OPEN_TTL_MS,
-      });
-      console.log(`[byob/bg] pendingByobOpens set: ${[...pendingByobOpens.keys()]}`);
+
+        // No live popup found — proceed with the normal open flow.
+        if (channel || socket || currentRoomId) {
+          console.log(`[byob/bg] BYOB_OPEN_EXTERNAL → tearing down stale channel/socket synchronously`);
+          try { if (channel) channel.leave(); } catch (_) {}
+          try { if (socket) socket.disconnect(); } catch (_) {}
+          channel = null;
+          socket = null;
+          currentRoomId = null;
+          currentServerUrl = null;
+          hookedTabs.clear();
+          lastReadyCount = null;
+          initialRoomState = null;
+        }
+        expirePendingOpens();
+        pendingByobOpens.set(openerTabId, {
+          config: msg.config,
+          expiresAt: Date.now() + PENDING_OPEN_TTL_MS,
+        });
+        console.log(`[byob/bg] pendingByobOpens set: ${[...pendingByobOpens.keys()]}`);
+      })();
     }
     return false;
   }
