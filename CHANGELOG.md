@@ -3,6 +3,39 @@
 
 ---
 
+# v6.8.41
+
+### Extension placeholder: kill the leaking "Loading…" pill, gate CTA on install
+
+Two fixes to the third-party / extension-required placeholder UI
+(the "Open Player Window" black box shown for sites like
+Crunchyroll where the embed must be hooked through the extension):
+
+1. **"Loading…" pill no longer flashes over the placeholder.**
+   `_showSyncingOverlay` already had a `this.player?.isPlaceholder`
+   bail-out, but it was firing too early: `ExtensionPlayer.create()`
+   invoked `callbacks.onReady()` synchronously BEFORE returning, so
+   when `_applyPendingState` ran inside that callback,
+   `this.player` was still the previous video's player (or null) —
+   the `isPlaceholder` check read undefined and the pill went up.
+   Defer `callbacks.onReady()` via `queueMicrotask` so the
+   `this.player = ExtensionPlayer.create(...)` assignment in
+   `_loadExtension` completes first; the placeholder is now fully
+   wired by the time the syncing-pill guard checks it.
+
+2. **CTA gates on whether the extension is installed.** Previously
+   the placeholder always showed "Open Player Window" — even when
+   the user didn't have the extension at all, in which case clicking
+   it just opened a raw site tab that would never sync. The
+   placeholder now mirrors the YouTube-embed-blocked fallback in
+   `players/youtube_error.js`: detect via
+   `<html data-byob-extension>`, render a "Get Extension" link to
+   the appropriate store (Firefox AMO or Chrome Web Store) when
+   missing, and poll every 2 s so the UI flips to "Open Player
+   Window" the moment the content script attaches the attribute.
+
+---
+
 # v6.8.40
 
 ### Stop the post-ended "rewind to 0" SyncDecision seek

@@ -14,12 +14,32 @@
  * payload the LV's ExtOpenBtn used to consume — passed in via
  * `opts.hook` so the button stays in sync with the popup state.
  *
+ * If the extension isn't installed (no `data-byob-extension` on
+ * <html>), we render a "Get Extension" CTA instead — same pattern as
+ * the YouTube embed-blocked fallback in players/youtube_error.js. A
+ * 2 s poll flips the UI to the open-window state as soon as the
+ * content script attaches the attribute.
+ *
  * @param {HTMLElement} el - Container element (the player div)
  * @param {object} callbacks - Hook callbacks
  * @param {object} opts - { title, thumbnailUrl, url, hook }
  * @returns {object} player interface
  */
 import { LV_EVT } from "../sync/event_names";
+
+const EXT_POLL_INTERVAL_MS = 2000;
+const STORE_URL_FIREFOX =
+  "https://addons.mozilla.org/en-US/firefox/addon/byob-bring-your-own-binge/";
+const STORE_URL_CHROME =
+  "https://chromewebstore.google.com/detail/jlpogmjckejgpbbfhafgjgkbnocjfbmb";
+
+function hasExtension() {
+  return document.documentElement.hasAttribute("data-byob-extension");
+}
+
+function storeUrl() {
+  return /Firefox/.test(navigator.userAgent) ? STORE_URL_FIREFOX : STORE_URL_CHROME;
+}
 
 export function create(el, callbacks, opts) {
   const { title, thumbnailUrl, url, hook } = opts;
@@ -30,23 +50,11 @@ export function create(el, callbacks, opts) {
         <path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
       </svg>`;
 
-  el.innerHTML = `
-    <div class="absolute inset-0 flex flex-col items-center text-base-content/60 px-4 py-6" id="ext-placeholder">
-      <div class="flex-1 flex flex-col items-center justify-center gap-3 min-h-0">
-        ${thumbHtml}
-        <p class="text-sm font-medium text-base-content/70 max-w-md text-center line-clamp-2" title="${title}">${title}</p>
-        <p class="text-xs" id="ext-status">Waiting for external player...</p>
-        <div id="ext-progress-container" class="w-3/4 max-w-md" style="display:none">
-          <div class="relative h-1 rounded bg-base-content/10 overflow-hidden">
-            <div id="ext-progress-fill" class="absolute left-0 top-0 h-full bg-primary rounded transition-all" style="width:0%"></div>
-          </div>
-          <div class="flex justify-between mt-1">
-            <span id="ext-time-current" class="text-xs text-base-content/40 tabular-nums">0:00</span>
-            <span id="ext-time-duration" class="text-xs text-base-content/40 tabular-nums">0:00</span>
-          </div>
-        </div>
-      </div>
-      <div class="alert mt-6 w-full max-w-md px-5 py-3 flex flex-row items-center gap-4">
+  function render() {
+    const installed = hasExtension();
+
+    const ctaHtml = installed
+      ? `
         <button
           type="button"
           id="ext-open-btn-inline"
@@ -58,33 +66,59 @@ export function create(el, callbacks, opts) {
           Extension required for this site.<br/>
           Click play on the video for the extension to hook it.
         </p>
+      `
+      : `
+        <a
+          id="ext-install-btn-inline"
+          href="${storeUrl()}"
+          target="_blank"
+          rel="noopener"
+          class="btn btn-primary btn-sm gap-1 flex-shrink-0"
+        >
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"/>
+          </svg>
+          Get Extension
+        </a>
+        <p class="text-xs text-base-content/60 leading-snug flex-1 text-left">
+          This site needs the byob extension to sync.<br/>
+          Install it, then refresh this tab.
+        </p>
+      `;
+
+    el.innerHTML = `
+      <div class="absolute inset-0 flex flex-col items-center text-base-content/60 px-4 py-6" id="ext-placeholder">
+        <div class="flex-1 flex flex-col items-center justify-center gap-3 min-h-0">
+          ${thumbHtml}
+          <p class="text-sm font-medium text-base-content/70 max-w-md text-center line-clamp-2" title="${title}">${title}</p>
+          <p class="text-xs" id="ext-status">Waiting for external player...</p>
+          <div id="ext-progress-container" class="w-3/4 max-w-md" style="display:none">
+            <div class="relative h-1 rounded bg-base-content/10 overflow-hidden">
+              <div id="ext-progress-fill" class="absolute left-0 top-0 h-full bg-primary rounded transition-all" style="width:0%"></div>
+            </div>
+            <div class="flex justify-between mt-1">
+              <span id="ext-time-current" class="text-xs text-base-content/40 tabular-nums">0:00</span>
+              <span id="ext-time-duration" class="text-xs text-base-content/40 tabular-nums">0:00</span>
+            </div>
+          </div>
+        </div>
+        <div class="alert mt-6 w-full max-w-md px-5 py-3 flex flex-row items-center gap-4">
+          ${ctaHtml}
+        </div>
       </div>
-    </div>
-  `;
+    `;
+
+    if (installed) wireOpenBtn();
+  }
 
   // Wire the inline button to the same popup flow ExtOpenBtn uses. Auth
   // context comes from the player div's data-* (rendered server-side in
   // room_live.ex). Label "Open" vs "Focus" derives from the room's
   // ready_count payload so it survives YT's COOP-broken
   // `_byobPlayerWindow.closed` lie.
-  const btn = el.querySelector("#ext-open-btn-inline");
-  const label = el.querySelector("[data-byob-ext-btn-label]");
-
-  function userHasPopup() {
-    if (!hook) return false;
-    const username = el.dataset.username;
-    const rc = hook._lastReadyCount;
-    if (!username || !rc) return false;
-    const needsOpen = Array.isArray(rc.needs_open) ? rc.needs_open : [];
-    return !needsOpen.includes(username);
-  }
-
-  function refreshLabel() {
-    if (!label) return;
-    label.textContent = userHasPopup() ? "Focus Player Window" : "Open Player Window";
-  }
-
-  if (btn) {
+  function wireOpenBtn() {
+    const btn = el.querySelector("#ext-open-btn-inline");
+    if (!btn) return;
     btn.addEventListener("click", () => {
       if (userHasPopup()) {
         window.postMessage({ type: LV_EVT.PW_FOCUS_EXTERNAL }, "*");
@@ -113,11 +147,48 @@ export function create(el, callbacks, opts) {
     });
   }
 
+  function userHasPopup() {
+    if (!hook) return false;
+    const username = el.dataset.username;
+    const rc = hook._lastReadyCount;
+    if (!username || !rc) return false;
+    const needsOpen = Array.isArray(rc.needs_open) ? rc.needs_open : [];
+    return !needsOpen.includes(username);
+  }
+
+  function refreshLabel() {
+    const label = el.querySelector("[data-byob-ext-btn-label]");
+    if (!label) return;
+    label.textContent = userHasPopup() ? "Focus Player Window" : "Open Player Window";
+  }
+
+  render();
   refreshLabel();
+
+  // Poll for extension install — when the content script attaches
+  // `data-byob-extension` we re-render to swap the install CTA for the
+  // open-window button.
+  let installPollInterval = null;
+  if (!hasExtension()) {
+    installPollInterval = setInterval(() => {
+      if (hasExtension()) {
+        clearInterval(installPollInterval);
+        installPollInterval = null;
+        render();
+        refreshLabel();
+      }
+    }, EXT_POLL_INTERVAL_MS);
+  }
+
   // Hook calls back into ours from _onReadyCount when ready_count lands.
   if (hook) hook._extPlaceholderRefreshLabel = refreshLabel;
 
-  callbacks.onReady();
+  // Defer onReady so the caller's `this.player = create(...)` assignment
+  // completes BEFORE _applyPendingState runs and checks isPlaceholder.
+  // Without this defer, the loading pill's `this.player?.isPlaceholder`
+  // guard reads `null` (player not yet assigned) and the pill flashes
+  // up over our placeholder UI.
+  queueMicrotask(() => callbacks.onReady());
 
   return {
     // Marker for the VideoPlayer hook: this is the inert "Open
@@ -133,6 +204,10 @@ export function create(el, callbacks, opts) {
     pause() { /* no-op */ },
     seek(_seconds) { /* no-op */ },
     destroy() {
+      if (installPollInterval) {
+        clearInterval(installPollInterval);
+        installPollInterval = null;
+      }
       if (hook && hook._extPlaceholderRefreshLabel === refreshLabel) {
         hook._extPlaceholderRefreshLabel = null;
       }
