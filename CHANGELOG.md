@@ -3,6 +3,38 @@
 
 ---
 
+# v6.8.39
+
+### Stop the BG socket from disconnecting on Firefox idle / focus loss
+
+Symptom: clicking away from the popup window in Firefox made the
+byob page think the user left the room — button flipped back to
+"Open Window" while the popup was still open and visible.
+
+Root cause: Firefox MV3 backgrounds are **event pages** (not
+service workers like Chrome), so `window` is defined in the BG
+context. Phoenix.js's `Socket` constructor unconditionally
+registers `pagehide` / `pageshow` / `visibilitychange` listeners
+on `phxWindow` (= `window`), and `pagehide` calls
+`socket.disconnect()`. When the BG event page goes idle / hides
+(triggered by the user clicking away from the popup, switching
+windows, etc.), the socket disconnects, the server sees the
+extension peer leave, ready_count flips, button label updates.
+
+Fix: patched our local `extension/lib/phoenix.mjs` to skip those
+listeners when running inside an extension BG context (detected
+via `chrome.runtime.id` heuristic), and accept an explicit
+`disablePageEvents: true` Socket option. `background.js` passes
+that option when constructing the Socket. The BG already owns
+socket lifecycle via `port.onDisconnect`, `tabs.onRemoved`, and
+`windows.onRemoved` — Phoenix's page-lifecycle listeners are
+just harmful here.
+
+Chrome unaffected (service workers don't have `window` so the
+Phoenix code path was already skipped).
+
+---
+
 # v6.8.38
 
 ### Activity-log dedup + rename propagates to extension peer

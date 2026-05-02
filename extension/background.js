@@ -570,6 +570,14 @@ function connectToRoom(roomId, serverUrl, token, username) {
     heartbeatIntervalMs: SOCKET_HEARTBEAT_MS,
     params: token ? { token } : {},
     reconnectAfterMs: () => null, // disable auto-reconnect
+    // Firefox MV3 backgrounds are event pages with a real `window`,
+    // so Phoenix.js's default pagehide / visibilitychange listeners
+    // would disconnect the socket every time the BG goes idle —
+    // making the server think the user left the room when they're
+    // just clicking away from the popup. We own the socket lifecycle
+    // here (port.onDisconnect, tabs.onRemoved); don't let Phoenix
+    // tear it down on background suspension.
+    disablePageEvents: true,
   });
 
   socket.connect();

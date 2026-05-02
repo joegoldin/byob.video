@@ -1053,7 +1053,23 @@ var Socket = class {
       this.decode = this.defaultDecoder;
     }
     let awaitingConnectionOnPageShow = null;
-    if (phxWindow && phxWindow.addEventListener) {
+    // PATCH (byob): skip the page-lifecycle listeners when running
+    // inside an extension background context. Firefox MV3 backgrounds
+    // are event pages with a real `window`, and they fire `pagehide`
+    // when the BG goes idle / suspends — which would disconnect the
+    // socket and make the server think the user left the room every
+    // time the user clicked away from the popup. The BG owns the
+    // socket lifecycle itself (port.onDisconnect, tabs.onRemoved),
+    // so these listeners are not just unnecessary but actively
+    // harmful in this context. Pass `disablePageEvents: true` in
+    // Socket opts to opt out.
+    const inExtensionBg =
+      typeof globalThis !== "undefined" &&
+      typeof globalThis.chrome !== "undefined" &&
+      globalThis.chrome.runtime &&
+      typeof globalThis.chrome.runtime.id === "string";
+    const skipPageEvents = !!opts.disablePageEvents || inExtensionBg;
+    if (!skipPageEvents && phxWindow && phxWindow.addEventListener) {
       phxWindow.addEventListener("pagehide", (_e) => {
         if (this.conn) {
           this.disconnect();
