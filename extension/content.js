@@ -255,6 +255,7 @@
     return {
       isReady() { return ready; },
       getCurrentTime() { return last && last.time != null ? last.time : null; },
+      getDuration() { return last && last.duration != null ? last.duration : null; },
       seek(time) {
         if (time == null) return false;
         return send("seek", { time });
@@ -893,7 +894,15 @@
   let _lastPushedLive = null;
   function sampleLiveStatus() {
     if (!hookedVideo || !port) return;
-    const d = hookedVideo.duration;
+    // Prefer the player adapter's duration when one is hooked.
+    // Crunchyroll's bitmovin/HLS pipeline can leave the underlying
+    // <video>.duration as Infinity even for finite VOD episodes
+    // (MSE doesn't always set the totalDuration immediately, and
+    // for some manifests the <video> element exposes the live-edge
+    // sliding window). The adapter reads Bitmovin's
+    // `player.getDuration()` which is the authoritative VOD length.
+    let d = bitmovinAdapter.isReady() ? bitmovinAdapter.getDuration() : null;
+    if (d == null) d = hookedVideo.duration;
     let detected = null;
     if (d === Infinity || (typeof d === "number" && isNaN(d))) {
       detected = true;

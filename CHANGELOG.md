@@ -3,6 +3,27 @@
 
 ---
 
+# v6.8.56
+
+### Crunchyroll: stop misdetecting VOD episodes as live
+
+Crunchyroll plays through Bitmovin/MSE/HLS, and the underlying
+`<video>` element's `duration` property can read `Infinity` even
+on a finite VOD episode (the MSE pipeline doesn't always set the
+totalDuration upfront, and for some manifests the element exposes
+the live-edge sliding window). Our `sampleLiveStatus` was reading
+`hookedVideo.duration`, seeing `Infinity`, and pushing
+`is_live: true` to the server — which surfaced as the "LIVE"
+badge + "position-based sync is disabled" banner in Stats for
+nerds, on a paused 24-minute episode that obviously isn't live.
+
+Fix: prefer `bitmovinAdapter.getDuration()` (which calls
+Bitmovin's own `player.getDuration()` — the authoritative VOD
+length) when an adapter is hooked. Fall back to
+`hookedVideo.duration` only for sites without a player adapter.
+
+---
+
 # v6.8.55
 
 ### Skip the activity-log toast for actions that already toast via presence
