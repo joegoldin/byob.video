@@ -374,10 +374,32 @@
     // listener is attached and is silently dropped. Triggering from
     // here (after the listener is wired) guarantees one resync per
     // byob page load regardless of timing.
+    //
+    // Include the player div's data-* (room_id / token) so the BG can
+    // RE-ESTABLISH the channel if it had died (Chrome MV3 SW idle).
+    // Otherwise the BG would receive the request, find `channel` null,
+    // and silently no-op — stale "Focus" sticks indefinitely. Poll
+    // briefly because the player div may not be rendered yet on
+    // first-paint at document_idle.
     {
       const host = window.location.hostname;
       if (host === "byob.video" || host === "localhost") {
-        try { chrome.runtime.sendMessage({ type: EVT.BYOB_REQUEST_TAB_RESYNC }); } catch (_) {}
+        const sendResync = (attempt) => {
+          const player = document.getElementById("player");
+          if (player && player.dataset.roomId && player.dataset.token) {
+            try {
+              chrome.runtime.sendMessage({
+                type: EVT.BYOB_REQUEST_TAB_RESYNC,
+                room_id: player.dataset.roomId,
+                server_url: window.location.origin,
+                token: player.dataset.token,
+              });
+            } catch (_) {}
+            return;
+          }
+          if (attempt < 20) setTimeout(() => sendResync(attempt + 1), 250);
+        };
+        sendResync(0);
       }
     }
 

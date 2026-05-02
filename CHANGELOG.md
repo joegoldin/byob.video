@@ -3,6 +3,35 @@
 
 ---
 
+# v6.8.45
+
+### Tab resync: re-establish the BG channel if it died
+
+v6.8.44 wired the resync trigger from the content script (avoiding
+the document_idle race), but the resync still no-oped when the
+BG service worker had been suspended (Chrome MV3): on revival the
+socket isn't auto-reconnected (`connectToRoom` only runs on
+`BYOB_OPEN_EXTERNAL`), so when our resync request arrived the
+handler found `channel = null` and silently dropped the push. The
+server's stale `open_tabs` survived every refresh until the user
+clicked "Open" again — but the button said "Focus", so they
+couldn't.
+
+Fix: the byob page now hands the BG the room_id / server_url /
+token alongside the resync request. When the BG sees a null
+channel it calls `connectToRoom` with that config, and the
+v6.8.42 on-channel-rejoin resync fires automatically inside the
+join's `.receive("ok")` handler. The content script also polls
+briefly for the player div's `data-room-id` / `data-token` (the
+LV may not have rendered yet at `document_idle`), and the
+placeholder mount postMessage carries the same config.
+
+The room/server/token is exactly the same auth bundle that
+`BYOB_OPEN_EXTERNAL` uses, so no new permissions or surface area
+— it's the existing handshake reused for state recovery.
+
+---
+
 # v6.8.44
 
 ### Tab resync on byob page load — close the document_idle race

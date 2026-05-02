@@ -957,12 +957,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === EVT.BYOB_REQUEST_TAB_RESYNC) {
     // The byob page placeholder mounted and wants the server's
-    // open_tabs view refreshed against our actual hookedTabs. This
-    // handles the case where a popup closed while the SW was
-    // suspended — the BG channel survives across byob page
-    // refreshes (so the on-rejoin resync never fires) but the
-    // server's open_tabs still has the stale entry. Validate the
-    // set against live chrome.tabs first, drop phantoms, then push.
+    // open_tabs view refreshed against our actual hookedTabs.
+    // Validate hookedTabs against live chrome.tabs first (drop
+    // phantoms), then push tabs_resync.
+    //
+    // If `channel` is null (Chrome MV3 SW was suspended → socket
+    // died; on revival the socket isn't auto-reconnected because
+    // `connectToRoom` only runs on BYOB_OPEN_EXTERNAL), use the
+    // config the caller passed to re-establish. Without that path
+    // the resync would silently no-op and the stale "Focus" label
+    // would survive every refresh until the user re-opened a popup.
     (async () => {
       const tabIds = [...hookedTabs];
       for (const tabId of tabIds) {
@@ -978,6 +982,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         try {
           channel.push(EVT.CHAN_VIDEO_TABS_RESYNC, { tab_ids: resyncIds });
         } catch (_) {}
+        return;
+      }
+
+      // Channel is null — Chrome MV3 SW was suspended, the socket died,
+      // and on revival nothing re-established it (connectToRoom only
+      // runs on BYOB_OPEN_EXTERNAL). Use the config the page handed us
+      // to bring it back. The v6.8.42 on-channel-rejoin resync inside
+      // `.receive("ok")` will then fire automatically with our current
+      // hookedTabs, so we don't need to push a second resync here.
+      const room_id = msg.room_id;
+      const server_url = msg.server_url;
+      const token = msg.token;
+      if (room_id && server_url && token) {
+        console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC channel=null, re-establishing room=${room_id}`);
+        try { connectToRoom(room_id, server_url, token); } catch (_) {}
+      } else {
+        console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC channel=null and no config provided — skipping`);
       }
     })();
   }
