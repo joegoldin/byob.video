@@ -300,6 +300,13 @@ const VideoPlayer = {
       // Preempt that by showing our own overlay; one click activates the
       // tab so the later sync:play can actually start playback.
       this._maybeShowReadyOverlay(state.current_time);
+      // Pill while we wait for the player to load + the server's
+      // ready-then-play hold to release. Hides on first PLAYING; safety
+      // timer (5 s) covers the long-paused-room case so it doesn't
+      // sit forever. Reset the per-pause-session throttle first so a
+      // stale flag doesn't suppress this fresh "Loading…" show.
+      this._pausedSyncPillShown = false;
+      this._showSyncingOverlay("Loading…");
       this.expectedPlayState = "paused";
       this.suppression.suppress("paused");
       if (this.sourceType === "youtube" && this.player?.loadVideoById) {
@@ -962,7 +969,12 @@ const VideoPlayer = {
     // Fresh video = fresh logical session — clear the per-pause-
     // session pill throttle so the "Waiting for room…" pill can pop
     // even if the previous pause session already used its one show.
+    // Also remove any stale press-to-play overlays from the previous
+    // video — they'd otherwise short-circuit `_showSyncingOverlay`'s
+    // "don't stack" guard and we'd never see the new pill.
     this._pausedSyncPillShown = false;
+    this.el.querySelector(".byob-click-to-play")?.remove();
+    this.el.querySelector(".byob-join-ready")?.remove();
     const overlayText =
       pendingPlayState === "paused" ? "Waiting for room…" : "Joining…";
     this._showSyncingOverlay(overlayText);

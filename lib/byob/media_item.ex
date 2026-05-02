@@ -31,6 +31,8 @@ defmodule Byob.MediaItem do
   ]
 
   def parse_url(url) when is_binary(url) and url != "" do
+    url = normalize_url(url)
+
     case URI.parse(url) do
       %URI{scheme: scheme, host: host} = uri
       when scheme in ["http", "https"] and is_binary(host) ->
@@ -61,6 +63,26 @@ defmodule Byob.MediaItem do
   end
 
   def parse_url(_), do: {:error, :invalid_url}
+
+  # Accept URLs pasted without a scheme (e.g. `www.youtube.com/watch?v=…`
+  # or `youtube.com/watch?v=…`). The bare-hostname check requires a `.`
+  # somewhere in the first path segment so we don't promote arbitrary
+  # garbage like `not-a-url-at-all` into a fake `https://` URL — that
+  # would defeat the {:error, :invalid_url} guard.
+  defp normalize_url(url) do
+    trimmed = String.trim(url)
+
+    cond do
+      String.starts_with?(trimmed, ["http://", "https://"]) ->
+        trimmed
+
+      Regex.match?(~r/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/.*)?$/, trimmed) ->
+        "https://" <> trimmed
+
+      true ->
+        trimmed
+    end
+  end
 
   defp self_reference?(host) when is_binary(host) do
     host in self_hosts()

@@ -3,6 +3,37 @@
 
 ---
 
+# v6.8.31
+
+### Black-screen pill fix, URL normaliser, live-stream banner
+
+- **Black-screen on video load is gone.** `_onVideoChange` now
+  removes stale `.byob-click-to-play` / `.byob-join-ready`
+  overlays from the previous video before showing the pill (those
+  would otherwise short-circuit `_showSyncingOverlay`'s "don't
+  stack" guard, leaving the user staring at a black YouTube embed
+  with no indicator). `_applyPendingState`'s paused branch now
+  also pops the pill ("Loading…") so a freshly-joined / refreshed
+  client during a ready-then-play hold gets a visible cue.
+
+- **URL parser accepts schemeless URLs.** Pasting
+  `www.youtube.com/watch?v=…` or `youtu.be/…` (without `https://`)
+  now works. New `normalize_url/1` prepends `https://` when the
+  string looks like a hostname (regex
+  `^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}(\/.*)?$`); garbage like
+  `not-a-url-at-all` still gets `{:error, :invalid_url}`. Also
+  trims surrounding whitespace.
+
+- **Live-stream banner in Stats for nerds.** When the current
+  media is `is_live: true` (YouTube live, Twitch), the panel now
+  shows a red "LIVE" badge at the top with the explanation
+  "Position-based sync is disabled — live streams have no shared
+  timeline. Drift / seek metrics below are inactive." Otherwise
+  the negative drifts users see for live content (each peer at
+  their own DVR position) read as a sync bug.
+
+---
+
 # v6.8.30
 
 ### Extension popup-close detection: Firefox windows.onRemoved fallback

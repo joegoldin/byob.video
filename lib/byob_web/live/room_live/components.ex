@@ -262,6 +262,7 @@ defmodule ByobWeb.RoomLive.Components do
   attr :users, :any, default: %{}
   attr :user_id, :string, default: nil
   attr :play_state, :atom, default: :paused
+  attr :current_media, :any, default: nil
 
   def settings_modal(assigns) do
     ~H"""
@@ -375,6 +376,21 @@ defmodule ByobWeb.RoomLive.Components do
             data-byob-local-user-id={@user_id}
             class="mt-2 text-xs text-base-content/50 space-y-1 font-mono"
           >
+            <%!-- Live banner: most metrics below are meaningless for live
+                 content (the player manages its own live-edge sync, peers
+                 can be at different DVR positions). Surface that the room
+                 is in live mode and that we're skipping position-based
+                 sync so the user doesn't read negative drifts as a bug. --%>
+            <%= if @current_media && Map.get(@current_media, :is_live, false) do %>
+              <div class="flex items-center gap-2 mb-2 p-2 rounded bg-error/15 border border-error/30 text-error">
+                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-error text-error-content text-[10px] font-bold uppercase tracking-wider">
+                  <span class="w-1.5 h-1.5 rounded-full bg-error-content" />Live
+                </span>
+                <span class="text-[11px] leading-snug">
+                  Position-based sync is disabled — live streams have no shared timeline. Drift / seek metrics below are inactive.
+                </span>
+              </div>
+            <% end %>
             <%!-- Pull this browser's effective tolerance / hard-seek threshold
                  out of its own most-recent drift report. These reflect the
                  *current* values in our Reconcile loop — including any
