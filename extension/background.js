@@ -788,25 +788,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           persistManagedTabs();
         }
       }
-      // Path 2: URL-hostname match (Firefox — sender.tab.openerTabId
-      // is undefined for window.open() popups, so we fall back to
-      // matching the new tab's hostname against any pending entry's
-      // target_url hostname). First match wins.
+      // Path 2: URL match (Firefox — sender.tab.openerTabId is
+      // undefined for window.open() popups). Prefer most recent
+      // pending entry first, and exact URL match over hostname
+      // match — otherwise opening multiple Crunchyroll videos
+      // (or having a stale entry from a previous session) would
+      // claim the oldest matching pending and adopt the WRONG
+      // room's config (wrong username, wrong token), producing
+      // join/leave events under the other room's identity.
       if (!cfg && tabUrl) {
         expirePendingOpens();
         const tabHost = hostnameOf(tabUrl);
-        if (tabHost) {
-          for (const [openerKey, pending] of pendingByobOpens) {
-            const pendingHost = hostnameOf(pending.config?.target_url);
-            if (pendingHost && pendingHost === tabHost) {
-              cfg = pending.config;
-              claimedFrom = "url";
-              pendingByobOpens.delete(openerKey);
-              byobManagedTabs.set(tabId, cfg);
-              persistManagedTabs();
-              break;
-            }
-          }
+        // Sort by expiresAt descending = insertion time descending
+        // (TTL is constant), so the FRESHEST pending entry is
+        // considered first.
+        const sorted = [...pendingByobOpens.entries()].sort(
+          ([, a], [, b]) => b.expiresAt - a.expiresAt
+        );
+        // First pass: exact URL match — unambiguous.
+        let matched = sorted.find(
+          ([, p]) => p.config?.target_url === tabUrl
+        );
+        // Second pass: hostname match — broader, but still newest-first.
+        if (!matched && tabHost) {
+          matched = sorted.find(
+            ([, p]) => hostnameOf(p.config?.target_url) === tabHost
+          );
+        }
+        if (matched) {
+          const [openerKey, pending] = matched;
+          cfg = pending.config;
+          claimedFrom = pending.config?.target_url === tabUrl ? "url-exact" : "url-host";
+          pendingByobOpens.delete(openerKey);
+          byobManagedTabs.set(tabId, cfg);
+          persistManagedTabs();
         }
       }
       console.log(

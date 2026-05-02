@@ -3,6 +3,33 @@
 
 ---
 
+# v6.8.33
+
+### Firefox extension picks the right room when multiple Crunchyroll
+###    opens are pending
+
+The v6.8.27 URL-hostname fallback (workaround for Firefox's missing
+`sender.tab.openerTabId` on `window.open()` popups) iterated
+`pendingByobOpens` in insertion order and used the FIRST match. If
+the user opened multiple Crunchyroll videos in succession (or had a
+stale entry from a previous session), the new tab adopted the
+OLDEST matching pending entry — wrong room, wrong username, wrong
+token. Showed up as join / leave / closed-window events under a
+different person's name.
+
+Fix: sort pending entries by `expiresAt` descending (= insertion
+time descending; TTL is constant) so the FRESHEST entry is
+considered first. Two passes:
+
+1. **Exact-URL match** — unambiguous, claims correctly even if
+   multiple rooms point to similar URLs.
+2. **Hostname match** — fallback, but still freshest-first.
+
+`claimedFrom` log now distinguishes `url-exact` vs `url-host` so
+future debugging can tell which path matched.
+
+---
+
 # v6.8.32
 
 ### "Re-syncing" → "Syncing" copy rename
