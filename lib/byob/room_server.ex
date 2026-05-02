@@ -417,6 +417,30 @@ defmodule Byob.RoomServer do
       })
       |> maybe_set_host(user_id)
 
+    # Heal the BG-joined-as-"ExtensionUser" race: the BG channel's
+    # join_room runs RoomServer.get_state to look up the owner LV
+    # peer's username. If the BG channel.join() lands BEFORE the LV
+    # mount's RoomServer.join (content script can run faster than
+    # LiveSocket on quick refreshes), the lookup returns nil and the
+    # ext peer joins as the literal "ExtensionUser" fallback —
+    # showing up in the activity log + dedup logic as a stranger.
+    # Once the real LV peer joins, propagate its username down to
+    # any matching ext peer so the names line up retroactively.
+    state =
+      if not is_extension do
+        ext_user_id = "ext:" <> user_id
+
+        case get_in(state, [Access.key(:users), ext_user_id]) do
+          %{username: existing} when existing != username ->
+            put_in(state.users[ext_user_id].username, username)
+
+          _ ->
+            state
+        end
+      else
+        state
+      end
+
     # Fetch sponsor segments if we have a current YouTube video but no segments
     if state.sponsor_segments == [] && state.current_index do
       current_item = Enum.at(state.queue, state.current_index)

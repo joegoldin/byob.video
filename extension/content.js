@@ -393,6 +393,7 @@
                 room_id: player.dataset.roomId,
                 server_url: window.location.origin,
                 token: player.dataset.token,
+                username: player.dataset.username,
               });
             } catch (_) {}
             return;

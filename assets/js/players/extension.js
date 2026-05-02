@@ -215,6 +215,7 @@ export function create(el, callbacks, opts) {
       room_id: el.dataset.roomId,
       server_url: window.location.origin,
       token: el.dataset.token,
+      username: el.dataset.username,
     }, "*");
   } catch (_) {}
 

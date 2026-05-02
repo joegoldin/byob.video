@@ -994,9 +994,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const room_id = msg.room_id;
       const server_url = msg.server_url;
       const token = msg.token;
+      const username = msg.username;
       if (room_id && server_url && token) {
-        console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC channel=null, re-establishing room=${room_id}`);
-        try { connectToRoom(room_id, server_url, token); } catch (_) {}
+        console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC channel=null, re-establishing room=${room_id} as '${username || "(no username)"}'`);
+        try { connectToRoom(room_id, server_url, token, username); } catch (_) {}
       } else {
         console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC channel=null and no config provided — skipping`);
       }

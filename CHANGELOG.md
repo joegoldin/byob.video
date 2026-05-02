@@ -3,6 +3,52 @@
 
 ---
 
+# v6.8.47
+
+### Heal the BG-joined-as-"ExtensionUser" race
+
+This is the actual root cause of the stuck "Focus" button after
+refresh — confirmed by the user's screenshot of the activity log
+showing `ExtensionUser joined` instead of their real username.
+
+The BG channel's `join_room` derives the ext peer's username by
+looking up the owner LV peer's record in `RoomServer.get_state` —
+which only works if the LV peer has already called
+`RoomServer.join`. On a quick byob refresh the order can flip:
+content script runs at `document_idle`, fires
+`BYOB_REQUEST_TAB_RESYNC`, BG calls `connectToRoom`, the channel
+join lands BEFORE the LV mount's `RoomServer.join`. The username
+lookup returns nil, the ext peer gets the literal "ExtensionUser"
+fallback, and from then on the user has TWO presences in the
+room — "joe" (LV) and "ExtensionUser" (ext) — that the
+ready_count / dedup / open_tabs logic treats as different humans.
+The placeholder's `data-username="joe"` doesn't match anything in
+`open_tabs.values` resolved to `"ExtensionUser"`, so server's
+`needs_open` rebuild lands stale and the button stays "Focus".
+
+Two-sided fix:
+
+1. **Server (`room_server.ex` `:join` handler)**: when a non-ext
+   LV peer joins, also retroactively patch the username of any
+   matching `"ext:" <> user_id` entry whose username doesn't
+   match. Heals the race after the fact regardless of which side
+   wins. Same propagation we already do on rename
+   (added in v6.8.38) — now also on initial join.
+
+2. **Client (`assets/js/players/extension.js` +
+   `extension/content.js` + `extension/background.js`)**: pass the
+   player div's `data-username` through the resync request so the
+   BG's `connectToRoom` has it as the join-params fallback. With
+   the server-side healer this isn't strictly needed but it gives
+   a sensible name to log if the owner really is missing for
+   some reason.
+
+The activity log should now show `joe joined` once on byob page
+load (the LV peer) instead of `ExtensionUser joined` /
+`ExtensionUser left` churn alongside the real `joe`.
+
+---
+
 # v6.8.46
 
 ### Placeholder button reads sessionStorage — no more "Focus → Open" flash on refresh
