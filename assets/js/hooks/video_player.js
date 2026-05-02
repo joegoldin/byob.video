@@ -129,6 +129,20 @@ const VideoPlayer = {
     this.handleEvent(LV_EVT.EXT_PLAYER_STATE, (data) => this._onExtPlayerState(data));
     this.handleEvent(LV_EVT.EXT_MEDIA_INFO, (data) => this._onExtMediaInfo(data));
     this.handleEvent(LV_EVT.READY_COUNT, (data) => this._onReadyCount(data));
+    this.handleEvent("ext:token", (data) => {
+      // The authoritative extension auth token + user_id, pushed
+      // AFTER the WS render so it has the full `user_id` (session +
+      // tab_id) which the dead-render `data-token` attribute can't
+      // get to (phx-update="ignore" on the wrapper). Stash on the
+      // hook and stamp onto the player div as data-byob-token so
+      // every byob → BG postMessage sees the live value.
+      this._byobToken = data.token;
+      this._byobUserId = data.user_id;
+      if (this.el) {
+        this.el.dataset.token = data.token;
+        this.el.dataset.userId = data.user_id;
+      }
+    });
     this.handleEvent(LV_EVT.SB_SETTINGS, (data) => {
       this.sbSettings = data;
       this._applySponsorSettingsFull();

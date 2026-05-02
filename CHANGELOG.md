@@ -3,6 +3,47 @@
 
 ---
 
+# v6.8.51
+
+### Token was being rendered with a stale user_id
+
+This is the actual root cause of the "ExtensionUser joined" ghost
+that survived all the previous attempts. The `data-token`
+attribute on the player div is rendered server-side via:
+
+    data-token={ByobWeb.ExtensionSocket.generate_token(@room_id, @user_id)}
+
+`@user_id` is set in TWO places in `room_live.mount/3`:
+
+1. The `on_mount` hook fires for both HTTP and WebSocket renders
+   and assigns `socket.assigns.user_id` to the bare session UUID
+   (no `tab_id`).
+2. The `if connected?(socket) do` branch — runs only on WebSocket
+   render — overwrites `@user_id` to
+   `socket.assigns.user_id <> ":" <> tab_id`, which is the value
+   the LV peer actually calls `RoomServer.join` with.
+
+The HTTP render encodes step-1's short id into the token. The
+WebSocket render produces a corrected token, but the diff is
+inside `phx-update="ignore"` on `#player-sizer` and never lands
+in the live DOM. So every BG channel join used a token whose
+`owner_user_id` didn't match any LV peer's user_id —
+`owner_username` lookup returned nil → fallback to
+"ExtensionUser" → `ready_count` math broken → button stuck.
+
+Fix: push the authoritative token + user_id via `push_event` from
+mount AFTER the WebSocket render has the full id. The VideoPlayer
+hook stamps it onto `data-token` / `data-user-id` on receipt, so
+all subsequent BG postMessages see the live values. Placeholder
+also reads through a `currentToken()` helper that prefers the
+hook's stashed value over the dataset.
+
+This makes everything else from v6.8.50 actually work as intended
+— the BG joins as the correct owner_user_id, ready_count includes
+the user in `users_with_open_tabs`, button flips to "Focus".
+
+---
+
 # v6.8.50
 
 ### Track popups by owner user_id directly — kill the username dance

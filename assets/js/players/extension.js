@@ -116,6 +116,16 @@ export function create(el, callbacks, opts) {
   // room_live.ex). Label "Open" vs "Focus" derives from the room's
   // ready_count payload so it survives YT's COOP-broken
   // `_byobPlayerWindow.closed` lie.
+  // Prefer the hook's WS-render-pushed token over the player div's
+  // data-token: the dead-render data-token encodes a SHORT user_id
+  // (just the session UUID, before the connected? branch appends
+  // tab_id), and phx-update="ignore" on the wrapper means the
+  // diff-time correction never lands. The hook receives the
+  // authoritative version via the "ext:token" push_event.
+  function currentToken() {
+    return hook?._byobToken || el.dataset.token;
+  }
+
   function wireOpenBtn() {
     const btn = el.querySelector("#ext-open-btn-inline");
     if (!btn) return;
@@ -130,7 +140,7 @@ export function create(el, callbacks, opts) {
           url,
           room_id: el.dataset.roomId,
           server_url: window.location.origin,
-          token: el.dataset.token,
+          token: currentToken(),
         }, "*");
         window._byobPlayerWindow = window.open(
           url, "byob_player",
@@ -172,8 +182,7 @@ export function create(el, callbacks, opts) {
       type: LV_EVT.PW_REQUEST_TAB_RESYNC,
       room_id: el.dataset.roomId,
       server_url: window.location.origin,
-      token: el.dataset.token,
-      // Deliberately NOT passing data-username — see content.js for why.
+      token: currentToken(),
     }, "*");
   } catch (_) {}
 

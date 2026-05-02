@@ -120,6 +120,22 @@ defmodule ByobWeb.RoomLive do
       # Push full state to client hook for two-step join
       socket = push_event(socket, Events.sync_state(), sync_state_payload(state, user_id))
 
+      # Push the authoritative extension token AFTER the WS render
+      # has the full `user_id` (= session_id <> ":" <> tab_id). The
+      # `data-token` attribute on the player div is rendered at HTTP
+      # time with the SHORT `@user_id` (just session_id, before the
+      # connected?-branch overwrites it), and `phx-update="ignore"`
+      # on the wrapping #player-sizer div prevents the WS-render's
+      # corrected attribute from reaching the live DOM. The result
+      # was the BG channel.join() decoding an owner_user_id that
+      # never matched any LV peer's user_id, falling back to the
+      # "ExtensionUser" name.
+      socket =
+        push_event(socket, "ext:token", %{
+          token: ByobWeb.ExtensionSocket.generate_token(room_id, user_id),
+          user_id: user_id
+        })
+
       # Push SB settings and sponsor segments
       socket = push_event(socket, Events.sb_settings(), state.sb_settings)
 
