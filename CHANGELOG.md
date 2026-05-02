@@ -3,6 +3,22 @@
 
 ---
 
+# v6.8.55
+
+### Skip the activity-log toast for actions that already toast via presence
+
+The user join was producing two toasts back-to-back: "joe joined
+the room" (from the `room_presence` broadcast) and "joe joined"
+(from the `activity_log_entry` broadcast's auto-toast). Same
+event, two stacked notifications.
+
+Fix: `handle_activity_log_entry` now skips the toast push for
+`:joined` and `:left` actions — those already get a dedicated
+presence toast from the join/leave handlers. The activity panel
+entry is still added (just not double-toasted).
+
+---
+
 # v6.8.54
 
 ### Popup stuck on "connecting" when BG channel was reconnecting

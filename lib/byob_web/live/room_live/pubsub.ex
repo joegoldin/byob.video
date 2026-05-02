@@ -245,8 +245,16 @@ defmodule ByobWeb.RoomLive.PubSub do
 
     socket = assign(socket, activity_log: log)
     text = ByobWeb.RoomLive.Components.format_log_entry(entry)
-    # Push toast to client
-    socket = push_event(socket, Events.toast(), %{text: text})
+    # Push toast — but NOT for :joined / :left, which the join handler
+    # already broadcast a `room_presence` toast for ("joe joined the
+    # room"). Without this skip we'd render two near-identical toasts
+    # back to back.
+    socket =
+      if entry.action in [:joined, :left] do
+        socket
+      else
+        push_event(socket, Events.toast(), %{text: text})
+      end
 
     # Notification-worthy: queue churn + round winners. Excludes
     # play / pause / seek / renamed / round_cancelled — those fire
