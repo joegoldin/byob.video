@@ -628,25 +628,27 @@ defmodule Byob.RoomServer do
           item ->
             current = Map.get(item, :is_live, false)
 
-            if current == is_live do
-              {:reply, :ok, state}
-            else
-              updated = %{item | is_live: is_live}
-              queue = List.replace_at(state.queue, idx, updated)
+            # Live-capable allow-list. Only YouTube and Twitch carry
+            # live content in this app — everything else (Crunchyroll,
+            # other extension_required sites, direct_url, vimeo) is
+            # always VOD. The extension's `sampleLiveStatus` can still
+            # produce false positives on those (e.g., a Bitmovin/HLS
+            # MSE pipeline that exposes Infinity duration on the
+            # underlying <video> for finite VOD episodes), so we
+            # filter at the canonical source — the server. is_live=
+            # false is always allowed (clears stale state).
+            allowed =
+              not is_live or live_capable_item?(item)
 
-              history =
-                Enum.map(state.history, fn entry ->
-                  if entry.item.id == item.id do
-                    %{entry | item: %{entry.item | is_live: is_live}}
-                  else
-                    entry
-                  end
-                end)
+            cond do
+              current == is_live ->
+                {:reply, :ok, state}
 
-              state = %{state | queue: queue, history: history}
-              broadcast(state, {:live_status, %{is_live: is_live, item_id: item.id}})
-              broadcast(state, {:queue_updated, %{queue: queue, current_index: idx}})
-              {:reply, :ok, state}
+              not allowed ->
+                {:reply, :ok, state}
+
+              true ->
+                do_update_live_status(state, idx, item, is_live)
             end
         end
     end
@@ -2560,6 +2562,50 @@ defmodule Byob.RoomServer do
         item = Enum.at(state.queue, idx)
         item && Map.get(item, :is_live, false)
     end
+  end
+
+  # Server-side live-capable allow-list. The extension's
+  # `sampleLiveStatus` heuristic (read <video>.duration) can produce
+  # false positives on Bitmovin/HLS/MSE pipelines that expose
+  # Infinity for finite VOD episodes (e.g., Crunchyroll). Restricting
+  # is_live=true to URLs that COULD plausibly be live keeps the bug
+  # away regardless of what the extension reports.
+  defp live_capable_item?(item) do
+    case Map.get(item, :url) do
+      url when is_binary(url) -> live_capable_url?(url)
+      _ -> false
+    end
+  end
+
+  defp live_capable_url?(url) do
+    case URI.parse(url) do
+      %URI{host: host} when is_binary(host) ->
+        h = String.downcase(host)
+        h in ~w(youtube.com www.youtube.com m.youtube.com youtu.be) or
+          h in ~w(twitch.tv www.twitch.tv m.twitch.tv)
+
+      _ ->
+        false
+    end
+  end
+
+  defp do_update_live_status(state, idx, item, is_live) do
+    updated = %{item | is_live: is_live}
+    queue = List.replace_at(state.queue, idx, updated)
+
+    history =
+      Enum.map(state.history, fn entry ->
+        if entry.item.id == item.id do
+          %{entry | item: %{entry.item | is_live: is_live}}
+        else
+          entry
+        end
+      end)
+
+    state = %{state | queue: queue, history: history}
+    broadcast(state, {:live_status, %{is_live: is_live, item_id: item.id}})
+    broadcast(state, {:queue_updated, %{queue: queue, current_index: idx}})
+    {:reply, :ok, state}
   end
 
   defp log_activity(state, action, user_id \\ nil, detail \\ nil) do

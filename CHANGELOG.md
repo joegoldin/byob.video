@@ -3,6 +3,28 @@
 
 ---
 
+# v6.8.57
+
+### Server-side gate: only YouTube + Twitch can be marked live
+
+Simpler and more robust than the v6.8.56 extension fix: the
+canonical decision lives on the server, where it can't be
+bypassed by stale extension builds or future MSE/HLS surprises
+on other sites.
+
+`handle_call({:update_live_status, true, ...})` now ignores the
+update unless the current item's URL points at a YouTube or
+Twitch host (the only services we actually support live content
+on). `is_live: false` is always allowed, so the extension
+correcting a stale-true value still works.
+
+The v6.8.56 client-side preference for `bitmovinAdapter.getDuration()`
+stays — it's a small useful improvement even with the server
+gate in place — but a stale extension that doesn't have it can
+no longer corrupt the room's live state on a Crunchyroll page.
+
+---
+
 # v6.8.56
 
 ### Crunchyroll: stop misdetecting VOD episodes as live
