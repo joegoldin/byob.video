@@ -136,12 +136,25 @@ const VideoPlayer = {
       // get to (phx-update="ignore" on the wrapper). Stash on the
       // hook and stamp onto the player div as data-byob-token so
       // every byob → BG postMessage sees the live value.
+      //
+      // Also flag the document with `data-byob-token-fresh="1"`
+      // so the extension's content script can wait for the
+      // post-WS-render token before pushing its first
+      // BYOB_REQUEST_TAB_RESYNC. Without that gate the content
+      // script can read the stale dead-render token at
+      // document_idle and send it to the BG, which then joins
+      // the channel with an owner_user_id that doesn't match any
+      // LV peer → activity log gets one "ExtensionUser joined"
+      // entry before propagation heals the rest.
       this._byobToken = data.token;
       this._byobUserId = data.user_id;
       if (this.el) {
         this.el.dataset.token = data.token;
         this.el.dataset.userId = data.user_id;
       }
+      try {
+        document.documentElement.setAttribute("data-byob-token-fresh", "1");
+      } catch (_) {}
     });
     this.handleEvent(LV_EVT.SB_SETTINGS, (data) => {
       this.sbSettings = data;

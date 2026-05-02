@@ -3,6 +3,47 @@
 
 ---
 
+# v6.8.52
+
+### Token-mismatch reconnect + content-script waits for fresh token
+
+Two remaining ways "ExtensionUser" could survive v6.8.51's fix:
+
+1. The BG channel is alive across byob page refreshes (independent
+   socket), so a channel that was originally joined with a stale
+   token (pre-v6.8.51 deploy, or from a session whose
+   owner_user_id no longer matches the page's @user_id) keeps
+   running with that stale identity forever. Refresh re-renders
+   `data-token` correctly but the BG doesn't notice — it just
+   pushes resync over the same channel.
+
+   Fix: BG now tracks `currentToken` against the value the page
+   handed it on each `BYOB_REQUEST_TAB_RESYNC`. If the live token
+   differs, tear the channel + socket down and reconnect with the
+   fresh token. The on-rejoin tabs_resync (v6.8.42) re-asserts
+   our hookedTabs into the new server-side state.
+
+2. The content script's resync-on-init polled for `data-token` to
+   be PRESENT, but the dead-render value is present from the
+   first paint. If the script fired before the WebSocket render's
+   `ext:token` push_event landed, it shipped the short-user_id
+   token to the BG, which joined the channel with an
+   owner_user_id that no LV peer has — `owner_username` lookup
+   returned nil, fallback to "ExtensionUser", one phantom join
+   in the activity log before propagation healed the rest.
+
+   Fix: the VideoPlayer hook now sets
+   `<html data-byob-token-fresh="1">` when the `ext:token` event
+   arrives. Content script waits for that attribute before
+   sending the resync request, so the BG only ever receives the
+   post-WS-render token.
+
+After this you should never see "ExtensionUser" — fresh page,
+refresh, cross-tab, BG-suspended-then-revived, all paths land
+on the owner LV peer's current username.
+
+---
+
 # v6.8.51
 
 ### Token was being rendered with a stale user_id

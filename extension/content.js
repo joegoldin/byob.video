@@ -386,7 +386,16 @@
       if (host === "byob.video" || host === "localhost") {
         const sendResync = (attempt) => {
           const player = document.getElementById("player");
-          if (player && player.dataset.roomId && player.dataset.token) {
+          // Wait for the LV's post-WS-render token push to land before
+          // sending. The dead-render data-token encodes the SHORT
+          // user_id (session UUID without tab_id), and shipping that
+          // to the BG would have it join the channel with an
+          // owner_user_id that doesn't match any LV peer's user_id —
+          // server falls back to the literal "ExtensionUser" name.
+          // The hook sets data-byob-token-fresh on <html> when the
+          // ext:token push_event arrives.
+          const tokenFresh = document.documentElement.hasAttribute("data-byob-token-fresh");
+          if (player && player.dataset.roomId && player.dataset.token && tokenFresh) {
             try {
               chrome.runtime.sendMessage({
                 type: EVT.BYOB_REQUEST_TAB_RESYNC,
@@ -401,7 +410,7 @@
             } catch (_) {}
             return;
           }
-          if (attempt < 20) setTimeout(() => sendResync(attempt + 1), 250);
+          if (attempt < 40) setTimeout(() => sendResync(attempt + 1), 250);
         };
         sendResync(0);
       }

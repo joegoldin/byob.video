@@ -161,6 +161,7 @@ const ports = []; // all connected ports — each entry is { port, tabId }
 let socket = null;
 let channel = null;
 let currentRoomId = null;
+let currentToken = null;
 let lastReadyCount = null;
 let currentServerUrl = null;
 let initialRoomState = null;
@@ -563,6 +564,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
 
   currentRoomId = roomId;
   currentServerUrl = serverUrl;
+  currentToken = token || null;
 
   // Connect Phoenix Socket with auth token — disable built-in reconnect
   // so we don't spam errors when the server is down. The content script's
@@ -743,6 +745,7 @@ function connectToRoom(roomId, serverUrl, token, username) {
     channel = null;
     socket = null;
     currentRoomId = null;
+    currentToken = null;
     lastReadyCount = null;
     for (const entry of [...ports]) {
       try { entry.port.disconnect(); } catch (_) {}
@@ -853,6 +856,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           channel = null;
           socket = null;
           currentRoomId = null;
+          currentToken = null;
           currentServerUrl = null;
           hookedTabs.clear();
           lastReadyCount = null;
@@ -1002,6 +1006,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           hookedTabs.delete(tabId);
         }
       }
+      const room_id = msg.room_id;
+      const server_url = msg.server_url;
+      const token = msg.token;
+
+      // Token-mismatch reconnect. The byob page just handed us a
+      // token; if our currently-joined channel was established with
+      // a DIFFERENT one, the channel's owner_user_id is stale (e.g.
+      // it joined before v6.8.51's push-event token landed, or the
+      // user has just refreshed and the previous channel has the
+      // pre-fix token). Tear down and rejoin so the BG channel
+      // join_room runs fresh against the current state.users —
+      // this is what fixes "ExtensionUser" surviving across byob
+      // page refreshes.
+      if (channel && token && currentToken && token !== currentToken) {
+        console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC token changed → reconnecting`);
+        try { channel.leave(); } catch (_) {}
+        try { if (socket) socket.disconnect(); } catch (_) {}
+        channel = null;
+        socket = null;
+        currentRoomId = null;
+        currentToken = null;
+        if (room_id && server_url) {
+          try { connectToRoom(room_id, server_url, token); } catch (_) {}
+        }
+        return;
+      }
+
       if (channel) {
         const resyncIds = [...hookedTabs].map(String);
         console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC pushing tabs_resync=[${resyncIds.join(",")}]`);
@@ -1011,19 +1042,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return;
       }
 
-      // Channel is null — Chrome MV3 SW was suspended, the socket died,
+      // Channel is null — Chrome MV3 SW was suspended, socket died,
       // and on revival nothing re-established it (connectToRoom only
-      // runs on BYOB_OPEN_EXTERNAL). Use the config the page handed us
-      // to bring it back. The v6.8.42 on-channel-rejoin resync inside
-      // `.receive("ok")` will then fire automatically with our current
-      // hookedTabs, so we don't need to push a second resync here.
-      const room_id = msg.room_id;
-      const server_url = msg.server_url;
-      const token = msg.token;
-      const username = msg.username;
+      // runs on BYOB_OPEN_EXTERNAL). Use the config the page handed
+      // us to bring it back. The v6.8.42 on-channel-rejoin resync
+      // inside `.receive("ok")` will then fire automatically with
+      // our current hookedTabs.
       if (room_id && server_url && token) {
-        console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC channel=null, re-establishing room=${room_id} as '${username || "(no username)"}'`);
-        try { connectToRoom(room_id, server_url, token, username); } catch (_) {}
+        console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC channel=null, re-establishing room=${room_id}`);
+        try { connectToRoom(room_id, server_url, token); } catch (_) {}
       } else {
         console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC channel=null and no config provided — skipping`);
       }
