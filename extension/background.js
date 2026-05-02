@@ -574,6 +574,10 @@ function connectToRoom(roomId, serverUrl, token, username) {
 
   socket.connect();
 
+  console.log(
+    `[byob/bg] connectToRoom roomId=${roomId} username='${username}' ` +
+      `(falls back to "ExtensionUser" if empty)`
+  );
   channel = socket.channel(`extension:${roomId}`, {
     username: username || "ExtensionUser",
     is_extension: true,
@@ -778,19 +782,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // byobManagedTabs (configA / configB), each thinking it's the
     // current player tab.
     const openerTabId = sender.tab?.id;
-    console.log(`[byob/bg] BYOB_OPEN_EXTERNAL openerTabId=${openerTabId} hasConfig=${!!msg.config} url=${msg.config?.target_url}`);
+    console.log(
+      `[byob/bg] BYOB_OPEN_EXTERNAL openerTabId=${openerTabId} ` +
+        `hasConfig=${!!msg.config} username='${msg.config?.username}' ` +
+        `url=${msg.config?.target_url}`
+    );
     if (openerTabId != null && msg.config) {
       // Close any existing managed popups before claiming the new one.
-      // This also fires chrome.tabs.onRemoved for those tabs, which
-      // pushes their tab_closed events to the server (correctly
-      // attributed because byobManagedTabs[tabId] still has each
-      // tab's original config until the listener clears it).
+      // chrome.tabs.remove fires tabs.onRemoved → tab_closed pushes to
+      // the server, but the cleanup is ASYNC. The new popup's CONNECT
+      // can arrive before port.onDisconnect for the old popup, hitting
+      // the "already connected, reuse channel" branch in our CONNECT
+      // handler — and the reused channel was joined under the OLD
+      // user's name. So we ALSO tear down the channel + socket
+      // synchronously here so the new popup is forced through a fresh
+      // connectToRoom (which joins as the new username).
       const existing = [...byobManagedTabs.keys()];
       if (existing.length > 0) {
         console.log(`[byob/bg] BYOB_OPEN_EXTERNAL → closing existing managed tabs: ${existing}`);
         for (const t of existing) {
           try { chrome.tabs.remove(t); } catch (_) {}
         }
+      }
+      if (channel || socket || currentRoomId) {
+        console.log(`[byob/bg] BYOB_OPEN_EXTERNAL → tearing down stale channel/socket synchronously`);
+        try { if (channel) channel.leave(); } catch (_) {}
+        try { if (socket) socket.disconnect(); } catch (_) {}
+        channel = null;
+        socket = null;
+        currentRoomId = null;
+        currentServerUrl = null;
+        hookedTabs.clear();
+        lastReadyCount = null;
+        initialRoomState = null;
       }
       expirePendingOpens();
       pendingByobOpens.set(openerTabId, {

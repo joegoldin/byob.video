@@ -3,6 +3,50 @@
 
 ---
 
+# v6.8.36
+
+### Wrong-user bug — actual root cause: stale channel reuse race
+
+The wrong-username bug happens **even with a single click ever**.
+Tracing the code:
+
+1. byob.video page passes the correct username in `BYOB_OPEN_EXTERNAL`.
+2. BG stores it in `pendingByobOpens` and (v6.8.35) closes any
+   existing managed popup tabs.
+3. `chrome.tabs.remove` is async — `tabs.onRemoved` and
+   `port.onDisconnect` for the old popup fire LATER.
+4. byob.video calls `window.open()` synchronously. The new popup
+   loads fast.
+5. New popup's content script sends `CONNECT` to the BG.
+6. **BG's CONNECT handler:**
+   ```js
+   if (currentRoomId === msg.room_id && channel) {
+     // "Already connected" — reuse the existing channel
+     port.postMessage({ type: BYOB_CHANNEL_READY });
+   }
+   ```
+   `currentRoomId` and `channel` are STILL set (port.onDisconnect
+   hasn't fired yet). The new popup latches onto the stale
+   channel — which was joined under the **OLD username** from the
+   previous session.
+
+The channel is never re-joined, so the new popup operates as the
+previous user for its entire lifetime.
+
+**Fix:** in `BYOB_OPEN_EXTERNAL`, after `chrome.tabs.remove`, also
+synchronously tear down `channel.leave()` + `socket.disconnect()`
++ null `currentRoomId` / `currentServerUrl` / `hookedTabs` /
+`lastReadyCount` / `initialRoomState`. Now the new popup's CONNECT
+ALWAYS goes through `connectToRoom`, which joins as the new
+username.
+
+This was a regression from the v6.7.0 server-authoritative refactor
+that introduced the channel-reuse short-circuit in the CONNECT
+handler — fine when only one popup ever existed, broken once we
+started replacing popups for new opens.
+
+---
+
 # v6.8.35
 
 ### Single-popup enforcement: kill the wrong-username bug at the source
