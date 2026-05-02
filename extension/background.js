@@ -293,17 +293,38 @@ chrome.runtime.onConnect.addListener((port) => {
       if (!tabStillConnected) hookedTabs.delete(tabId);
     }
     if (ports.length === 0 && channel) {
-      // All external player windows closed — pause so next joiner doesn't autoplay
-      console.log(`[byob/bg] all ports gone — pushing all_closed and leaving channel`);
-      channel.push(EVT.CHAN_VIDEO_ALL_CLOSED, {});
-      channel.leave();
+      // All external player windows closed — pause so next joiner doesn't autoplay.
+      // CRITICAL: defer the channel.leave + socket.disconnect so the
+      // tab_closed / unready / all_closed pushes above actually flush
+      // over the WebSocket before we tear down the connection. Calling
+      // leave() synchronously after push() can cancel queued pushes
+      // (the server then never sees tab_closed and the byob.video
+      // "Open Player Window" button stays stuck on "Focus").
+      console.log(`[byob/bg] all ports gone — pushing all_closed; deferring leave by 500ms`);
+      const allClosedPush = channel.push(EVT.CHAN_VIDEO_ALL_CLOSED, {});
+      const closingChannel = channel;
+      const closingSocket = socket;
       channel = null;
-      if (socket) {
-        socket.disconnect();
-        socket = null;
-      }
+      socket = null;
       currentRoomId = null;
       hookedTabs.clear();
+      // Wait for the all_closed push to ack (or 500 ms timeout),
+      // THEN actually leave the channel and disconnect the socket.
+      const cleanup = () => {
+        try {
+          closingChannel.leave();
+        } catch (_) {}
+        try {
+          if (closingSocket) closingSocket.disconnect();
+        } catch (_) {}
+        console.log(`[byob/bg] channel left + socket disconnected`);
+      };
+      try {
+        allClosedPush.receive("ok", cleanup).receive("timeout", cleanup);
+      } catch (_) {
+        // Older Phoenix.js without receive chain — fall back to a flat timeout.
+        setTimeout(cleanup, 500);
+      }
     }
   });
 });

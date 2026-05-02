@@ -3,6 +3,32 @@
 
 ---
 
+# v6.8.34
+
+### Fix close-detection race: defer channel.leave until tab_closed flushes
+
+When the last popup closed, `port.onDisconnect` would push
+`video:tab_closed`, push `video:all_closed`, and then immediately
+call `channel.leave()` + `socket.disconnect()`. Phoenix.js can
+cancel queued pushes when the channel leaves, so the server never
+saw `tab_closed` — `state.open_tabs` retained the entry, the
+ready_count broadcast still listed the closed user as having a
+player, and the byob.video "Open Player Window" button stayed
+stuck on "Focus".
+
+Fix: after pushing `all_closed`, defer the `channel.leave()` +
+`socket.disconnect()` until either the push acks (`receive("ok")`)
+or 500 ms elapses (`receive("timeout")`) — whichever comes first.
+This guarantees the WebSocket has flushed all the close-event
+frames before tearing down. Module-level `channel` / `socket`
+references are nulled immediately so subsequent disconnects don't
+race; cleanup uses captured local references.
+
+This was the underlying reason close detection could appear flaky
+in v6.8.30-33 even with the `windows.onRemoved` fallback in place.
+
+---
+
 # v6.8.33
 
 ### Firefox extension picks the right room when multiple Crunchyroll
