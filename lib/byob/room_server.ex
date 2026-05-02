@@ -974,7 +974,15 @@ defmodule Byob.RoomServer do
 
           now = System.monotonic_time(:millisecond)
           timer_ref = Process.send_after(self(), :advance_pending, @autoplay_countdown_ms)
-          state = %{state | pending_advance_ref: timer_ref, play_state: :paused}
+          # Snapshot the played-through position BEFORE flipping to :paused.
+          # Otherwise current_position/1 collapses to state.current_time
+          # (which was 0 at video start), so heartbeats and SyncDecision
+          # would suddenly think the room is at t=0 — peer A's ended
+          # player is still at ~duration, so drift reads as +200_000ms
+          # and SyncDecision fires a "rewind to 0" seek inside the 5 s
+          # autoplay-countdown window.
+          frozen_position = current_position(state)
+          state = %{state | pending_advance_ref: timer_ref, play_state: :paused, current_time: frozen_position, last_sync_at: now}
 
           has_next = state.current_index + 1 < length(state.queue)
 

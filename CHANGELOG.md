@@ -3,6 +3,65 @@
 
 ---
 
+# v6.8.40
+
+### Stop the post-ended "rewind to 0" SyncDecision seek
+
+Symptom: a video would play through to its end, then a couple of
+seconds later — usually right before the next queue item loaded —
+the player would seek backward by what looked like "a few minutes"
+(actually the entire elapsed duration, back to t=0 of the just-
+ended video).
+
+Root cause was a two-sided coordination bug between the server's
+position bookkeeping and the client's drift reporter:
+
+1. **Server (`room_server.ex`):** When `:video_ended` matched, the
+   handler flipped `play_state: :paused` but did not snapshot
+   `current_time` / `last_sync_at`. Because `current_time` was
+   set to `0.0` at video start (and the played-through position
+   only existed as `current_time + (now − last_sync_at)` while
+   `:playing`), the moment `play_state` became `:paused`,
+   `current_position/1` collapsed back to `0`. Subsequent
+   heartbeats then broadcast `current_time = 0`, and per-user
+   `SyncDecision` started evaluating drift against
+   `expected_position = 0` instead of the true end position.
+
+2. **Client (`video_player.js` `_pushDriftReport`):** The
+   "pin drift to 0 while paused" guard used
+   `expectedPlayState === "paused" || state === "paused"`. After
+   ENDED fires, `expectedPlayState` is `null` and the player's
+   state is `"ended"` — neither matches `"paused"`. So the
+   ended player (sitting at `~duration`) reported its still-real
+   ~200-second drift against the server's now-collapsed
+   `expected_position = 0`. Two sustained reports later
+   (≈2 s into the 5 s autoplay-countdown window),
+   `SyncDecision` issued a seek to position `0` aimed at that
+   user. The seek landed on the still-ended OLD video and
+   "rewound" it to start, which is exactly what the user saw.
+
+Fix:
+
+- **Server**: in the `:video_ended` arm, compute
+  `frozen_position = current_position(state)` BEFORE flipping
+  `play_state`, then store it as the new `current_time` with
+  `last_sync_at: now`. Position now correctly stays at the end
+  of the video for the duration of the autoplay countdown,
+  so heartbeats and SyncDecision both see the true end position.
+
+- **Client**: extend the `_pushDriftReport` paused-guard to also
+  cover `state === "ended"` and `_endedFired === true`. Defense
+  in depth — even if the server's expected position were stale
+  for any other reason, an ended player has no meaningful
+  drift to report.
+
+Both fixes are needed: the server fix removes the stale-
+expected-position trigger; the client fix ensures an ended
+player's "pinned-at-duration" frame can never be misread as a
+seek-worthy delta.
+
+---
+
 # v6.8.39
 
 ### Stop the BG socket from disconnecting on Firefox idle / focus loss

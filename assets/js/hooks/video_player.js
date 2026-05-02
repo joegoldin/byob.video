@@ -1819,8 +1819,18 @@ const VideoPlayer = {
     // "fix" it, which only resets the sawtooth and starts the cycle
     // over. Pin reported drift to 0 while paused so neither the
     // server's SyncDecision nor the panel sees fake drift.
+    //
+    // Same hazard during the post-ended → autoplay-advance window:
+    // expectedPlayState is null and state is "ended" (neither matches
+    // "paused"), but the player is sitting at ~duration while the
+    // server may have collapsed expected back to 0 — reporting a
+    // 200-second drift would trigger SyncDecision to "rewind to 0"
+    // before the next video loads.
     const isPaused =
-      this.expectedPlayState === "paused" || state === "paused";
+      this.expectedPlayState === "paused" ||
+      state === "paused" ||
+      state === "ended" ||
+      this._endedFired;
 
     // Always recompute drift from the current player position. The
     // reconcile loop's `lastDriftMs` only refreshes every 100 ms, so
