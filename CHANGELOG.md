@@ -3,6 +3,38 @@
 
 ---
 
+# v6.8.30
+
+### Extension popup-close detection: Firefox windows.onRemoved fallback
+
+The byob "Focus / Open Player Window" button on byob.video flips
+its label based on the server's `ready_count` broadcast — which
+in turn depends on the BG calling
+`channel.push("video:tab_closed", …)` when the player popup is
+closed. On Firefox MV3 that signal sometimes never fires because
+`chrome.tabs.onRemoved` is skipped for popup windows closed via
+the window's own close button (only `chrome.windows.onRemoved`
+fires).
+
+Added a `chrome.windows.onRemoved` listener as a fallback: walks
+`hookedTabs`, queries each via `chrome.tabs.get`; any tab that
+returns `lastError` (i.e. is gone) gets the same cleanup
+`chrome.tabs.onRemoved` would have done — push `tab_closed` +
+`unready`, drop from `hookedTabs` / `byobManagedTabs`. Chrome
+keeps its existing `tabs.onRemoved` path; the windows listener is
+a no-op there because the tabs path runs first and clears
+`hookedTabs`.
+
+Diagnostic logs on all three close-detection paths so future
+issues are traceable from `about:debugging` → byob → Inspect:
+- `[byob/bg] tabs.onRemoved tabId=X hooked=Y managed=Z channel=W`
+- `[byob/bg] windows.onRemoved windowId=X` + per-tab `tab N gone`
+- `[byob/bg] port.onDisconnect tabId=X hooked=Y portsLeft=N`
+
+Both Chrome and Firefox builds verified to compile clean.
+
+---
+
 # v6.8.29
 
 ### Re-syncing pill picks up the byob brand purple

@@ -189,23 +189,31 @@ const hookedTabs = new Set();
 // hookedTabs and notifies the server, so ready_count flips back to
 // "needs to open" and the LV's ExtOpenBtn / YT-fallback labels update.
 chrome.tabs.onRemoved.addListener((tabId) => {
+  const wasHooked = hookedTabs.has(tabId);
+  const wasManaged = byobManagedTabs.has(tabId);
+  console.log(
+    `[byob/bg] tabs.onRemoved tabId=${tabId} hooked=${wasHooked} managed=${wasManaged} channel=${!!channel}`
+  );
   for (let i = ports.length - 1; i >= 0; i--) {
     if (ports[i].tabId === tabId) ports.splice(i, 1);
   }
-  if (hookedTabs.has(tabId)) {
+  if (wasHooked) {
     hookedTabs.delete(tabId);
     if (channel) {
       try {
         channel.push(EVT.CHAN_VIDEO_TAB_CLOSED, { tab_id: String(tabId) });
         channel.push(EVT.CHAN_VIDEO_UNREADY, { tab_id: String(tabId) });
-      } catch (_) {}
+        console.log(`[byob/bg] tabs.onRemoved → pushed tab_closed + unready for tab ${tabId}`);
+      } catch (e) {
+        console.log(`[byob/bg] tabs.onRemoved push error:`, e);
+      }
     }
   }
   // The byob room that opened this tab is gone OR the popup itself
   // closed — either way the marking is no longer relevant. Drop both
   // managed-tab state and any in-flight pending open keyed by this
   // tab as the opener.
-  if (byobManagedTabs.has(tabId)) {
+  if (wasManaged) {
     byobManagedTabs.delete(tabId);
     persistManagedTabs();
   }
@@ -213,6 +221,45 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     pendingByobOpens.delete(tabId);
   }
 });
+
+// Firefox occasionally doesn't fire tabs.onRemoved for popup windows
+// closed via the window's own close button — only windows.onRemoved.
+// Listen for both and let the same per-tab cleanup path run from
+// either signal. Each window contains its own tab(s); we look up
+// which were hooked and notify the server for them.
+if (chrome.windows && chrome.windows.onRemoved && chrome.windows.onRemoved.addListener) {
+  chrome.windows.onRemoved.addListener((windowId) => {
+    console.log(`[byob/bg] windows.onRemoved windowId=${windowId}`);
+    // Walk our hookedTabs and check which ones live in this window.
+    // We don't keep a windowId index, so query each tab — those that
+    // 404 (already gone) are the ones whose window just closed.
+    const tabIds = [...hookedTabs];
+    for (const tabId of tabIds) {
+      try {
+        chrome.tabs.get(tabId, (tab) => {
+          if (chrome.runtime.lastError || !tab) {
+            console.log(`[byob/bg] windows.onRemoved → tab ${tabId} gone, cleaning up`);
+            // Replicate tabs.onRemoved cleanup for this orphaned tab.
+            for (let i = ports.length - 1; i >= 0; i--) {
+              if (ports[i].tabId === tabId) ports.splice(i, 1);
+            }
+            hookedTabs.delete(tabId);
+            if (channel) {
+              try {
+                channel.push(EVT.CHAN_VIDEO_TAB_CLOSED, { tab_id: String(tabId) });
+                channel.push(EVT.CHAN_VIDEO_UNREADY, { tab_id: String(tabId) });
+              } catch (_) {}
+            }
+            if (byobManagedTabs.has(tabId)) {
+              byobManagedTabs.delete(tabId);
+              persistManagedTabs();
+            }
+          }
+        });
+      } catch (_) {}
+    }
+  });
+}
 
 // Listen for port connections from content scripts
 chrome.runtime.onConnect.addListener((port) => {
@@ -229,18 +276,25 @@ chrome.runtime.onConnect.addListener((port) => {
     void chrome.runtime.lastError;
     const idx = ports.indexOf(entry);
     if (idx > -1) ports.splice(idx, 1);
+    const tabStillConnected = tabId != null && ports.some(e => e.tabId === tabId);
+    const wasHooked = tabId != null && hookedTabs.has(tabId);
+    console.log(
+      `[byob/bg] port.onDisconnect tabId=${tabId} hooked=${wasHooked} ` +
+        `tabStillConnected=${tabStillConnected} channel=${!!channel} portsLeft=${ports.length}`
+    );
     // If no other port from this tab and the tab had hooked a video,
     // tell the server the player tab closed.
     if (tabId != null && channel) {
-      const tabStillConnected = ports.some(e => e.tabId === tabId);
-      if (!tabStillConnected && hookedTabs.has(tabId)) {
+      if (!tabStillConnected && wasHooked) {
         channel.push(EVT.CHAN_VIDEO_TAB_CLOSED, { tab_id: String(tabId) });
         channel.push(EVT.CHAN_VIDEO_UNREADY, { tab_id: String(tabId) });
+        console.log(`[byob/bg] port.onDisconnect → pushed tab_closed + unready for tab ${tabId}`);
       }
       if (!tabStillConnected) hookedTabs.delete(tabId);
     }
     if (ports.length === 0 && channel) {
       // All external player windows closed — pause so next joiner doesn't autoplay
+      console.log(`[byob/bg] all ports gone — pushing all_closed and leaving channel`);
       channel.push(EVT.CHAN_VIDEO_ALL_CLOSED, {});
       channel.leave();
       channel = null;
