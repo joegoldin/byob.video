@@ -3,6 +3,31 @@
 
 ---
 
+# v6.8.53
+
+### Dedup self-join activity entry
+
+Long-standing bug surfaced once v6.8.51's fixes cleaned up the
+"ExtensionUser" noise: the LV's join showed up TWICE in the
+activity panel.
+
+`room_live.mount` subscribes to PubSub BEFORE calling
+`RoomServer.join/3`. The join's `log_activity` broadcasts the
+entry to all subscribers — including the just-subscribed LV
+itself. AND the join's return-value snapshot already contains
+that fresh entry (because `log_activity` ran before the snapshot
+was returned). The LV mount assigned the entry from the snapshot,
+then a moment later received the same entry as a PubSub broadcast
+and prepended it on top.
+
+Fix: `handle_activity_log_entry` now skips the prepend if the
+incoming entry's `{action, user, at}` triple matches the head of
+the existing activity_log. Same entry can never rationally appear
+back-to-back — if it does, it's the snapshot/broadcast race we
+just described.
+
+---
+
 # v6.8.52
 
 ### Token-mismatch reconnect + content-script waits for fresh token

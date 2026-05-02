@@ -225,7 +225,24 @@ defmodule ByobWeb.RoomLive.PubSub do
   end
 
   def handle_activity_log_entry(entry, socket) do
-    log = Enum.take([entry | socket.assigns.activity_log], 50)
+    # Dedup: the broadcasting log_activity that produced this entry
+    # was called INSIDE the same RoomServer.join call whose return
+    # snapshot the LV mount used to seed `socket.assigns.activity_log`.
+    # `Phoenix.PubSub.subscribe` runs before the join, so we receive
+    # the broadcast for our own join — and would otherwise prepend it
+    # on top of an identical head from the snapshot. Same entry
+    # (same action + same user + same DateTime) would never rationally
+    # appear twice, so reject if it's already at the head.
+    log =
+      case socket.assigns.activity_log do
+        [%{action: a, user: u, at: at} | _]
+        when a == entry.action and u == entry.user and at == entry.at ->
+          socket.assigns.activity_log
+
+        _ ->
+          Enum.take([entry | socket.assigns.activity_log], 50)
+      end
+
     socket = assign(socket, activity_log: log)
     text = ByobWeb.RoomLive.Components.format_log_entry(entry)
     # Push toast to client
