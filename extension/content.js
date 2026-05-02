@@ -366,6 +366,21 @@
       } catch (_) {}
     });
 
+    // On byob.video / localhost: proactively trigger a tabs_resync so
+    // the placeholder's "Open / Focus" label reflects BG's actual
+    // hookedTabs. We can't wait for the placeholder's postMessage —
+    // content scripts run at document_idle, AFTER LV mounts the
+    // placeholder, so the placeholder's postMessage fires before this
+    // listener is attached and is silently dropped. Triggering from
+    // here (after the listener is wired) guarantees one resync per
+    // byob page load regardless of timing.
+    {
+      const host = window.location.hostname;
+      if (host === "byob.video" || host === "localhost") {
+        try { chrome.runtime.sendMessage({ type: EVT.BYOB_REQUEST_TAB_RESYNC }); } catch (_) {}
+      }
+    }
+
     const tryActivate = async (attempt) => {
       if (attempt > 5) {
         _log(`tryActivate giving up — BG never returned managed=true (host=${window.location.hostname})`);

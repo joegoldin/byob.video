@@ -3,6 +3,30 @@
 
 ---
 
+# v6.8.44
+
+### Tab resync on byob page load — close the document_idle race
+
+v6.8.43 had the placeholder postMessage `byob:request-tab-resync`
+on mount, but it didn't fire on plain refresh. The reason: content
+scripts run at `document_idle`, which is AFTER LiveView mounts the
+placeholder. The placeholder's `window.postMessage` fires before
+the content script's listener is attached, so the message is
+silently dropped. Browser back/forward worked because the cached
+content script was already attached.
+
+Fix: have the content script itself fire one
+`BYOB_REQUEST_TAB_RESYNC` to the BG when it initialises on
+byob.video / localhost. No race, no postMessage round trip — the
+content script's runtime.sendMessage to the BG is a direct call
+that doesn't depend on listeners-attached-in-time-anywhere.
+
+The placeholder-mount postMessage stays as a secondary trigger
+(harmless duplicate; useful for any future SPA-nav case where
+`init()` already ran).
+
+---
+
 # v6.8.43
 
 ### Placeholder triggers tab resync on mount (fixes "Focus" stuck after refresh)
