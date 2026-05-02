@@ -228,7 +228,13 @@ defmodule ByobWeb.ExtensionChannel do
 
   def handle_in(@in_video_tab_opened, payload, socket) do
     tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
-    RoomServer.mark_tab_opened(socket.assigns.room_pid, tab_id, socket.assigns.user_id)
+    # Track popups by the OWNER LV peer's user_id (decoded from the
+    # signed token), not the ext_user_id. Owner is the human; the ext
+    # peer is just a transport. Owner-keyed open_tabs makes the
+    # "i_have_popup" lookup a direct comparison against the LV peer's
+    # @user_id with no username string-matching.
+    owner = socket.assigns[:owner_user_id] || socket.assigns.user_id
+    RoomServer.mark_tab_opened(socket.assigns.room_pid, tab_id, owner)
     {:noreply, socket}
   end
 
@@ -245,8 +251,9 @@ defmodule ByobWeb.ExtensionChannel do
   def handle_in(@in_video_tabs_resync, payload, socket) do
     raw = payload["tab_ids"] || []
     user_id = socket.assigns.user_id
+    owner = socket.assigns[:owner_user_id] || user_id
     tab_ids = Enum.map(raw, fn id -> "#{user_id}:#{id}" end)
-    RoomServer.resync_open_tabs(socket.assigns.room_pid, user_id, tab_ids)
+    RoomServer.resync_open_tabs(socket.assigns.room_pid, owner, tab_ids)
     {:noreply, socket}
   end
 
@@ -475,10 +482,9 @@ defmodule ByobWeb.ExtensionChannel do
         non_ext_usernames = non_ext |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq()
         total = length(non_ext_usernames)
 
-        # open_tabs/ready_tabs are keyed by tab_id with ext_user_id as value.
-        # Count unique owners (by username), not tabs — a single user with
-        # top frame + player iframe would otherwise count as 2. Also filter
-        # out stale owners that aren't currently connected.
+        # open_tabs/ready_tabs values are owner LV peer user_ids.
+        # Resolve owner_id → state.users[owner_id].username gives the
+        # current LV peer name (always up to date via rename_user).
         connected_ids =
           connected |> Enum.map(fn {id, _} -> id end) |> MapSet.new()
 
@@ -490,9 +496,10 @@ defmodule ByobWeb.ExtensionChannel do
           end
         end
 
+        open_owner_ids = open_tabs |> Map.values() |> Enum.uniq()
+
         open_users =
-          open_tabs |> Map.values() |> Enum.map(resolve)
-          |> Enum.reject(&is_nil/1) |> Enum.uniq()
+          open_owner_ids |> Enum.map(resolve) |> Enum.reject(&is_nil/1) |> Enum.uniq()
 
         ready_users =
           ready_tabs |> Map.values() |> Enum.map(resolve)
@@ -516,7 +523,8 @@ defmodule ByobWeb.ExtensionChannel do
           has_tab: has_tab,
           total: total,
           needs_open: needs_open,
-          needs_play: needs_play
+          needs_play: needs_play,
+          users_with_open_tabs: open_owner_ids
         }
       else
         nil

@@ -3,6 +3,58 @@
 
 ---
 
+# v6.8.50
+
+### Track popups by owner user_id directly — kill the username dance
+
+Replaces the whole convoluted state model with a one-line invariant:
+**`open_tabs` is keyed by tab_id with the OWNER LV peer's user_id as
+value.** Not the ext_user_id, not anything username-related. The
+LV's "do I have a popup?" check is then literally
+`@user_id in users_with_open_tabs` — a direct comparison of two
+canonical, immutable identifiers that never go stale.
+
+This removes the entire class of bugs we kept chasing:
+
+- "BG joined as ExtensionUser" — doesn't matter, the popup tracking
+  doesn't read its username.
+- `data-username` frozen by `phx-update="ignore"` — doesn't matter,
+  the comparison is against `@user_id`.
+- Cross-tab orphaned ext peers (open popup in tab A, close tab A,
+  byob now in tab B) — doesn't matter, the popup is still keyed by
+  the owner user_id which the new tab's @user_id can match directly.
+- Username propagation, sessionStorage flags, dual-source AND
+  checks — all gone.
+
+What changed:
+
+1. `room_server.ex` `mark_tab_opened` accepts owner_user_id; stored
+   value in `open_tabs` is the owner LV peer's user_id.
+2. `count_tab_owners` resolves owner_id → state.users[owner_id].
+   username (LV peer's name, always current via rename_user).
+3. `broadcast_ready_count` emits `users_with_open_tabs` (list of
+   unique owner user_ids) alongside the existing
+   needs_open/needs_play.
+4. `room_live/pubsub.ex` `handle_ready_count` computes
+   `i_have_popup = @user_id in users_with_open_tabs`. No usernames
+   anywhere in the comparison.
+5. `extension_channel.ex` passes owner from
+   `socket.assigns[:owner_user_id]` (from the signed token) when
+   marking/resyncing tabs.
+6. `assets/js/players/extension.js` placeholder: reduced to
+   `hook?._lastReadyCount?.i_have_popup === true`. SessionStorage
+   gate removed — the boolean is reliable on its own.
+7. `do_finalize_leave` cleanup extracts owner from the ext_user_id's
+   `"ext:..."` prefix when wiping a leaving ext peer's tabs.
+
+The v6.8.47 / v6.8.49 username-propagation healers stay in place
+because the Connected clients display in Stats for nerds still
+reads `state.users[ext_user_id].username` for ext peer rows — but
+that's purely cosmetic now. Popup OWNERSHIP no longer depends on
+the propagation working.
+
+---
+
 # v6.8.49
 
 ### Fix orphaned ext peer + don't destroy live popups on Open click

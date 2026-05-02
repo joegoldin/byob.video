@@ -116,25 +116,6 @@ export function create(el, callbacks, opts) {
   // room_live.ex). Label "Open" vs "Focus" derives from the room's
   // ready_count payload so it survives YT's COOP-broken
   // `_byobPlayerWindow.closed` lie.
-  // sessionStorage marker keyed per room so multiple rooms in different
-  // tabs don't bleed into each other. sessionStorage survives refresh
-  // (per-tab), so a popup the user opened pre-refresh remains marked.
-  // Closing the byob tab clears it (sessionStorage is tab-scoped); the
-  // popup might still exist as a separate window, but if the user
-  // returns via a fresh tab they'll see "Open" — the worst case is one
-  // wasted click that opens a duplicate popup, which is far less
-  // frustrating than a permanent stuck-on-Focus.
-  const sessionKey = "byob_popup_open:" + (el.dataset.roomId || "");
-  function setPopupSessionFlag() {
-    try { sessionStorage.setItem(sessionKey, "1"); } catch (_) {}
-  }
-  function clearPopupSessionFlag() {
-    try { sessionStorage.removeItem(sessionKey); } catch (_) {}
-  }
-  function hasPopupSessionFlag() {
-    try { return sessionStorage.getItem(sessionKey) === "1"; } catch (_) { return false; }
-  }
-
   function wireOpenBtn() {
     const btn = el.querySelector("#ext-open-btn-inline");
     if (!btn) return;
@@ -142,56 +123,31 @@ export function create(el, callbacks, opts) {
       if (userHasPopup()) {
         window.postMessage({ type: LV_EVT.PW_FOCUS_EXTERNAL }, "*");
       } else {
-        // Use window.location.origin so LAN-access sessions don't end up
-        // with server_url=http://localhost:4000. Username is now
-        // resolved server-side from the owner_user_id encoded in the
-        // signed token (see ExtensionSocket.connect/2), so we don't
-        // need to ship it from here — the dataset value can be stale
-        // after a rename anyway because of phx-update="ignore" on the
-        // player wrapper. Pass it as a best-effort fallback only.
+        // username deliberately omitted — server resolves from the
+        // signed token's owner_user_id.
         window.postMessage({
           type: LV_EVT.PW_OPEN_EXTERNAL,
           url,
           room_id: el.dataset.roomId,
           server_url: window.location.origin,
           token: el.dataset.token,
-          // username deliberately omitted — see resync request above.
         }, "*");
         window._byobPlayerWindow = window.open(
           url, "byob_player",
           "width=1280,height=800,menubar=no,toolbar=no,location=yes,status=no"
         );
-        setPopupSessionFlag();
       }
       setTimeout(refreshLabel, 100);
     });
   }
 
-  // Two-source AND check:
-  //  1. THIS tab session opened the popup (sessionStorage flag) — false
-  //     after a fresh tab open or after the popup close cleared it
-  //  2. Server agrees the user has an open tab — uses the LV-computed
-  //     `i_have_popup` boolean (room_live/pubsub.ex), NOT a client-side
-  //     `needs_open.includes(dataset.username)` check. The dataset
-  //     value is frozen by `phx-update="ignore"` on the player-sizer
-  //     wrapper, so it goes stale after a rename and the membership
-  //     check silently inverts.
-  //
-  // Both must be true. The sessionStorage gate kills the post-refresh
-  // "Focus" flash that used to happen while the resync was in flight.
+  // Server-pushed boolean. Computed in pubsub.ex's handle_ready_count
+  // via `@user_id in users_with_open_tabs`, where open_tabs is keyed
+  // by the owner LV peer's user_id (see room_server.ex). No usernames
+  // anywhere in the comparison path — immune to rename and the
+  // phx-update="ignore" stale-dataset trap.
   function userHasPopup() {
-    if (!hasPopupSessionFlag()) return false;
-    if (!hook) return false;
-    const rc = hook._lastReadyCount;
-    // Server hasn't reported yet — trust the local flag for now. Once
-    // ready_count lands the server's view will take precedence.
-    if (!rc) return true;
-    const serverSaysOpen = rc.i_have_popup === true;
-    // If server says no open tab, sync our flag to match so a future
-    // refresh doesn't briefly resurrect "Focus" before the next
-    // ready_count arrives.
-    if (!serverSaysOpen) clearPopupSessionFlag();
-    return serverSaysOpen;
+    return hook?._lastReadyCount?.i_have_popup === true;
   }
 
   function refreshLabel() {

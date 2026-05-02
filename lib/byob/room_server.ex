@@ -487,10 +487,17 @@ defmodule Byob.RoomServer do
     {:reply, {:ok, snapshot(state)}, state}
   end
 
-  # open_tabs / ready_tabs are maps of %{tab_id => ext_user_id}
-  def handle_call({:mark_tab_opened, tab_id, ext_user_id}, _from, state) when is_binary(tab_id) do
+  # open_tabs / ready_tabs are maps of %{tab_id => owner_user_id} —
+  # owner_user_id is the LV peer's user_id (NOT the "ext:..."-prefixed
+  # ext_user_id). This makes "do I have a popup open?" a direct user_id
+  # lookup against state.users, with no username string-matching and
+  # no dependence on the ext peer's stored username being correctly
+  # propagated. The ext peer's display name still comes from
+  # state.users[ext_user_id].username (kept in sync by the join
+  # handler's propagation), but popup ownership doesn't rely on it.
+  def handle_call({:mark_tab_opened, tab_id, owner_user_id}, _from, state) when is_binary(tab_id) do
     open_tabs = Map.get(state, :open_tabs, %{})
-    state = Map.put(state, :open_tabs, Map.put(open_tabs, tab_id, ext_user_id))
+    state = Map.put(state, :open_tabs, Map.put(open_tabs, tab_id, owner_user_id))
     broadcast_ready_count(state)
     {:reply, :ok, state}
   end
@@ -2141,18 +2148,26 @@ defmodule Byob.RoomServer do
         leaving_username = user.username
         is_ext = Map.get(user, :is_extension, false)
 
-        # If this is an extension user leaving, clear only their ready tabs.
-        # When the SW dies, it can't send video:unready — this is the fallback.
+        # If this is an extension user leaving, clear THEIR ready/open
+        # tabs (popups they had hooked). open_tabs is keyed by owner
+        # LV peer's user_id, so for ext peers we need to extract the
+        # owner from the "ext:..." prefix. SW death is the fallback
+        # path here (when the BG can't push tab_closed itself).
         state =
           if is_ext do
             ready_tabs = Map.get(state, :ready_tabs, %{})
             open_tabs = Map.get(state, :open_tabs, %{})
+            owner_user_id =
+              case user_id do
+                "ext:" <> rest -> rest
+                _ -> user_id
+              end
 
             cleaned_ready =
-              ready_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
+              ready_tabs |> Enum.reject(fn {_, owner} -> owner == owner_user_id end) |> Map.new()
 
             cleaned_open =
-              open_tabs |> Enum.reject(fn {_, owner} -> owner == user_id end) |> Map.new()
+              open_tabs |> Enum.reject(fn {_, owner} -> owner == owner_user_id end) |> Map.new()
 
             state |> Map.put(:ready_tabs, cleaned_ready) |> Map.put(:open_tabs, cleaned_open)
           else
@@ -2247,8 +2262,13 @@ defmodule Byob.RoomServer do
       non_ext_usernames = non_ext |> Enum.map(fn {_, u} -> u.username end) |> Enum.uniq()
       total_users = length(non_ext_usernames)
 
-      %{has_tab: has_tab, ready: ready, needs_open: needs_open, needs_play: needs_play} =
-        count_tab_owners(state, open_tabs, ready_tabs, non_ext_usernames)
+      %{
+        has_tab: has_tab,
+        ready: ready,
+        needs_open: needs_open,
+        needs_play: needs_play,
+        users_with_open_tabs: users_with_open_tabs
+      } = count_tab_owners(state, open_tabs, ready_tabs, non_ext_usernames)
 
       broadcast(
         state,
@@ -2258,18 +2278,23 @@ defmodule Byob.RoomServer do
            has_tab: has_tab,
            total: total_users,
            needs_open: needs_open,
-           needs_play: needs_play
+           needs_play: needs_play,
+           # Authoritative "who has a popup" — list of owner LV peer
+           # user_ids. The LV's handle_ready_count uses this to set
+           # `i_have_popup` via `@user_id in users_with_open_tabs`,
+           # which is immune to the username-staleness traps we hit
+           # before (data-username frozen by phx-update="ignore",
+           # ext peer named "ExtensionUser" due to BG-first race, etc.)
+           users_with_open_tabs: users_with_open_tabs
          }}
       )
     end
   end
 
-  # Count unique usernames that have at least one open tab / ready tab,
-  # and compute which non-ext usernames still need to open a player window
-  # or hit play. open_tabs / ready_tabs are keyed by tab_id with the
-  # ext_user_id as value; a single user can have multiple tabs and
-  # multiple ext_user_ids can share a username. Filters out owners that
-  # aren't currently connected so stale entries don't inflate counts.
+  # open_tabs / ready_tabs values are owner LV peer user_ids (NOT the
+  # ext_user_id "ext:..." prefix). Resolve owner_id → state.users
+  # [owner_id].username gives the current LV peer name, which is
+  # always up to date via rename_user.
   defp count_tab_owners(state, open_tabs, ready_tabs, non_ext_usernames) do
     connected_ids =
       state.users
@@ -2285,9 +2310,10 @@ defmodule Byob.RoomServer do
       end
     end
 
+    open_owner_ids = open_tabs |> Map.values() |> Enum.uniq()
+
     open_users =
-      open_tabs
-      |> Map.values()
+      open_owner_ids
       |> Enum.map(resolve)
       |> Enum.reject(&is_nil/1)
       |> Enum.uniq()
@@ -2313,7 +2339,13 @@ defmodule Byob.RoomServer do
       |> Enum.filter(&MapSet.member?(open_set, &1))
       |> Enum.reject(&MapSet.member?(ready_set, &1))
 
-    %{has_tab: has_tab, ready: ready, needs_open: needs_open, needs_play: needs_play}
+    %{
+      has_tab: has_tab,
+      ready: ready,
+      needs_open: needs_open,
+      needs_play: needs_play,
+      users_with_open_tabs: open_owner_ids
+    }
   end
 
   @max_history 99
