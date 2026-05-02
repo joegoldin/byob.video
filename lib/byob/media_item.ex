@@ -135,10 +135,25 @@ defmodule Byob.MediaItem do
     cond do
       youtube_host?(host) -> {:youtube, extract_youtube_id(host, uri)}
       vimeo_host?(host) -> {:vimeo, extract_vimeo_id(host, uri)}
+      twitch_host?(host) -> {:twitch, extract_twitch_id(host, uri)}
       direct_video_url?(uri) -> {:direct_url, nil}
       true -> {:extension_required, nil}
     end
   end
+
+  # Twitch source_id: the bare identifier (channel name OR video id).
+  # Type (channel vs video) is recovered at render time by reading
+  # `is_live` (live==channel, !live==video). Live detection lives in
+  # `live?/3` above so the two stay in lockstep.
+  defp extract_twitch_id(_host, %URI{path: "/videos/" <> rest}) do
+    rest |> String.split("/") |> hd()
+  end
+
+  defp extract_twitch_id(_host, %URI{path: "/" <> rest}) when rest != "" do
+    rest |> String.split("/") |> hd()
+  end
+
+  defp extract_twitch_id(_, _), do: nil
 
   defp direct_video_url?(%URI{path: path}) when is_binary(path) do
     ext = path |> String.downcase() |> Path.extname()

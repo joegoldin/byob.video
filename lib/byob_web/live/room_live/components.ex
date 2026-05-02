@@ -135,6 +135,16 @@ defmodule ByobWeb.RoomLive.Components do
               </div>
               <div class="flex items-center gap-2 text-xs text-base-content/50">
                 <svg
+                  class="w-4 h-4 flex-shrink-0 text-[#9146FF]"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                >
+                  <path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"/>
+                </svg>
+                <span>Twitch — native embedded player (live channels &amp; VODs)</span>
+              </div>
+              <div class="flex items-center gap-2 text-xs text-base-content/50">
+                <svg
                   class="w-4 h-4 flex-shrink-0"
                   viewBox="0 0 24 24"
                   fill="none"
@@ -976,7 +986,7 @@ defmodule ByobWeb.RoomLive.Components do
         </div>
       </div>
       <div
-        :if={@url_preview && @url_preview.source_type in [:youtube, :vimeo]}
+        :if={@url_preview && @url_preview.source_type in [:youtube, :vimeo, :twitch]}
         class="flex items-center gap-2 p-3"
       >
         <div :if={@url_preview.thumbnail_url} class="relative flex-shrink-0">

@@ -3,6 +3,7 @@ import { Suppression } from "../sync/suppression";
 import { Reconcile } from "../sync/reconcile";
 import * as YouTubePlayer from "../players/youtube";
 import * as VimeoPlayer from "../players/vimeo";
+import * as TwitchPlayer from "../players/twitch";
 import * as DirectPlayer from "../players/direct";
 import * as ExtensionPlayer from "../players/extension";
 import { handleYTError } from "../players/youtube_error";
@@ -426,6 +427,8 @@ const VideoPlayer = {
       await this._loadYouTube(sourceId, shouldPlay, startSeconds);
     } else if (sourceType === "vimeo") {
       await this._loadVimeo(sourceId, shouldPlay, startSeconds);
+    } else if (sourceType === "twitch") {
+      await this._loadTwitch(sourceId, !!mediaItem?.is_live, shouldPlay, startSeconds);
     } else if (sourceType === "direct_url") {
       this._loadDirectUrl(url);
     } else {
@@ -515,6 +518,35 @@ const VideoPlayer = {
 
     this.player = await VimeoPlayer.create(this.el, callbacks, {
       videoId,
+      shouldPlay,
+      startSeconds,
+    });
+  },
+
+  async _loadTwitch(sourceId, isLive, shouldPlay, startSeconds = 0) {
+    // Destroy existing player if switching source types
+    if (this.player && this.player.destroy) {
+      try { this.player.destroy(); } catch (_) {}
+    }
+    this.player = null;
+    this.isReady = false;
+    this._isLive = isLive;
+
+    const callbacks = {
+      onReady: (player) => {
+        if (player) this.player = player;
+        this.isReady = true;
+        this._signalLoaded();
+        this._applyPendingState();
+        if (!isLive) this._startSeekDetector();
+      },
+      onStateChange: (name) => this._onPlayerStateChange(name),
+      onLoadStart: () => {},
+    };
+
+    this.player = await TwitchPlayer.create(this.el, callbacks, {
+      sourceId,
+      isLive,
       shouldPlay,
       startSeconds,
     });

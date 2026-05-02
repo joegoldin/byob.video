@@ -80,6 +80,21 @@ defmodule Byob.MediaItemTest do
       {:ok, item} = MediaItem.parse_url(url)
       assert item.url == url
     end
+
+    test "twitch.tv/<channel> classifies as live twitch channel" do
+      assert {:ok, %MediaItem{source_type: :twitch, source_id: "person", is_live: true}} =
+               MediaItem.parse_url("https://www.twitch.tv/person")
+    end
+
+    test "twitch.tv/videos/<id> classifies as twitch VOD (not live)" do
+      assert {:ok, %MediaItem{source_type: :twitch, source_id: "1234567890", is_live: false}} =
+               MediaItem.parse_url("https://www.twitch.tv/videos/1234567890")
+    end
+
+    test "twitch.tv channel URL with trailing path is still a live channel" do
+      assert {:ok, %MediaItem{source_type: :twitch, source_id: "person", is_live: true}} =
+               MediaItem.parse_url("https://www.twitch.tv/person/about")
+    end
   end
 
   describe "parse_url/1 self-reference" do

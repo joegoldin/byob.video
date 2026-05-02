@@ -93,6 +93,30 @@ defmodule ByobWeb.RoomLive.UrlPreview do
 
         {:noreply, assign(base, url_preview: preview, url_preview_loading: false)}
 
+      {:ok, %{source_type: :twitch}} ->
+        # OpenGraph scrape on Twitch's HTML works for both VODs (gives the
+        # episode title) and live channel pages (gives the streamer's
+        # display name + current category as title). Same path as
+        # extension_required's metadata fetch.
+        socket = assign(base, url_preview_loading: true, url_preview: nil)
+        me = self()
+
+        Task.start(fn ->
+          case Byob.OEmbed.fetch_opengraph(extracted) do
+            {:ok, meta} ->
+              send(me, {:url_preview_result, Map.put(meta, :source_type, :twitch)})
+
+            _ ->
+              send(
+                me,
+                {:url_preview_result,
+                 %{title: nil, thumbnail_url: nil, source_type: :twitch}}
+              )
+          end
+        end)
+
+        {:noreply, socket}
+
       {:ok, %{source_type: :extension_required}} ->
         socket = assign(base, url_preview_loading: true, url_preview: nil)
         me = self()

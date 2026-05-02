@@ -3,6 +3,48 @@
 
 ---
 
+# v6.8.58
+
+### Twitch native embed player
+
+Twitch URLs now play in a native iframe embed via Twitch's
+official JS SDK (`Twitch.Player`) instead of routing through the
+extension popup. Both live channels (`twitch.tv/<channel>`) and
+VODs (`twitch.tv/videos/<id>`) are supported with full play /
+pause / seek control on VODs.
+
+What changed:
+
+- `lib/byob/media_item.ex`: Twitch URLs classify as
+  `source_type: :twitch` (previously fell through to
+  `:extension_required`). `source_id` is the bare channel name
+  for live URLs and the bare video id for VODs; the existing
+  `is_live` field tells the player which one. Channel-page
+  paths like `/<channel>/about` still resolve to the channel.
+- `assets/js/players/twitch.js` (new): mirror of the
+  YouTube/Vimeo player module shape. Loads
+  `https://player.twitch.tv/js/embed/v1.js`, instantiates
+  `Twitch.Player` with `parent: [window.location.hostname]` so
+  the iframe works on byob.video, localhost, and any LAN dev
+  IP without manual whitelisting. Wires the standard interface
+  (`play` / `pause` / `seek` / `getCurrentTime` /
+  `getDuration` / `getState`) to Twitch's API. `seek` is a no-
+  op on live channels (no shared timeline).
+- `assets/js/hooks/video_player.js`: routes `:twitch` to the
+  new module via a `_loadTwitch` helper next to the Vimeo one.
+- `lib/byob_web/live/room_live/url_preview.ex` and
+  `components.ex`: Twitch URL previews use the same OpenGraph
+  scrape path the extension-required preview already uses, so
+  pasting a Twitch link shows the streamer / video title
+  before adding to the queue.
+
+The extension is no longer required for Twitch sync. Existing
+queue items previously added as `:extension_required` will
+keep going through the popup; only newly-added Twitch URLs get
+the native player.
+
+---
+
 # v6.8.57
 
 ### Server-side gate: only YouTube + Twitch can be marked live
