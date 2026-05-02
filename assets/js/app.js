@@ -82,7 +82,10 @@ const ExtOpenBtn = {
           room_id: this.el.dataset.roomId,
           server_url: window.location.origin,
           token: this.el.dataset.token,
-          username: this.el.dataset.username,
+          // username intentionally omitted — server resolves from
+          // the signed token's owner_user_id, which never goes stale.
+          // The page's data-username can lag after a rename because
+          // of phx-update="ignore" on the player-sizer wrapper.
         }, "*");
         window._byobPlayerWindow = window.open(
           this.el.dataset.url, "byob_player",

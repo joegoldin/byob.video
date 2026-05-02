@@ -40,20 +40,23 @@ defmodule ByobWeb.ExtensionChannel do
     user_id = socket.assigns.user_id
     owner_user_id = socket.assigns[:owner_user_id]
 
-    # Resolve username, in priority order:
-    # 1. The owner LV peer's current username from RoomServer state —
-    #    this is the authoritative source, survives renames, and is
-    #    immune to stale dataset attributes on the byob page (the
-    #    player div lives inside `phx-update="ignore"` so its
-    #    data-username can be obsolete after a rename).
-    # 2. The username string the extension sent in join params (legacy
-    #    extension builds, or the brief window before the LV peer
-    #    has registered).
-    # 3. Hard fallback to "ExtensionUser" — should be unreachable now
-    #    that we always know the owner_user_id from the signed token.
+    # Resolve username STRICTLY from the owner LV peer's RoomServer
+    # record. The signed token cryptographically pins this ext peer
+    # to a specific human's session — that human's current LV-state
+    # username IS the right name. Don't accept the extension's
+    # `params["username"]` because it's a transcription of the byob
+    # page's `data-username`, which is FROZEN by `phx-update="ignore"`
+    # on the player-sizer wrapper and goes stale the moment the user
+    # renames themselves. v6.8.47's join-handler propagation heals
+    # the rare race where the BG channel's join_room beats the LV
+    # peer's RoomServer.join — the ext peer initially gets the
+    # placeholder name, but as soon as the LV peer registers, the
+    # propagation overwrites the ext peer's username to match.
     server_state = if owner_user_id, do: RoomServer.get_state(pid), else: nil
     owner_username = owner_user_id && get_in(server_state, [Access.key(:users), owner_user_id, Access.key(:username)])
 
+    # Legacy fallback path: only hit when the token is the old
+    # room-only format AND the BG didn't provide a usable name.
     username =
       (owner_username || params["username"] || "ExtensionUser")
       |> String.slice(0, 30)

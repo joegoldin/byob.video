@@ -393,7 +393,10 @@
                 room_id: player.dataset.roomId,
                 server_url: window.location.origin,
                 token: player.dataset.token,
-                username: player.dataset.username,
+                // Deliberately NOT passing data-username — it's frozen
+                // by phx-update="ignore" and goes stale after a
+                // rename. The server resolves the owner's current
+                // name from the signed token's owner_user_id.
               });
             } catch (_) {}
             return;

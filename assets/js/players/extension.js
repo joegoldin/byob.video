@@ -155,7 +155,7 @@ export function create(el, callbacks, opts) {
           room_id: el.dataset.roomId,
           server_url: window.location.origin,
           token: el.dataset.token,
-          username: el.dataset.username,
+          // username deliberately omitted — see resync request above.
         }, "*");
         window._byobPlayerWindow = window.open(
           url, "byob_player",
@@ -170,21 +170,23 @@ export function create(el, callbacks, opts) {
   // Two-source AND check:
   //  1. THIS tab session opened the popup (sessionStorage flag) — false
   //     after a fresh tab open or after the popup close cleared it
-  //  2. Server agrees the user has an open tab (ready_count) — flips
-  //     to false the moment tab_closed lands server-side
+  //  2. Server agrees the user has an open tab — uses the LV-computed
+  //     `i_have_popup` boolean (room_live/pubsub.ex), NOT a client-side
+  //     `needs_open.includes(dataset.username)` check. The dataset
+  //     value is frozen by `phx-update="ignore"` on the player-sizer
+  //     wrapper, so it goes stale after a rename and the membership
+  //     check silently inverts.
   //
   // Both must be true. The sessionStorage gate kills the post-refresh
   // "Focus" flash that used to happen while the resync was in flight.
   function userHasPopup() {
     if (!hasPopupSessionFlag()) return false;
     if (!hook) return false;
-    const username = el.dataset.username;
     const rc = hook._lastReadyCount;
     // Server hasn't reported yet — trust the local flag for now. Once
     // ready_count lands the server's view will take precedence.
-    if (!username || !rc) return true;
-    const needsOpen = Array.isArray(rc.needs_open) ? rc.needs_open : [];
-    const serverSaysOpen = !needsOpen.includes(username);
+    if (!rc) return true;
+    const serverSaysOpen = rc.i_have_popup === true;
     // If server says no open tab, sync our flag to match so a future
     // refresh doesn't briefly resurrect "Focus" before the next
     // ready_count arrives.
@@ -215,7 +217,7 @@ export function create(el, callbacks, opts) {
       room_id: el.dataset.roomId,
       server_url: window.location.origin,
       token: el.dataset.token,
-      username: el.dataset.username,
+      // Deliberately NOT passing data-username — see content.js for why.
     }, "*");
   } catch (_) {}
 

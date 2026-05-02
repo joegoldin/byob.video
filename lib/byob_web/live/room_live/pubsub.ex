@@ -157,7 +157,25 @@ defmodule ByobWeb.RoomLive.PubSub do
   end
 
   def handle_ready_count(data, socket) do
-    {:noreply, push_event(socket, Events.ready_count(), data)}
+    # Per-LV-peer self-status. The placeholder UI used to compute
+    # "do I have a popup?" client-side by checking
+    # `data.needs_open.includes(el.dataset.username)`, but
+    # `data-username` is frozen by `phx-update="ignore"` on the
+    # `#player-sizer` wrapper — so after a rename it lags the LV's
+    # actual @username and the comparison silently inverts (ready_count
+    # carries the NEW name, dataset still has the OLD).
+    #
+    # @username on the LV is always current, so do the membership
+    # check here and push the answer alongside. Client just reads
+    # `rc.i_have_popup` and avoids the stale-dataset trap.
+    username = socket.assigns[:username]
+
+    i_have_popup =
+      is_binary(username) and
+        is_list(Map.get(data, :needs_open)) and
+        not Enum.member?(data.needs_open, username)
+
+    {:noreply, push_event(socket, Events.ready_count(), Map.put(data, :i_have_popup, i_have_popup))}
   end
 
   def handle_extension_player_state(state, socket) do

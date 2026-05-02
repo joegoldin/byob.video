@@ -3,6 +3,48 @@
 
 ---
 
+# v6.8.48
+
+### Stop shipping stale `data-username` to the BG; LV pushes per-peer popup status
+
+The user spotted the right thing — the BG was joining as
+"NeatEagle13" (the auto-generated session name) even after a
+rename to "joe". Root cause: every postMessage to the BG was
+carrying `el.dataset.username`, which is **frozen by
+`phx-update="ignore"`** on the `#player-sizer` wrapper and goes
+stale the moment the user renames themselves. The BG passed
+that stale string to the channel join params, and on the rare
+race where `owner_username` lookup hadn't found the LV peer yet,
+the server fell back to params and the ext peer got named
+"NeatEagle13".
+
+The placeholder UI had the same problem from the other
+direction: `userHasPopup` compared `data-username` (stale) against
+the server's `needs_open` (fresh), so the membership check
+silently inverted after a rename and the button stuck on "Focus".
+
+Two-front fix:
+
+1. **All page → BG postMessages drop the username field**. Server
+   resolves it strictly from the signed token's `owner_user_id`,
+   which is cryptographically pinned to the LV session. Updated:
+   `assets/js/players/extension.js`, `assets/js/app.js`'s
+   `ExtOpenBtn`, `assets/js/players/youtube_error.js`,
+   `extension/content.js`'s init resync.
+
+2. **Placeholder reads `i_have_popup` from a server-pushed
+   boolean**. `room_live/pubsub.ex`'s `handle_ready_count` now
+   computes `not Enum.member?(needs_open, @username)` server-side
+   (where `@username` is always current) and pushes it alongside
+   the existing payload. The placeholder reads `rc.i_have_popup`
+   directly, no string comparison needed.
+
+The activity log should now show one `joe joined` entry on byob
+load (LV) and no `NeatEagle13` ghost beside it. Refresh on a
+closed-popup state should flip to "Open" instantly.
+
+---
+
 # v6.8.47
 
 ### Heal the BG-joined-as-"ExtensionUser" race

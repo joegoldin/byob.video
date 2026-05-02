@@ -182,7 +182,7 @@ function _userHasOwnPopup(ctx) {
 // sync wouldn't auto-engage.
 function _openInExternalWindow(ctx, url) {
   const ds = ctx.el.dataset;
-  if (ds.roomId && ds.serverUrl && ds.token && ds.username) {
+  if (ds.roomId && ds.serverUrl && ds.token) {
     window.postMessage({
       type: LV_EVT.PW_OPEN_EXTERNAL,
       url,
@@ -191,7 +191,8 @@ function _openInExternalWindow(ctx, url) {
       // sessions don't end up with server_url=http://localhost:4000.
       server_url: window.location.origin,
       token: ds.token,
-      username: ds.username,
+      // username intentionally omitted — server resolves from
+      // the signed token's owner_user_id, which never goes stale.
     }, "*");
   }
   window._byobPlayerWindow = window.open(
