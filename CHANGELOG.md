@@ -3,6 +3,34 @@
 
 ---
 
+# v6.8.38
+
+### Activity-log dedup + rename propagates to extension peer
+
+Two follow-ups unlocked by v6.8.37's deterministic
+`"ext:<owner_user_id>"` linkage:
+
+**Activity-log dedup on leave.** `do_finalize_leave/2` was
+unconditionally logging `:left` per peer, so a human with a
+browser tab + extension peer would produce TWO "X left" entries
+when one of them disconnected. Now gated on the same
+"no other connection with this username remains" check that
+already gated the room-presence toast — so the entry only fires
+when the human truly leaves the room (last connection gone). The
+join-side log was already deduped via `was_present`.
+
+**Rename propagates to extension peer.**
+`handle_call({:rename_user, …})` now also renames the linked
+`"ext:" <> user_id` peer if present. The connection between the
+LV peer and the extension peer is the deterministic id mapping
+established by the v6.8.37 token change — `state.users[ext_id]`
+gets the same new username, and the `:users_updated` broadcast
+covers both rows in one shot. No more "joe (you)" in the user
+list while "OldRandomName joined the room" still floats around
+the activity log.
+
+---
+
 # v6.8.37
 
 ### Extension identity tied to byob session — proper fix for wrong-user

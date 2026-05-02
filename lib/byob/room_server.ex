@@ -1104,6 +1104,22 @@ defmodule Byob.RoomServer do
   def handle_call({:rename_user, user_id, new_username}, _from, state) do
     old_name = get_in(state, [Access.key(:users), user_id, Access.key(:username)])
     state = put_in(state.users[user_id].username, new_username)
+
+    # Propagate the rename to any linked extension peers — a user_id
+    # of the form "ext:<owner_user_id>" was created by the extension
+    # connecting on behalf of this human's session (see
+    # ByobWeb.ExtensionSocket.connect/2). Renaming the LV peer should
+    # rename their extension peer too so both rows in the user list
+    # / connected clients display the new name.
+    ext_user_id = "ext:" <> user_id
+
+    state =
+      if Map.has_key?(state.users, ext_user_id) do
+        put_in(state.users[ext_user_id].username, new_username)
+      else
+        state
+      end
+
     state = log_activity(state, :renamed, user_id, "#{old_name} → #{new_username}")
     broadcast(state, {:users_updated, state.users})
     {:reply, :ok, state}
@@ -2034,8 +2050,6 @@ defmodule Byob.RoomServer do
         leaving_username = user.username
         is_ext = Map.get(user, :is_extension, false)
 
-        state = log_activity(state, :left, user_id)
-
         # If this is an extension user leaving, clear only their ready tabs.
         # When the SW dies, it can't send video:unready — this is the fallback.
         state =
@@ -2099,15 +2113,26 @@ defmodule Byob.RoomServer do
             state
           end
 
-        # Toast "username left" only if no other connection with the
-        # same username is still present (extension reconnect with a
-        # new user_id during the grace window suppresses this).
-        if leaving_username && not username_connected?(state, leaving_username) do
-          broadcast(
-            state,
-            {:room_presence, %{event: Events.presence_left(), username: leaving_username}}
-          )
-        end
+        # Toast + activity log "X left" only if no OTHER connection
+        # with the same username is still present (the human's other
+        # tab/extension session, or a reconnect with a new user_id
+        # during the grace window). Same dedup as the join-side
+        # `was_present` gate so the same human's browser tab and
+        # extension peer don't produce two "joined" / two "left"
+        # entries when they really represent one human's session.
+        state =
+          if leaving_username && not username_connected?(state, leaving_username) do
+            state = log_activity(state, :left, user_id)
+
+            broadcast(
+              state,
+              {:room_presence, %{event: Events.presence_left(), username: leaving_username}}
+            )
+
+            state
+          else
+            state
+          end
 
         state
     end
