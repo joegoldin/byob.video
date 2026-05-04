@@ -271,7 +271,12 @@ defmodule Byob.RoomServer do
   @impl true
   def init(opts) do
     room_id = Keyword.fetch!(opts, :room_id)
-    empty_timeout = Keyword.get(opts, :empty_timeout, :timer.minutes(5))
+    # Long timeout: keep the room process alive for 8 hours after the
+    # last user disconnects. Discord-bot-created rooms invite friends
+    # asynchronously — a 5-minute window meant the room would die
+    # before the second person clicked the link, dropping the queue
+    # state and the api_key.
+    empty_timeout = Keyword.get(opts, :empty_timeout, :timer.hours(8))
 
     loaded =
       try do

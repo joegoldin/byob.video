@@ -4,16 +4,7 @@ defmodule Byob.RoomManager do
   @alphabet "0123456789abcdefghijklmnopqrstuvwxyz"
 
   def create_room do
-    count =
-      try do
-        Byob.Persistence.room_count()
-      rescue
-        _ -> 0
-      catch
-        :exit, _ -> 0
-      end
-
-    if count >= Byob.Persistence.max_rooms() do
+    if active_room_count() >= Byob.Persistence.max_rooms() do
       {:error, :max_capacity}
     else
       room_id = Nanoid.generate(8, @alphabet)
@@ -21,6 +12,23 @@ defmodule Byob.RoomManager do
       api_key = RoomServer.get_api_key(pid)
       {:ok, room_id, api_key}
     end
+  end
+
+  @doc """
+  Number of LIVE rooms — registered GenServer processes. The capacity
+  limit gates concurrent server resources (each room is one process
+  with its own state, timers, PubSub subscription); idle rooms that
+  ended their empty-timeout exit cleanly and stop counting against it
+  even though their last-state snapshot lingers in SQLite for the
+  history feature.
+  """
+  def active_room_count do
+    DynamicSupervisor.count_children(Byob.RoomSupervisor)
+    |> Map.get(:active, 0)
+  rescue
+    _ -> 0
+  catch
+    :exit, _ -> 0
   end
 
   def ensure_room(room_id) do

@@ -41,6 +41,15 @@ defmodule Byob.Persistence do
     GenServer.cast(__MODULE__, {:delete_room, room_id})
   end
 
+  @doc """
+  Drop persisted rooms that haven't been touched in `max_age_seconds`.
+  Prevents SQLite growth from rooms that were created once, sat empty,
+  and never came back. Default 30 days.
+  """
+  def prune_stale_rooms(max_age_seconds \\ 30 * 24 * 3600) do
+    GenServer.call(__MODULE__, {:prune_stale_rooms, max_age_seconds})
+  end
+
   # Client API — video pool
 
   @doc """
@@ -143,7 +152,42 @@ defmodule Byob.Persistence do
       "CREATE INDEX IF NOT EXISTS idx_pool_external ON video_pool(external_id)"
     )
 
+    # Drop rooms that haven't been touched in 30 days and schedule a
+    # daily re-prune. Without this the rooms table grows monotonically
+    # — every room that ever existed gets persisted on its empty-
+    # timeout exit and lingers, which (pre-v6.8.67) hit the
+    # @max_rooms gate even though those rooms had no live processes.
+    send(self(), :prune_stale_rooms)
+    schedule_prune()
+
     {:ok, %{db: db}}
+  end
+
+  @prune_interval_ms 24 * 60 * 60 * 1000
+
+  defp schedule_prune do
+    Process.send_after(self(), :prune_stale_rooms, @prune_interval_ms)
+  end
+
+  @impl true
+  def handle_info(:prune_stale_rooms, %{db: db} = s) do
+    cutoff = System.system_time(:second) - 30 * 24 * 3600
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(db, "DELETE FROM rooms WHERE updated_at < ?1")
+
+    :ok = Exqlite.Sqlite3.bind(stmt, [cutoff])
+    Exqlite.Sqlite3.step(db, stmt)
+    deleted = Exqlite.Sqlite3.changes(db)
+    Exqlite.Sqlite3.release(db, stmt)
+
+    if deleted > 0 do
+      require Logger
+      Logger.info("[byob] pruned #{deleted} stale rooms from sqlite")
+    end
+
+    schedule_prune()
+    {:noreply, s}
   end
 
   @impl true
@@ -248,6 +292,19 @@ defmodule Byob.Persistence do
     rooms = collect_rows(db, stmt, [])
     Exqlite.Sqlite3.release(db, stmt)
     {:reply, rooms, s}
+  end
+
+  def handle_call({:prune_stale_rooms, max_age_seconds}, _from, %{db: db} = s) do
+    cutoff = System.system_time(:second) - max_age_seconds
+
+    {:ok, stmt} =
+      Exqlite.Sqlite3.prepare(db, "DELETE FROM rooms WHERE updated_at < ?1")
+
+    :ok = Exqlite.Sqlite3.bind(stmt, [cutoff])
+    Exqlite.Sqlite3.step(db, stmt)
+    deleted = Exqlite.Sqlite3.changes(db)
+    Exqlite.Sqlite3.release(db, stmt)
+    {:reply, deleted, s}
   end
 
   def handle_call(:room_count, _from, %{db: db} = s) do

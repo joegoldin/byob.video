@@ -3,6 +3,40 @@
 
 ---
 
+# v6.8.67
+
+### "Server is at maximum capacity" — count live rooms, not persisted ones
+
+Discord-bot-created rooms started failing with
+`{"error":"Server is at maximum capacity. Please try again later."}`
+even though the actual concurrent live-room count was tiny. Root
+cause: `RoomManager.create_room` checked `Byob.Persistence.room_count()`
+against the `@max_rooms = 100` limit, but `room_count` is `SELECT
+COUNT(*) FROM rooms` — every room that ever existed. Each room
+that hits its empty-timeout exits cleanly, and `terminate/2`
+persists its last state to SQLite so revisits to the same id
+restore the history. `Persistence.delete_room/1` was defined but
+**never called**, so the rooms table grew monotonically.
+
+Three fixes:
+
+1. **`RoomManager.create_room` counts LIVE processes**
+   (`DynamicSupervisor.count_children(Byob.RoomSupervisor)`'s
+   `:active` count), which is what the cap actually wants to
+   protect — process / memory / PubSub-subscription resources.
+   Idle persisted-only rooms in SQLite are cheap and don't count.
+2. **Daily SQLite prune**: rooms not touched in 30 days get
+   `DELETE`d at startup and on a daily timer. Keeps the table
+   bounded so `list_rooms` / debug tools stay responsive.
+3. **Empty-room timeout bumped to 8 hours** (was 5 minutes).
+   Discord-bot-created rooms invite friends asynchronously —
+   a 5-minute window meant the room could die before the
+   second person clicked the link, dropping the queue + api_key.
+   8 hours covers a watch session that ends with a "see you
+   tomorrow" pause.
+
+---
+
 # v6.8.66
 
 ### Per-row Play / Queue on playlist preview hover
