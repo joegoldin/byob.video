@@ -96,11 +96,10 @@ const ExtOpenBtn = {
     });
   },
   _userHasPopup() {
-    const username = this.el.dataset.username;
-    const rc = this._lastReadyCount;
-    if (!username || !rc) return false;
-    const needsOpen = Array.isArray(rc.needs_open) ? rc.needs_open : [];
-    return !needsOpen.includes(username);
+    // Server-pushed boolean computed from `@user_id in
+    // users_with_open_tabs` — immune to the data-username staleness
+    // that `phx-update="ignore"` on #player-sizer creates.
+    return this._lastReadyCount?.i_have_popup === true;
   },
   _updateLabel() {
     const isOpen = this._userHasPopup();

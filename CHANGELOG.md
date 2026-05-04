@@ -3,6 +3,34 @@
 
 ---
 
+# v6.8.60
+
+### YT-embed-blocked fallback + ExtOpenBtn now read i_have_popup
+
+The v6.8.50 popup-tracking refactor moved "do I have a popup?" from
+`needs_open.includes(dataset.username)` (broken by stale dataset
+under `phx-update="ignore"`) to a server-pushed `i_have_popup`
+boolean computed from `@user_id in users_with_open_tabs`. The
+extension placeholder picked it up, but two other UIs that ask the
+same question were missed:
+
+- `assets/js/players/youtube_error.js`'s
+  `_userHasOwnPopup` (the "This video can't be embedded" /
+  age-restricted YouTube fallback).
+- `assets/js/app.js`'s `ExtOpenBtn._userHasPopup` (the standalone
+  "Open Player Window" button hook).
+
+Both still compared `dataset.username` against `needs_open` — so
+on a fresh tab with no popup yet, an empty `needs_open` (e.g.
+because the BG ext peer's `users_with_open_tabs` listed someone
+else) would resolve to `!includes("joe")` = `true` → "Focus" label
+with nothing to focus.
+
+Both now use `rc.i_have_popup === true`. Same semantics as the
+placeholder fix in v6.8.50.
+
+---
+
 # v6.8.59
 
 ### YouTube playlist support

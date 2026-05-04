@@ -162,17 +162,13 @@ function _buildFallbackUI(title, thumb, url, hasExtension) {
 }
 
 // Server-authoritative "does this user already have a popup open?". Reads
-// the latest ready_count payload (`needs_open` is the list of usernames
-// that DON'T have a hooked-video tab open). When the popup tab actually
-// closes, the BG sees the port disconnect, broadcasts video:tab_closed,
-// the server rebroadcasts ready_count without that username — so this
-// flips back to false naturally.
+// the LV-computed `i_have_popup` boolean from the latest ready_count
+// payload (server-side per-LV-peer membership check against
+// `users_with_open_tabs` — see room_live/pubsub.ex's
+// handle_ready_count). Immune to the data-username staleness trap that
+// `phx-update="ignore"` on #player-sizer creates after a rename.
 function _userHasOwnPopup(ctx) {
-  const username = ctx.el?.dataset?.username;
-  const rc = ctx._lastReadyCount;
-  if (!username || !rc) return false;
-  const needsOpen = Array.isArray(rc.needs_open) ? rc.needs_open : [];
-  return !needsOpen.includes(username);
+  return ctx._lastReadyCount?.i_have_popup === true;
 }
 
 // Open the YouTube URL in the byob popup window (same flow as the regular
