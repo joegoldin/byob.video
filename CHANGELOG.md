@@ -3,6 +3,45 @@
 
 ---
 
+# v6.8.62
+
+### chrome.alarms keepalive — stop relying on a setInterval the SW kills
+
+Chrome MV3 idles service workers after ~30 s with no activity. The
+Phoenix.js heartbeat that's supposed to keep the WebSocket warm
+runs on a `setInterval` LIVING INSIDE the SW — it dies the moment
+the SW dies, taking the connection with it. So a long pause (or
+any "user has stopped clicking" window) tears the channel down,
+the room does its 5 s deferred-leave, and the user has to refresh
+to recover.
+
+Fix: `chrome.alarms` persist across SW restarts. Every alarm fire
+wakes the SW, so we use a 24 s periodic alarm to:
+
+1. Hold the SW alive across what would otherwise be the idle
+   window (alarm period < 30 s ⇒ contiguous wakes).
+2. If we wake to find `channel === null` (the socket DID die,
+   either pre-alarm or for any other reason), reconnect from a
+   persisted config in `chrome.storage.session.byob_active_room`.
+
+What changed:
+
+- `extension/manifest.json` + `manifest.firefox.json`: add the
+  `alarms` permission.
+- `extension/background.js`: new keepalive section
+  (`startKeepalive` / `stopKeepalive` / `persistActiveRoom` /
+  `loadActiveRoom`) plus the `chrome.alarms.onAlarm` listener.
+  `connectToRoom`'s `.receive("ok")` now persists the room +
+  starts the alarm; the alarm handler reconnects from the
+  stored config when channel goes null.
+
+Self-healing: even if the SW gets killed mid-pause and the user
+walks away for an hour, the room state recovers automatically the
+moment they next click play (or sooner — the alarm reconnects in
+the background).
+
+---
+
 # v6.8.61
 
 ### "0/2 needs to hit play" stuck after pause + BG SW restart

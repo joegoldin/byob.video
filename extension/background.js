@@ -553,6 +553,81 @@ function stopClockSyncMaintenance() {
   if (clockSyncTimer) { clearInterval(clockSyncTimer); clockSyncTimer = null; }
 }
 
+// ── SW keepalive via chrome.alarms ────────────────────────────────────────
+//
+// Chrome MV3 idles service workers after ~30 s with no activity, killing
+// the WebSocket and any setInterval timers (including Phoenix.js's own
+// heartbeat). Phoenix's heartbeat is supposed to keep the connection
+// warm but its setInterval lives INSIDE the SW — it dies the moment
+// the SW dies. So a long pause (or any no-input window) tears the
+// channel down, the room does its 5 s deferred-leave, and on the
+// user's next interaction we have to renegotiate from scratch.
+//
+// chrome.alarms persist across SW restarts. Every fire wakes the SW
+// briefly. We use that wake to:
+//   (a) hold the SW alive long enough for Phoenix's next heartbeat
+//       to fire (alarm period < 30 s ensures contiguous wakes),
+//   (b) re-establish the channel from a persisted config if the
+//       socket was killed between fires.
+//
+// Stored config in chrome.storage.session under
+// `byob_active_room` is enough to reconnect — token survives 24h,
+// hostname is in the URL.
+const KEEPALIVE_ALARM = "byob-keepalive";
+const KEEPALIVE_PERIOD_MIN = 0.4; // ~24s — under MV3's 30s idle floor
+const ACTIVE_ROOM_STORAGE_KEY = "byob_active_room";
+
+async function persistActiveRoom(cfg) {
+  try {
+    await chrome.storage.session.set({ [ACTIVE_ROOM_STORAGE_KEY]: cfg });
+  } catch (_) {}
+}
+
+async function clearActiveRoom() {
+  try {
+    await chrome.storage.session.remove(ACTIVE_ROOM_STORAGE_KEY);
+  } catch (_) {}
+}
+
+async function loadActiveRoom() {
+  try {
+    const r = await chrome.storage.session.get(ACTIVE_ROOM_STORAGE_KEY);
+    return r[ACTIVE_ROOM_STORAGE_KEY] || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function startKeepalive() {
+  try {
+    chrome.alarms.create(KEEPALIVE_ALARM, {
+      periodInMinutes: KEEPALIVE_PERIOD_MIN,
+    });
+  } catch (_) {}
+}
+
+function stopKeepalive() {
+  try { chrome.alarms.clear(KEEPALIVE_ALARM); } catch (_) {}
+}
+
+if (chrome.alarms && chrome.alarms.onAlarm) {
+  chrome.alarms.onAlarm.addListener(async (alarm) => {
+    if (alarm.name !== KEEPALIVE_ALARM) return;
+    if (channel) return; // socket alive — Phoenix's heartbeat covers us
+
+    const cfg = await loadActiveRoom();
+    if (!cfg || !cfg.room_id || !cfg.server_url || !cfg.token) {
+      // No active room recorded — nothing to reconnect to. Cancel
+      // the alarm so we don't keep waking up for nothing.
+      stopKeepalive();
+      return;
+    }
+
+    console.log(`[byob/bg] keepalive alarm: channel=null, reconnecting room=${cfg.room_id}`);
+    try { connectToRoom(cfg.room_id, cfg.server_url, cfg.token); } catch (_) {}
+  });
+}
+
 function connectToRoom(roomId, serverUrl, token, username) {
   // Don't reconnect if already connected to this room
   if (currentRoomId === roomId && channel) return;
@@ -787,6 +862,12 @@ function connectToRoom(roomId, serverUrl, token, username) {
       // Kick off NTP clock sync and schedule maintenance.
       doClockSync();
       startClockSyncMaintenance();
+      // Persist the room config + start the keepalive alarm. If the
+      // SW gets killed (Chrome MV3 idle), the alarm fires ~24s later,
+      // wakes the SW, and we reconnect from this stored cfg without
+      // user action.
+      persistActiveRoom({ room_id: roomId, server_url: serverUrl, token });
+      startKeepalive();
       // Authoritative tab resync. Sends our current `hookedTabs` set
       // as the full list of open player tabs for this ext_user_id.
       // The server clears any other open_tabs entries owned by us
