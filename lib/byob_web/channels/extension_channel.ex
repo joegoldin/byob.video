@@ -245,15 +245,29 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   # BG pushes this on every (re)join with the authoritative list of
-  # currently-hooked tabs. Recovers from the Chrome MV3 SW-suspended
-  # window-close case where `tab_closed` couldn't be sent because the
-  # channel was null at the time of `chrome.tabs.onRemoved`.
+  # currently-hooked tabs (and currently-ready tabs). Recovers from
+  # the Chrome MV3 SW-suspended window-close case where `tab_closed`
+  # couldn't be sent because the channel was null at the time of
+  # `chrome.tabs.onRemoved`. The `ready_tab_ids` subset lets us
+  # re-assert `ready_tabs` symmetrically with `open_tabs` — without
+  # it, the resync rebuilt `open_tabs` cleanly but `ready_tabs`
+  # entries could fall off and the room's ready count went stuck
+  # at "needs to hit play" until the user refreshed.
   def handle_in(@in_video_tabs_resync, payload, socket) do
     raw = payload["tab_ids"] || []
+    raw_ready = payload["ready_tab_ids"] || []
     user_id = socket.assigns.user_id
     owner = socket.assigns[:owner_user_id] || user_id
     tab_ids = Enum.map(raw, fn id -> "#{user_id}:#{id}" end)
-    RoomServer.resync_open_tabs(socket.assigns.room_pid, owner, tab_ids)
+    ready_tab_ids = Enum.map(raw_ready, fn id -> "#{user_id}:#{id}" end)
+
+    RoomServer.resync_open_tabs(
+      socket.assigns.room_pid,
+      owner,
+      tab_ids,
+      ready_tab_ids
+    )
+
     {:noreply, socket}
   end
 

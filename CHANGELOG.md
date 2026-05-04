@@ -3,6 +3,48 @@
 
 ---
 
+# v6.8.63
+
+### Resync re-asserts ready_tabs symmetrically with open_tabs
+
+User-reported: pause on a Crunchyroll popup → ready count drops
+from 1/2 to "0/2 needs to hit play" → hitting play doesn't
+recover. Sync itself worked fine the whole time, only the status
+display was broken; refreshing the byob room fixed it.
+
+Trace: pause triggers an internal resync push from the BG to the
+server (any of: token rotation on LV reconnect, BG channel rejoin,
+explicit `BYOB_REQUEST_TAB_RESYNC` from the placeholder mounting
+on a re-render). The server's `:resync_open_tabs` handler rebuilt
+`open_tabs` cleanly from the payload but treated `ready_tabs`
+asymmetrically — it only KEPT entries whose tab was still in the
+new open set, never RE-ASSERTED them. So a transient state where
+either (a) the keying didn't match between rebuilt-open and
+existing-ready, or (b) cleanup wiped the ready entry without a
+corresponding re-add, left `ready_users == []` while `open_users`
+still had the user → `needs_play = ["joe"]`. Stuck until the next
+fresh `mark_tab_ready` call, which never came (`VIDEO_READY` is
+gated by `!wasSynced` in content.js — the v6.8.61 fix only
+re-fires it on `BYOB_CHANNEL_READY`, which doesn't fire on a pure
+resync push that didn't tear down the channel).
+
+Fix: BG now tracks a `readyTabs` set alongside `hookedTabs`,
+populated whenever a popup reports `VIDEO_READY` and cleaned in
+lockstep with `hookedTabs` on tab close. The `tabs_resync`
+payload carries both lists. The server handler treats `ready_tab_ids`
+as authoritative when present — clears all `ready_tabs` entries
+owned by this user and re-asserts just the ones in the payload.
+Symmetric to how `open_tabs` is rebuilt. Falls back to the old
+"keep if still open" semantics when the field is absent (pre-
+v6.8.63 client talking to post-v6.8.63 server).
+
+Also extends the existing pre-v6.8.61 stale-ext-keyed-entry
+cleanup to use `"ext:" <> owner_user_id` as a secondary match,
+so the resync flushes pre-refactor entries instead of leaving
+them lingering forever.
+
+---
+
 # v6.8.62
 
 ### chrome.alarms keepalive — stop relying on a setInterval the SW kills

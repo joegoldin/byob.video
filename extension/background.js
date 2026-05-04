@@ -191,6 +191,14 @@ let clockSyncTimer = null;
 // ready-count tooltip / presence toast logic.
 const hookedTabs = new Set();
 
+// Tabs that have reported video:ready (synced to the room). Subset of
+// hookedTabs. Sent in the tabs_resync payload so the server can re-
+// assert ready_tabs symmetrically with open_tabs after a channel
+// rejoin — without this, the resync re-creates open_tabs from scratch
+// but ready_tabs entries can fall off and the room's ready count
+// goes stuck at "needs to hit play" until the user refreshes.
+const readyTabs = new Set();
+
 // chrome.tabs.onRemoved fires reliably from the browser regardless of SW
 // suspension state — port.onDisconnect can be missed if the SW was idle
 // when the tab closed. This is the belt-and-braces signal that flushes
@@ -207,6 +215,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   }
   if (wasHooked) {
     hookedTabs.delete(tabId);
+    readyTabs.delete(tabId);
     if (channel) {
       try {
         channel.push(EVT.CHAN_VIDEO_TAB_CLOSED, { tab_id: String(tabId) });
@@ -252,6 +261,7 @@ if (chrome.windows && chrome.windows.onRemoved && chrome.windows.onRemoved.addLi
               if (ports[i].tabId === tabId) ports.splice(i, 1);
             }
             hookedTabs.delete(tabId);
+            readyTabs.delete(tabId);
             if (channel) {
               try {
                 channel.push(EVT.CHAN_VIDEO_TAB_CLOSED, { tab_id: String(tabId) });
@@ -298,7 +308,10 @@ chrome.runtime.onConnect.addListener((port) => {
         channel.push(EVT.CHAN_VIDEO_UNREADY, { tab_id: String(tabId) });
         console.log(`[byob/bg] port.onDisconnect → pushed tab_closed + unready for tab ${tabId}`);
       }
-      if (!tabStillConnected) hookedTabs.delete(tabId);
+      if (!tabStillConnected) {
+        hookedTabs.delete(tabId);
+        readyTabs.delete(tabId);
+      }
     }
     if (ports.length === 0 && channel) {
       // All external player windows closed — pause so next joiner doesn't autoplay.
@@ -316,6 +329,7 @@ chrome.runtime.onConnect.addListener((port) => {
       socket = null;
       currentRoomId = null;
       hookedTabs.clear();
+      readyTabs.clear();
       // Wait for the all_closed push to ack (or 500 ms timeout),
       // THEN actually leave the channel and disconnect the socket.
       const cleanup = () => {
@@ -458,8 +472,9 @@ function handleContentMessage(msg, port, tabId) {
       break;
 
     case EVT.VIDEO_READY:
-      if (channel && tabId != null) {
-        channel.push(EVT.CHAN_VIDEO_READY, { tab_id: String(tabId) });
+      if (tabId != null) {
+        readyTabs.add(tabId);
+        if (channel) channel.push(EVT.CHAN_VIDEO_READY, { tab_id: String(tabId) });
       }
       break;
 
@@ -879,7 +894,11 @@ function connectToRoom(roomId, serverUrl, token, username) {
       // survive across the user's next byob page refresh and the
       // "Open / Focus Player Window" button would stick on "Focus".
       const resyncIds = [...hookedTabs].map(String);
-      channel.push(EVT.CHAN_VIDEO_TABS_RESYNC, { tab_ids: resyncIds });
+      const readyIds = [...readyTabs].filter((t) => hookedTabs.has(t)).map(String);
+      channel.push(EVT.CHAN_VIDEO_TABS_RESYNC, {
+        tab_ids: resyncIds,
+        ready_tab_ids: readyIds,
+      });
     })
     .receive("error", (resp) => {
       console.error("[byob] Failed to join room", roomId, resp);
@@ -933,6 +952,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             persistManagedTabs();
             if (hookedTabs.has(tabId)) {
               hookedTabs.delete(tabId);
+              readyTabs.delete(tabId);
               if (channel) {
                 try {
                   channel.push(EVT.CHAN_VIDEO_TAB_CLOSED, { tab_id: String(tabId) });
@@ -954,6 +974,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           currentToken = null;
           currentServerUrl = null;
           hookedTabs.clear();
+          readyTabs.clear();
           lastReadyCount = null;
           initialRoomState = null;
         }
@@ -1069,6 +1090,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         } catch (_) {
           // Tab is gone — drop the phantom and notify server.
           hookedTabs.delete(tabId);
+          readyTabs.delete(tabId);
           if (channel) {
             try {
               channel.push(EVT.CHAN_VIDEO_TAB_CLOSED, { tab_id: String(tabId) });
@@ -1099,6 +1121,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           await chrome.tabs.get(tabId);
         } catch (_) {
           hookedTabs.delete(tabId);
+          readyTabs.delete(tabId);
         }
       }
       const room_id = msg.room_id;
@@ -1130,9 +1153,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
       if (channel) {
         const resyncIds = [...hookedTabs].map(String);
-        console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC pushing tabs_resync=[${resyncIds.join(",")}]`);
+        const readyIds = [...readyTabs].filter((t) => hookedTabs.has(t)).map(String);
+        console.log(`[byob/bg] BYOB_REQUEST_TAB_RESYNC pushing tabs_resync=[${resyncIds.join(",")}] ready=[${readyIds.join(",")}]`);
         try {
-          channel.push(EVT.CHAN_VIDEO_TABS_RESYNC, { tab_ids: resyncIds });
+          channel.push(EVT.CHAN_VIDEO_TABS_RESYNC, {
+            tab_ids: resyncIds,
+            ready_tab_ids: readyIds,
+          });
         } catch (_) {}
         return;
       }

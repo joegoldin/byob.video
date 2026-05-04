@@ -152,8 +152,8 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:clear_tab_opened, tab_id})
   end
 
-  def resync_open_tabs(pid, ext_user_id, tab_ids) do
-    GenServer.call(pid, {:resync_open_tabs, ext_user_id, tab_ids})
+  def resync_open_tabs(pid, owner_user_id, tab_ids, ready_tab_ids \\ nil) do
+    GenServer.call(pid, {:resync_open_tabs, owner_user_id, tab_ids, ready_tab_ids})
   end
 
   def mark_tab_ready(pid, tab_id, ext_user_id) do
@@ -577,38 +577,71 @@ defmodule Byob.RoomServer do
   # Window" would stick. Resync makes the BG's in-memory `hookedTabs`
   # the source of truth on every (re)join, so any closed-while-dead
   # tabs get cleaned up.
-  def handle_call({:resync_open_tabs, ext_user_id, tab_ids}, _from, state)
-      when is_binary(ext_user_id) and is_list(tab_ids) do
+  def handle_call({:resync_open_tabs, owner_user_id, tab_ids, ready_tab_ids}, _from, state)
+      when is_binary(owner_user_id) and is_list(tab_ids) do
     open_tabs = Map.get(state, :open_tabs, %{})
     ready_tabs = Map.get(state, :ready_tabs, %{})
 
+    # `owner_user_id` matches post-v6.8.50 entries; the `"ext:" <>`
+    # form catches stragglers that were stored before that refactor
+    # so a stale ext-keyed entry doesn't survive a resync indefinitely.
+    ext_form = "ext:" <> owner_user_id
+
     cleared_open =
-      open_tabs |> Enum.reject(fn {_, owner} -> owner == ext_user_id end) |> Map.new()
+      open_tabs
+      |> Enum.reject(fn {_, owner} -> owner == owner_user_id or owner == ext_form end)
+      |> Map.new()
 
     new_open =
       Enum.reduce(tab_ids, cleared_open, fn tab_id, acc ->
-        if is_binary(tab_id), do: Map.put(acc, tab_id, ext_user_id), else: acc
+        if is_binary(tab_id), do: Map.put(acc, tab_id, owner_user_id), else: acc
       end)
 
-    new_open_keys = MapSet.new(Map.keys(new_open))
-
-    cleaned_ready =
+    # ready_tabs handling: if the BG sent ready_tab_ids (post-v6.8.63),
+    # treat its set as authoritative — clear all our entries and
+    # re-assert just the ones in the payload. This is what makes the
+    # "ready count drops to 0/2 after a resync" bug go away: the BG
+    # knows which tabs are still synced, so we trust it.
+    #
+    # If the BG didn't send ready_tab_ids (pre-v6.8.63 client talking
+    # to post-v6.8.63 server, or any other absent-payload case), fall
+    # back to the old behaviour: keep entries whose tab is still in
+    # the new open set.
+    cleared_ready =
       ready_tabs
-      |> Enum.reject(fn {tab_id, owner} ->
-        owner == ext_user_id and not MapSet.member?(new_open_keys, tab_id)
-      end)
+      |> Enum.reject(fn {_, owner} -> owner == owner_user_id or owner == ext_form end)
       |> Map.new()
+
+    new_ready =
+      cond do
+        is_list(ready_tab_ids) ->
+          Enum.reduce(ready_tab_ids, cleared_ready, fn tab_id, acc ->
+            if is_binary(tab_id), do: Map.put(acc, tab_id, owner_user_id), else: acc
+          end)
+
+        true ->
+          # Legacy fallback — port the old "keep if open tab still
+          # present" semantics. open_tab keys are the survivors.
+          new_open_keys = MapSet.new(Map.keys(new_open))
+
+          ready_tabs
+          |> Enum.reject(fn {tab_id, owner} ->
+            (owner == owner_user_id or owner == ext_form) and
+              not MapSet.member?(new_open_keys, tab_id)
+          end)
+          |> Map.new()
+      end
 
     state =
       state
       |> Map.put(:open_tabs, new_open)
-      |> Map.put(:ready_tabs, cleaned_ready)
+      |> Map.put(:ready_tabs, new_ready)
 
     broadcast_ready_count(state)
     {:reply, :ok, state}
   end
 
-  def handle_call({:resync_open_tabs, _, _}, _from, state), do: {:reply, :ok, state}
+  def handle_call({:resync_open_tabs, _, _, _}, _from, state), do: {:reply, :ok, state}
 
   def handle_call({:mark_tab_ready, tab_id, ext_user_id}, _from, state) when is_binary(tab_id) do
     ready_tabs = Map.get(state, :ready_tabs, %{})
