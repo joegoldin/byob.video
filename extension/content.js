@@ -1000,9 +1000,23 @@
       // synced, kick off a sync request now so we don't sit on
       // "connecting" forever waiting for a COMMAND_INITIAL_STATE
       // that's never coming.
-      if (hookedVideo && !synced && port) {
-        _log("BYOB_CHANNEL_READY while hooked & unsynced — re-requesting sync");
-        try { port.postMessage({ type: EVT.VIDEO_REQUEST_SYNC }); } catch (_) {}
+      //
+      // If we're already synced (the local `synced` flag survives
+      // BG SW restarts since content.js itself isn't reloaded), the
+      // server's ready_tabs is still empty for us — VIDEO_READY only
+      // fires from the !wasSynced branch in COMMAND_SYNCED. Re-fire
+      // it so the room's ready count picks us back up. mark_tab_ready
+      // is idempotent so extras are harmless. Without this the user
+      // shows as "needs to hit play" forever after a SW restart, even
+      // though they're actually playing in the popup.
+      if (hookedVideo && port) {
+        if (!synced) {
+          _log("BYOB_CHANNEL_READY while hooked & unsynced — re-requesting sync");
+          try { port.postMessage({ type: EVT.VIDEO_REQUEST_SYNC }); } catch (_) {}
+        } else {
+          _log("BYOB_CHANNEL_READY while hooked & already synced — re-marking ready");
+          try { port.postMessage({ type: EVT.VIDEO_READY }); } catch (_) {}
+        }
       }
       return;
     }

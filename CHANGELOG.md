@@ -3,6 +3,50 @@
 
 ---
 
+# v6.8.61
+
+### "0/2 needs to hit play" stuck after pause + BG SW restart
+
+Symptom: ready count starts at 1/2, user pauses the popup, the
+ready count drops to 0/2 and reads "joe needs to hit play".
+Hitting play in the popup doesn't recover; only refreshing the
+byob room does.
+
+What was happening: a pause that lasted long enough for Chrome
+MV3 to idle the BG service worker would tear the socket down,
+fire `RoomServer.leave/2`, and the deferred-leave timer fired
+5 s later marking the ext peer disconnected and clearing
+`open_tabs` / `ready_tabs`. When the user clicked play, the BG
+woke back up, the channel rejoined, and the v6.8.42 on-rejoin
+`tabs_resync` re-asserted `open_tabs` — but `ready_tabs` was
+left empty because:
+
+1. `VIDEO_READY` only fires on the `!wasSynced` branch in
+   `COMMAND_SYNCED`. The popup's `synced` flag survives BG
+   restarts (content.js itself isn't reloaded), so on the next
+   `COMMAND_SYNCED` `wasSynced` is true and the ready signal
+   never re-fires.
+2. `do_finalize_leave`'s `ready_tabs` cleanup compared values
+   to `owner_user_id`, but post-v6.8.50 they're still
+   `ext_user_id`s — the `Enum.reject` never matched, so any
+   stale entries that DID survive previous churn lingered too.
+
+Fix:
+
+- `extension/content.js`: on `BYOB_CHANNEL_READY`, if hooked AND
+  already synced, re-fire `VIDEO_READY` (idempotent server-side).
+  Re-marks the tab as ready so the room's ready count picks the
+  user back up after a BG restart without forcing a page refresh.
+- `lib/byob_web/channels/extension_channel.ex`: `mark_tab_ready`
+  now passes `owner_user_id` (the LV peer's id from the signed
+  token) instead of `ext_user_id`. Mirrors v6.8.50's `open_tabs`
+  refactor — both maps are keyed by tab_id with the OWNER as
+  value, so `count_tab_owners` can resolve through a single
+  lookup table and `do_finalize_leave`'s cleanup actually
+  matches.
+
+---
+
 # v6.8.60
 
 ### YT-embed-blocked fallback + ExtOpenBtn now read i_have_popup

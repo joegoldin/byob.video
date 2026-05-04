@@ -258,9 +258,14 @@ defmodule ByobWeb.ExtensionChannel do
   end
 
   def handle_in(@in_video_ready, payload, socket) do
-    # Prefix tab_id with ext user_id to make unique across browser instances
+    # Prefix tab_id with ext user_id to make unique across browser instances.
+    # ready_tabs values are owner LV peer user_ids (mirroring open_tabs),
+    # so do_finalize_leave / count_tab_owners can compare ownership
+    # consistently. Falls back to ext_user_id when the token is the
+    # legacy single-payload form without owner_user_id.
     tab_id = "#{socket.assigns.user_id}:#{payload["tab_id"]}"
-    RoomServer.mark_tab_ready(socket.assigns.room_pid, tab_id, socket.assigns.user_id)
+    owner = socket.assigns[:owner_user_id] || socket.assigns.user_id
+    RoomServer.mark_tab_ready(socket.assigns.room_pid, tab_id, owner)
     {:noreply, socket}
   end
 
