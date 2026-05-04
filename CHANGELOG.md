@@ -3,6 +3,34 @@
 
 ---
 
+# v6.8.65
+
+### Stats for nerds: pick one client per user, prefer extension
+
+When the same human had both a browser drift report (LV peer) and
+an extension drift report (popup) active at the same time, every
+~500 ms one or the other was the freshest, so the displayed
+"Drift" value for that user flip-flopped between two unrelated
+values. Same for the room-wide aggregates (`Room max |drift|`,
+`|Drift| avg / min / max`) — counting the same human twice made
+those bounce too.
+
+Fix: at the panel render layer, group all active client samples by
+username and pick one row per human. Extension-keyed entries
+(`client_id` starts with `"ext:"`) win when present — the popup
+is the actual player for extension-required content, and even on
+direct-embed sites it's the better source if both are active.
+Falls back to the freshest non-ext entry when no ext peer is
+reporting. Applied to both the `Connected clients` per-user rows
+and the `Room jitter (consensus)` / `Room max |drift|` /
+`|Drift| avg / min / max` aggregates.
+
+The per-client_id `Peer drift (60s)` chart still draws a separate
+line per client when both are active — that's informative, not
+flip-flop noise.
+
+---
+
 # v6.8.64
 
 ### Playlist preview polish

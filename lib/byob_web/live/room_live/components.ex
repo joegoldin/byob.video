@@ -428,11 +428,28 @@ defmodule ByobWeb.RoomLive.Components do
             # peer |drift|. Two signals — jitter captures noise, drift
             # captures sustained spread (a peer steadily 600 ms behind has
             # tiny jitter but a real offset to tolerate).
+            #
+            # Dedup by username — when the same human has both a browser
+            # report (LV peer) AND an extension report (popup), counting
+            # both makes "Room max |drift|" flip-flop between two
+            # unrelated values. Prefer the ext entry (the popup is the
+            # actual player for extension-required content) and treat the
+            # one-row-per-human view as the room.
             now_s = System.system_time(:second)
 
             active_for_consensus =
               (@sync_stats[:clients] || %{})
               |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
+              |> Enum.group_by(fn {_id, c} -> Map.get(c, :username) end)
+              |> Enum.flat_map(fn
+                {nil, entries} ->
+                  entries
+
+                {_username, entries} ->
+                  ext = Enum.filter(entries, fn {id, _} -> String.starts_with?(id, "ext:") end)
+                  pool = if ext == [], do: entries, else: ext
+                  [Enum.max_by(pool, fn {_, c} -> Map.get(c, :updated_at, 0) end)]
+              end)
 
             {room_jitter, room_max_drift} =
               case active_for_consensus do
@@ -538,9 +555,23 @@ defmodule ByobWeb.RoomLive.Components do
             # show stale numbers.
             now_s = System.system_time(:second)
 
+            # Same dedup-by-username, ext-preferred logic the room
+            # consensus uses above. The |Drift| avg / min / max row
+            # would otherwise count the same human twice when they
+            # have a browser report AND a popup report active.
             active_clients =
               (@sync_stats[:clients] || %{})
               |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
+              |> Enum.group_by(fn {_id, c} -> Map.get(c, :username) end)
+              |> Enum.flat_map(fn
+                {nil, entries} ->
+                  entries
+
+                {_username, entries} ->
+                  ext = Enum.filter(entries, fn {id, _} -> String.starts_with?(id, "ext:") end)
+                  pool = if ext == [], do: entries, else: ext
+                  [Enum.max_by(pool, fn {_, c} -> Map.get(c, :updated_at, 0) end)]
+              end)
               |> Map.new()
 
             # Group recent drift rows by USERNAME so the same human's
@@ -552,13 +583,30 @@ defmodule ByobWeb.RoomLive.Components do
               active_clients
               |> Enum.group_by(fn {_id, c} -> Map.get(c, :username) end)
 
-            # Pick one canonical client per username — the freshest
-            # `updated_at`. The extension tab (actively reporting) wins
-            # over a placeholder browser tab that's gone silent (and
-            # over a stale entry from a prior session of the same human).
+            # Pick one canonical client per username. When the same
+            # human has BOTH a browser-side report and an extension-side
+            # report (e.g. a YouTube embed playing in the byob page
+            # while their popup is also active on a different room
+            # member's screen, or any case where both peers tick), they
+            # alternated freshest every ~500 ms and the displayed drift
+            # bounced between two unrelated values.
+            #
+            # Tie-break order:
+            #   1. Prefer extension-keyed peers (`client_id` starts with
+            #      `"ext:"`) when present — the popup is the actual
+            #      player for extension_required content, and even on
+            #      direct-embed sites it's the better of the two if
+            #      both are active.
+            #   2. Among the chosen group, take the freshest
+            #      `updated_at` so a stale prior session of the same
+            #      kind doesn't outvote a live report.
             best_client_per_username =
               for {username, entries} <- clients_by_username, username != nil, into: %{} do
-                {client_id, info} = Enum.max_by(entries, fn {_, c} -> Map.get(c, :updated_at, 0) end)
+                ext_entries =
+                  Enum.filter(entries, fn {id, _} -> String.starts_with?(id, "ext:") end)
+
+                pool = if ext_entries == [], do: entries, else: ext_entries
+                {client_id, info} = Enum.max_by(pool, fn {_, c} -> Map.get(c, :updated_at, 0) end)
                 {username, {client_id, info}}
               end
 
