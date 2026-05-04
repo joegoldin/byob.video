@@ -8,6 +8,8 @@ defmodule ByobWeb.RoomLive.Components do
 
   use Phoenix.Component
 
+  alias Phoenix.LiveView.JS
+
   use Phoenix.VerifiedRoutes,
     endpoint: ByobWeb.Endpoint,
     router: ByobWeb.Router,
@@ -986,16 +988,19 @@ defmodule ByobWeb.RoomLive.Components do
         </div>
       </div>
       <%!-- Playlist preview: scrollable item list with checkboxes +
-           Play All / Queue All / Play Selected / Queue Selected. --%>
+           Play All / Queue All / Play Selected / Queue Selected.
+           Whole dropdown is height-bound so a 50-item playlist
+           doesn't push the action buttons off-screen; the inner
+           <ul> takes the overflow. --%>
       <div
         :if={@url_preview && @url_preview.source_type == :playlist}
-        class="flex flex-col"
+        class="flex flex-col max-h-[60vh]"
       >
         <% selected = (@url_preview[:selected] || MapSet.new())
            selected_count = MapSet.size(selected)
            total_count = @url_preview[:total_count] || length(@url_preview.items)
            shown_count = length(@url_preview.items) %>
-        <div class="flex items-center gap-2 p-3 border-b border-base-300/60">
+        <div class="flex items-center gap-2 p-3 border-b border-base-300/60 flex-shrink-0">
           <svg
             class="w-4 h-4 flex-shrink-0 text-red-500"
             viewBox="0 0 24 24"
@@ -1019,10 +1024,10 @@ defmodule ByobWeb.RoomLive.Components do
             </p>
           </div>
         </div>
-        <ul class="overflow-y-auto max-h-[35vh] divide-y divide-base-300/40">
+        <ul class="overflow-y-auto flex-1 min-h-0 divide-y divide-base-300/40">
           <li
             :for={item <- @url_preview.items}
-            class="flex items-center gap-2 px-3 py-1.5 hover:bg-base-300/30"
+            class="flex items-center gap-3 px-3 py-2.5 hover:bg-base-300/30"
           >
             <input
               type="checkbox"
@@ -1035,18 +1040,20 @@ defmodule ByobWeb.RoomLive.Components do
             <img
               :if={item[:thumbnail_url]}
               src={item.thumbnail_url}
-              class="w-12 h-7 object-cover rounded flex-shrink-0"
+              class="w-14 h-8 object-cover rounded flex-shrink-0"
             />
-            <div :if={!item[:thumbnail_url]} class="w-12 h-7 bg-base-300 rounded flex-shrink-0" />
+            <div :if={!item[:thumbnail_url]} class="w-14 h-8 bg-base-300 rounded flex-shrink-0" />
             <span class="text-xs line-clamp-2 flex-1 min-w-0">{item.title || item.video_id}</span>
           </li>
         </ul>
-        <div class="flex flex-wrap gap-1.5 p-3 border-t border-base-300/60 bg-base-300/20">
+        <div class="flex flex-wrap gap-1.5 p-3 border-t border-base-300/60 bg-base-300/20 flex-shrink-0">
           <button
             type="button"
-            phx-click="playlist:add"
-            phx-value-mode="now"
-            phx-value-scope="all"
+            phx-click={
+              JS.push("playlist:add", value: %{mode: "now", scope: "all"})
+              |> JS.set_attribute({"value", ""}, to: "input[name=url]")
+              |> JS.dispatch("input", to: "input[name=url]")
+            }
             onmousedown="event.preventDefault()"
             class="btn btn-primary btn-xs"
           >
@@ -1054,9 +1061,11 @@ defmodule ByobWeb.RoomLive.Components do
           </button>
           <button
             type="button"
-            phx-click="playlist:add"
-            phx-value-mode="queue"
-            phx-value-scope="all"
+            phx-click={
+              JS.push("playlist:add", value: %{mode: "queue", scope: "all"})
+              |> JS.set_attribute({"value", ""}, to: "input[name=url]")
+              |> JS.dispatch("input", to: "input[name=url]")
+            }
             onmousedown="event.preventDefault()"
             class="btn btn-outline btn-xs"
           >
@@ -1065,9 +1074,11 @@ defmodule ByobWeb.RoomLive.Components do
           <button
             :if={selected_count > 0}
             type="button"
-            phx-click="playlist:add"
-            phx-value-mode="now"
-            phx-value-scope="selected"
+            phx-click={
+              JS.push("playlist:add", value: %{mode: "now", scope: "selected"})
+              |> JS.set_attribute({"value", ""}, to: "input[name=url]")
+              |> JS.dispatch("input", to: "input[name=url]")
+            }
             onmousedown="event.preventDefault()"
             class="btn btn-primary btn-xs"
           >
@@ -1076,9 +1087,11 @@ defmodule ByobWeb.RoomLive.Components do
           <button
             :if={selected_count > 0}
             type="button"
-            phx-click="playlist:add"
-            phx-value-mode="queue"
-            phx-value-scope="selected"
+            phx-click={
+              JS.push("playlist:add", value: %{mode: "queue", scope: "selected"})
+              |> JS.set_attribute({"value", ""}, to: "input[name=url]")
+              |> JS.dispatch("input", to: "input[name=url]")
+            }
             onmousedown="event.preventDefault()"
             class="btn btn-outline btn-xs"
           >

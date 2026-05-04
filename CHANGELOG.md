@@ -3,6 +3,27 @@
 
 ---
 
+# v6.8.64
+
+### Playlist preview polish
+
+- URL input now clears when any of the playlist action buttons
+  is clicked (Play All / Queue All / Play Selected / Queue
+  Selected). Previously the value stayed in the bar even though
+  the preview dropdown had been dismissed, which felt sticky.
+  Implemented via `JS.set_attribute` + `JS.dispatch("input")` on
+  the click — clears the visible value and fires the
+  phx-change so the visibility of the inline X also resets.
+- Whole dropdown is now `max-h-[60vh]`, with the inner item
+  list taking the overflow (`flex-1 min-h-0 overflow-y-auto`).
+  A 50-item playlist no longer pushes the action buttons off
+  the bottom of the screen.
+- List items got more vertical padding (`py-2.5`) and their
+  thumbnails bumped up slightly (`w-14 h-8`) so the rows feel
+  less cramped.
+
+---
+
 # v6.8.63
 
 ### Resync re-asserts ready_tabs symmetrically with open_tabs
