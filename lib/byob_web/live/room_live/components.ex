@@ -1075,7 +1075,7 @@ defmodule ByobWeb.RoomLive.Components do
         <ul class="overflow-y-auto flex-1 min-h-0 divide-y divide-base-300/40">
           <li
             :for={item <- @url_preview.items}
-            class="flex items-center gap-3 px-3 py-2.5 hover:bg-base-300/30"
+            class="group flex items-center gap-3 px-3 py-2.5 hover:bg-base-300/30"
           >
             <input
               type="checkbox"
@@ -1092,6 +1092,43 @@ defmodule ByobWeb.RoomLive.Components do
             />
             <div :if={!item[:thumbnail_url]} class="w-14 h-8 bg-base-300 rounded flex-shrink-0" />
             <span class="text-xs line-clamp-2 flex-1 min-w-0">{item.title || item.video_id}</span>
+            <%!-- Per-row Play / Queue buttons. Fade in on hover so the
+                 row stays clean by default but a single-item shortcut
+                 is one click away (no need to tick a checkbox first
+                 just to play one video). Each button clears the URL
+                 input via JS commands like the bulk buttons do. --%>
+            <div class="flex gap-1 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                type="button"
+                phx-click={
+                  JS.push("playlist:add",
+                    value: %{mode: "now", scope: "single", video_id: item.video_id}
+                  )
+                  |> JS.set_attribute({"value", ""}, to: "input[name=url]")
+                  |> JS.dispatch("input", to: "input[name=url]")
+                }
+                onmousedown="event.preventDefault()"
+                class="btn btn-primary btn-xs"
+                title="Play this one now"
+              >
+                Play
+              </button>
+              <button
+                type="button"
+                phx-click={
+                  JS.push("playlist:add",
+                    value: %{mode: "queue", scope: "single", video_id: item.video_id}
+                  )
+                  |> JS.set_attribute({"value", ""}, to: "input[name=url]")
+                  |> JS.dispatch("input", to: "input[name=url]")
+                }
+                onmousedown="event.preventDefault()"
+                class="btn btn-outline btn-xs"
+                title="Queue this one"
+              >
+                Queue
+              </button>
+            </div>
           </li>
         </ul>
         <div class="flex flex-wrap gap-1.5 p-3 border-t border-base-300/60 bg-base-300/20 flex-shrink-0">

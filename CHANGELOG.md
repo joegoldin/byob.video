@@ -3,6 +3,23 @@
 
 ---
 
+# v6.8.66
+
+### Per-row Play / Queue on playlist preview hover
+
+When you only want one video out of a 50-item playlist, ticking
+the checkbox + clicking "Play Selected" was three clicks. Each
+playlist row now reveals Play / Queue buttons on hover —
+single-click on either runs the same flow as the bulk buttons
+(adds just that video, clears the URL input).
+
+`handle_playlist_add` accepts a new scope `"single"` carrying a
+`video_id` param; the preview's `selected` MapSet is unaffected
+so the bulk Play / Queue Selected buttons still work for any
+checkboxes that ARE ticked.
+
+---
+
 # v6.8.65
 
 ### Stats for nerds: pick one client per user, prefer extension

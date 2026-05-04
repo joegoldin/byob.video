@@ -185,10 +185,14 @@ defmodule ByobWeb.RoomLive.UrlPreview do
   def handle_playlist_select(_, socket), do: {:noreply, socket}
 
   @doc """
-  "Play All" / "Queue All" / "Play Selected" / "Queue Selected" buttons.
-  Params: `mode` ∈ {"now", "queue"}, `scope` ∈ {"all", "selected"}.
+  Playlist add buttons.
+
+  Params:
+    * `mode` ∈ {"now", "queue"}
+    * `scope` ∈ {"all", "selected", "single"}
+    * `video_id` — required when scope == "single"
   """
-  def handle_playlist_add(%{"mode" => mode, "scope" => scope}, socket) do
+  def handle_playlist_add(%{"mode" => mode, "scope" => scope} = params, socket) do
     preview = socket.assigns[:url_preview] || %{}
 
     cond do
@@ -198,11 +202,18 @@ defmodule ByobWeb.RoomLive.UrlPreview do
       true ->
         items = Map.get(preview, :items, [])
         selected = Map.get(preview, :selected, MapSet.new())
+        video_id = params["video_id"]
 
         items =
           case scope do
-            "selected" -> Enum.filter(items, &MapSet.member?(selected, &1.video_id))
-            _ -> items
+            "single" when is_binary(video_id) ->
+              Enum.filter(items, &(&1.video_id == video_id))
+
+            "selected" ->
+              Enum.filter(items, &MapSet.member?(selected, &1.video_id))
+
+            _ ->
+              items
           end
 
         if items == [] do
