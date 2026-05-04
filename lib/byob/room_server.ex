@@ -203,6 +203,25 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, {:add_to_queue, user_id, url, mode})
   end
 
+  @doc """
+  Bulk-add a list of pre-fetched YouTube playlist items.
+
+  `items` is the list returned by `Byob.YouTube.Playlists.fetch/1`
+  (each entry has video_id, title, thumbnail_url, channel_title).
+
+  `mode` is `:now` (first item plays now, rest queued in order) or
+  `:queue` (all appended to the end, current playback unaffected).
+
+  We construct MediaItems directly here instead of looping through
+  `add_to_queue` per URL — playlist items already carry title +
+  thumbnail from the playlist API call, so the per-item async
+  metadata fetch only needs to fill in duration. Saves 50 → 1
+  ish API call ratio for a typical playlist add.
+  """
+  def add_playlist_items(pid, user_id, items, mode) do
+    GenServer.call(pid, {:add_playlist_items, user_id, items, mode})
+  end
+
   def video_ended(pid, index) do
     GenServer.call(pid, {:video_ended, index})
   end
@@ -971,6 +990,75 @@ defmodule Byob.RoomServer do
         # Originator is excluded — their player is already at `position`.
         state = broadcast_personalized_seek(state, position, now, user_id)
         {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:add_playlist_items, user_id, items, mode}, _from, state)
+      when is_list(items) do
+    items = Enum.reject(items, fn it -> is_nil(it[:video_id]) or it[:video_id] == "" end)
+
+    if items == [] do
+      {:reply, {:error, :no_items}, state}
+    else
+      added_by_name =
+        case Map.get(state.users, user_id) do
+          %{username: name} -> name
+          _ -> nil
+        end
+
+      now = DateTime.utc_now()
+
+      built_items =
+        Enum.map(items, fn it ->
+          url = "https://www.youtube.com/watch?v=" <> it.video_id
+
+          %Byob.MediaItem{
+            id: :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false),
+            url: url,
+            source_type: :youtube,
+            source_id: it.video_id,
+            title: it[:title],
+            thumbnail_url: it[:thumbnail_url],
+            published_at: it[:published_at],
+            added_by: user_id,
+            added_by_name: added_by_name,
+            added_at: now,
+            is_live: false
+          }
+        end)
+
+      state = insert_playlist(state, built_items, mode)
+
+      first_title =
+        case built_items do
+          [%{title: t} | _] when is_binary(t) -> t
+          [%{url: u} | _] -> u
+          _ -> "playlist"
+        end
+
+      detail = "#{length(built_items)} videos (starting with: #{first_title})"
+      state = log_activity(state, :added, user_id, detail)
+
+      broadcast(
+        state,
+        {:queue_updated, %{queue: state.queue, current_index: state.current_index}}
+      )
+
+      # Backfill duration (the only field the playlist API doesn't
+      # give us) per item, async — they trickle in as
+      # {:oembed_result, item_id, meta} which the room already handles.
+      pid = self()
+
+      Enum.each(built_items, fn item ->
+        Task.start(fn ->
+          case fetch_youtube_meta(item.source_id, item.url) do
+            {:ok, meta} -> send(pid, {:oembed_result, item.id, meta})
+            _ -> :ok
+          end
+        end)
+      end)
+
+      {:reply, :ok, state}
     end
   end
 
@@ -2447,6 +2535,81 @@ defmodule Byob.RoomServer do
         fetch_sponsor_segments(item)
         state = fetch_comments_for_current(state)
         broadcast_video_changed(state, item, 0)
+    end
+  end
+
+  # Bulk insert of a playlist's items, respecting @max_queue_size.
+  # `mode = :now` plays item 0 immediately (like a single-video Play
+  # Now): the currently-playing item is kicked out, the playlist is
+  # front-loaded ahead of any other queued items, and item 0 starts.
+  # `mode = :queue` appends the whole playlist to the end of the
+  # existing queue, current playback unaffected.
+  defp insert_playlist(state, [], _mode), do: state
+
+  defp insert_playlist(state, items, :queue) do
+    space = max(0, @max_queue_size - length(state.queue))
+    items = Enum.take(items, space)
+    %{state | queue: state.queue ++ items}
+  end
+
+  defp insert_playlist(state, [first | rest] = items, :now) do
+    state = maybe_cancel_pending_advance(state)
+    now = System.monotonic_time(:millisecond)
+
+    case state.current_index do
+      nil ->
+        # Nothing playing — front-load all items and start at 0.
+        space = max(0, @max_queue_size - length(state.queue))
+        items_truncated = Enum.take(items, space)
+        queue = items_truncated ++ state.queue
+
+        state = %{
+          state
+          | queue: queue,
+            current_index: 0,
+            current_time: 0.0,
+            last_sync_at: now,
+            play_state: :playing,
+            sponsor_segments: []
+        }
+
+        state = add_to_history(state, first)
+        state = schedule_sync_correction(state)
+        fetch_sponsor_segments(first)
+        state = fetch_comments_for_current(state)
+        broadcast_video_changed(state, first, 0)
+
+      idx ->
+        # Replace the currently-playing item with item 0 (same single-
+        # video Play Now semantics — kicks out current). Items 1..N
+        # slot in BEFORE existing queued items so the playlist plays
+        # contiguously.
+        without_current = List.delete_at(state.queue, idx)
+        space = max(0, @max_queue_size - length(without_current))
+        items_truncated = Enum.take(items, space)
+        queue = items_truncated ++ without_current
+
+        # If we had to truncate, the FIRST item is what plays now —
+        # rebind in case items_truncated dropped tail items but kept
+        # the head.
+        playing = List.first(items_truncated) || first
+        _ = rest
+
+        state = %{
+          state
+          | queue: queue,
+            current_index: 0,
+            current_time: 0.0,
+            last_sync_at: now,
+            play_state: :playing,
+            sponsor_segments: []
+        }
+
+        state = add_to_history(state, playing)
+        state = schedule_sync_correction(state)
+        fetch_sponsor_segments(playing)
+        state = fetch_comments_for_current(state)
+        broadcast_video_changed(state, playing, 0)
     end
   end
 

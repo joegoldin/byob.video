@@ -3,6 +3,68 @@
 
 ---
 
+# v6.8.59
+
+### YouTube playlist support
+
+Pasting a YouTube playlist URL (`youtube.com/playlist?list=PL…` or
+`youtube.com/watch?v=X&list=PL…`) now opens a scrollable preview
+listing every video in the playlist with checkboxes and four
+action buttons:
+
+- **Play All** — kicks the currently-playing video out, front-loads
+  the entire playlist before any other queued items, plays item 1.
+- **Queue All** — appends the entire playlist to the end of the
+  queue, current playback unaffected.
+- **Play Selected** / **Queue Selected** — same as the above but
+  filtered to whichever items have their checkbox ticked. The
+  buttons only appear once at least one box is checked.
+
+If the URL was the watch-with-playlist-context form
+(`watch?v=X&list=…`), the focus video X is sorted to the top of
+the rendered list so the preview matches what the user clicked.
+
+What changed:
+
+- `lib/byob/youtube/playlists.ex` (new): wraps Data API v3
+  `playlistItems.list` + `playlists.list`. Same API-key /
+  quota-out / ETS cache plumbing as `Byob.YouTube.Videos`.
+  Returns `%{title, channel_title, items, total_count, truncated?}`.
+  v1 fetches the first page only (max 50 items) to stay friendly
+  to free-tier quota; the UI surfaces "Showing first 50 of N"
+  when truncated.
+- `lib/byob/media_item.ex`: new `youtube_playlist/1` returns
+  `{:ok, list_id, focus_video_id_or_nil} | :none`. Auto-mix
+  list ids (`RD…`, etc.) get `:none` since the public API can't
+  enumerate them — falls back to single-video preview.
+- `lib/byob_web/live/room_live/url_preview.ex`: YouTube preview
+  case routes through a `fetch_youtube_preview/2` helper that
+  tries `Byob.YouTube.Playlists.fetch/1` first, falls back to the
+  existing single-video preview on any error (no API key, quota
+  out, private playlist, autogen mix). New
+  `handle_playlist_select` toggles per-item checkbox state in
+  `url_preview.selected` (a MapSet), and `handle_playlist_add`
+  dispatches to the room server with `mode` (now/queue) +
+  `scope` (all/selected).
+- `lib/byob/room_server.ex`: new `add_playlist_items/4` server
+  call. Builds MediaItem structs directly from the pre-fetched
+  playlist items (title + thumbnail already known from the
+  playlist API) so we save the per-video API spam — only
+  duration needs a per-item async backfill. New `insert_playlist`
+  helper handles the bulk-insert semantics: `:queue` appends
+  contiguously to the end of the queue, `:now` kicks out the
+  currently-playing item and front-loads the playlist before any
+  other queued items so the playlist plays in order.
+- `lib/byob_web/live/room_live/components.ex`: new playlist
+  branch in `url_preview_dropdown`. Scrolling list capped at
+  `max-h-[35vh]` so it doesn't push past the middle of the
+  player.
+
+Falls back to plain single-video preview when no
+`YOUTUBE_API_KEY` is configured.
+
+---
+
 # v6.8.58
 
 ### Twitch native embed player

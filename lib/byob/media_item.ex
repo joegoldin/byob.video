@@ -64,6 +64,60 @@ defmodule Byob.MediaItem do
 
   def parse_url(_), do: {:error, :invalid_url}
 
+  @doc """
+  Inspect a YouTube URL for a `list=PL...` (or `list=UU...` etc.) playlist
+  param. Returns `{:ok, playlist_id, focus_video_id_or_nil}` when present
+  on a YouTube host, otherwise `:none`.
+
+  The "focus" video id is whatever `v=` resolves to when the URL was a
+  watch-with-playlist-context URL like
+  `youtube.com/watch?v=X&list=Y` — UI sorts that one to the top of the
+  rendered playlist preview so the user sees the video they actually
+  clicked at the top.
+  """
+  def youtube_playlist(url) when is_binary(url) do
+    url = normalize_url(url)
+
+    case URI.parse(url) do
+      %URI{scheme: scheme, host: host, query: query}
+      when scheme in ["http", "https"] and is_binary(host) ->
+        cond do
+          not youtube_host?(host) ->
+            :none
+
+          not is_binary(query) ->
+            :none
+
+          true ->
+            params = URI.decode_query(query)
+            list_id = Map.get(params, "list")
+            focus = Map.get(params, "v")
+
+            cond do
+              is_nil(list_id) or list_id == "" -> :none
+              # YouTube auto-generated mixes (RD…), watch later (WL), and a
+              # handful of system playlists are not fetchable via the public
+              # API. Skip them — single-video preview is the right fallback.
+              not real_playlist_id?(list_id) -> :none
+              true -> {:ok, list_id, focus}
+            end
+        end
+
+      _ ->
+        :none
+    end
+  end
+
+  def youtube_playlist(_), do: :none
+
+  # Real, fetchable playlists are PL... (user playlists), UU... (channel
+  # uploads), FL... (favorites), LL... (likes — only owner can fetch),
+  # OL... (created mixes for some channels). Auto-generated mixes are
+  # RD..., RDMM..., etc. — those return 404 from playlistItems.list.
+  defp real_playlist_id?(id) do
+    String.starts_with?(id, ["PL", "UU", "FL", "OL"])
+  end
+
   # Accept URLs pasted without a scheme (e.g. `www.youtube.com/watch?v=…`
   # or `youtube.com/watch?v=…`). The bare-hostname check requires a `.`
   # somewhere in the first path segment so we don't promote arbitrary

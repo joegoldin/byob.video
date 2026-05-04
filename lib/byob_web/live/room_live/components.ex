@@ -985,6 +985,107 @@ defmodule ByobWeb.RoomLive.Components do
           <div class="h-2 bg-base-300 rounded w-1/2 animate-pulse" />
         </div>
       </div>
+      <%!-- Playlist preview: scrollable item list with checkboxes +
+           Play All / Queue All / Play Selected / Queue Selected. --%>
+      <div
+        :if={@url_preview && @url_preview.source_type == :playlist}
+        class="flex flex-col"
+      >
+        <% selected = (@url_preview[:selected] || MapSet.new())
+           selected_count = MapSet.size(selected)
+           total_count = @url_preview[:total_count] || length(@url_preview.items)
+           shown_count = length(@url_preview.items) %>
+        <div class="flex items-center gap-2 p-3 border-b border-base-300/60">
+          <svg
+            class="w-4 h-4 flex-shrink-0 text-red-500"
+            viewBox="0 0 24 24"
+            fill="currentColor"
+          >
+            <path d="M22 8.5l-3.5 3.5L22 15.5V8.5zM2 5h12v2H2V5zm0 4h12v2H2V9zm0 4h8v2H2v-2zm10 0h2l3 3v-3h2v8h-2v-3l-3 3h-2v-8z" />
+          </svg>
+          <div class="flex-1 min-w-0">
+            <p class="text-sm font-medium line-clamp-1">
+              Playlist: {@url_preview[:title] || "Untitled"}
+            </p>
+            <p class="text-xs text-base-content/50">
+              <%= if @url_preview[:truncated?] do %>
+                Showing first {shown_count} of {total_count}
+              <% else %>
+                {shown_count} {if shown_count == 1, do: "video", else: "videos"}
+              <% end %>
+              <%= if @url_preview[:channel_title] do %>
+                <span class="text-base-content/30">· {@url_preview.channel_title}</span>
+              <% end %>
+            </p>
+          </div>
+        </div>
+        <ul class="overflow-y-auto max-h-[35vh] divide-y divide-base-300/40">
+          <li
+            :for={item <- @url_preview.items}
+            class="flex items-center gap-2 px-3 py-1.5 hover:bg-base-300/30"
+          >
+            <input
+              type="checkbox"
+              class="checkbox checkbox-xs flex-shrink-0"
+              checked={MapSet.member?(selected, item.video_id)}
+              phx-click="playlist:select"
+              phx-value-video_id={item.video_id}
+              phx-value-checked={if MapSet.member?(selected, item.video_id), do: "false", else: "true"}
+            />
+            <img
+              :if={item[:thumbnail_url]}
+              src={item.thumbnail_url}
+              class="w-12 h-7 object-cover rounded flex-shrink-0"
+            />
+            <div :if={!item[:thumbnail_url]} class="w-12 h-7 bg-base-300 rounded flex-shrink-0" />
+            <span class="text-xs line-clamp-2 flex-1 min-w-0">{item.title || item.video_id}</span>
+          </li>
+        </ul>
+        <div class="flex flex-wrap gap-1.5 p-3 border-t border-base-300/60 bg-base-300/20">
+          <button
+            type="button"
+            phx-click="playlist:add"
+            phx-value-mode="now"
+            phx-value-scope="all"
+            onmousedown="event.preventDefault()"
+            class="btn btn-primary btn-xs"
+          >
+            Play All
+          </button>
+          <button
+            type="button"
+            phx-click="playlist:add"
+            phx-value-mode="queue"
+            phx-value-scope="all"
+            onmousedown="event.preventDefault()"
+            class="btn btn-outline btn-xs"
+          >
+            Queue All
+          </button>
+          <button
+            :if={selected_count > 0}
+            type="button"
+            phx-click="playlist:add"
+            phx-value-mode="now"
+            phx-value-scope="selected"
+            onmousedown="event.preventDefault()"
+            class="btn btn-primary btn-xs"
+          >
+            Play Selected ({selected_count})
+          </button>
+          <button
+            :if={selected_count > 0}
+            type="button"
+            phx-click="playlist:add"
+            phx-value-mode="queue"
+            phx-value-scope="selected"
+            onmousedown="event.preventDefault()"
+            class="btn btn-outline btn-xs"
+          >
+            Queue Selected ({selected_count})
+          </button>
+        </div>
+      </div>
       <div
         :if={@url_preview && @url_preview.source_type in [:youtube, :vimeo, :twitch]}
         class="flex items-center gap-2 p-3"

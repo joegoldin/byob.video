@@ -214,6 +214,12 @@ defmodule ByobWeb.RoomLive do
 
   def handle_event("add_url", params, socket), do: UrlPreview.handle_add_url(params, socket)
 
+  def handle_event("playlist:select", params, socket),
+    do: UrlPreview.handle_playlist_select(params, socket)
+
+  def handle_event("playlist:add", params, socket),
+    do: UrlPreview.handle_playlist_add(params, socket)
+
   def handle_event("analytics:has_extension", params, socket),
     do: Playback.handle_has_extension(params, socket)
 

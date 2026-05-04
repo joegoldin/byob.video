@@ -44,22 +44,15 @@ defmodule ByobWeb.RoomLive.UrlPreview do
 
     case Byob.MediaItem.parse_url(extracted) do
       {:ok, %{source_type: :youtube, source_id: source_id}} ->
+        # Playlist-aware: if the URL has a `list=PL…` (or UU/FL/OL),
+        # try the Playlists API first. Fall back to single-video
+        # preview for missing API key, quota out, or auto-generated
+        # mixes (RD…) the API can't enumerate.
         socket = assign(base, url_preview_loading: true, url_preview: nil)
         pid = self()
 
         Task.start(fn ->
-          meta =
-            case source_id && Byob.YouTube.Videos.fetch(source_id) do
-              {:ok, data} ->
-                Map.put(data, :source_type, :youtube)
-
-              _ ->
-                case Byob.OEmbed.fetch_youtube(extracted) do
-                  {:ok, data} -> Map.put(data, :source_type, :youtube)
-                  _ -> %{title: nil, thumbnail_url: nil, source_type: :youtube}
-                end
-            end
-
+          meta = fetch_youtube_preview(extracted, source_id)
           send(pid, {:url_preview_result, meta})
         end)
 
@@ -170,6 +163,73 @@ defmodule ByobWeb.RoomLive.UrlPreview do
     )
   end
 
+  @doc """
+  Toggle a single playlist item's checked state.
+  """
+  def handle_playlist_select(%{"video_id" => video_id} = params, socket) do
+    preview = socket.assigns[:url_preview] || %{}
+
+    if Map.get(preview, :source_type) != :playlist do
+      {:noreply, socket}
+    else
+      checked = params["checked"] == "true" or params["checked"] == true
+      selected = Map.get(preview, :selected, MapSet.new())
+
+      selected =
+        if checked, do: MapSet.put(selected, video_id), else: MapSet.delete(selected, video_id)
+
+      {:noreply, assign(socket, url_preview: Map.put(preview, :selected, selected))}
+    end
+  end
+
+  def handle_playlist_select(_, socket), do: {:noreply, socket}
+
+  @doc """
+  "Play All" / "Queue All" / "Play Selected" / "Queue Selected" buttons.
+  Params: `mode` ∈ {"now", "queue"}, `scope` ∈ {"all", "selected"}.
+  """
+  def handle_playlist_add(%{"mode" => mode, "scope" => scope}, socket) do
+    preview = socket.assigns[:url_preview] || %{}
+
+    cond do
+      Map.get(preview, :source_type) != :playlist ->
+        {:noreply, socket}
+
+      true ->
+        items = Map.get(preview, :items, [])
+        selected = Map.get(preview, :selected, MapSet.new())
+
+        items =
+          case scope do
+            "selected" -> Enum.filter(items, &MapSet.member?(selected, &1.video_id))
+            _ -> items
+          end
+
+        if items == [] do
+          {:noreply, socket}
+        else
+          mode_atom = if mode == "now", do: :now, else: :queue
+
+          Byob.Analytics.video_added(
+            socket.assigns[:browser_id] || socket.assigns.user_id,
+            socket.assigns.room_id,
+            :youtube
+          )
+
+          RoomServer.add_playlist_items(
+            socket.assigns.room_pid,
+            socket.assigns.user_id,
+            items,
+            mode_atom
+          )
+
+          {:noreply, reset_preview(socket)}
+        end
+    end
+  end
+
+  def handle_playlist_add(_, socket), do: {:noreply, socket}
+
   def handle_add_url(%{"url" => raw, "mode" => mode}, socket) do
     case Byob.MediaItem.extract_url(raw) do
       nil ->
@@ -207,15 +267,80 @@ defmodule ByobWeb.RoomLive.UrlPreview do
   end
 
   def handle_preview_result(meta, socket) do
-    preview = %{
-      title: meta[:title],
-      thumbnail_url: meta[:thumbnail_url],
-      author_name: meta[:author_name],
-      duration: meta[:duration],
-      published_at: meta[:published_at],
-      source_type: meta[:source_type] || :youtube
-    }
+    preview =
+      case meta[:source_type] do
+        :playlist ->
+          # Pass-through verbatim — the playlist preview has its own
+          # shape (items, total_count, truncated?, focus_video_id).
+          meta
+
+        _ ->
+          %{
+            title: meta[:title],
+            thumbnail_url: meta[:thumbnail_url],
+            author_name: meta[:author_name],
+            duration: meta[:duration],
+            published_at: meta[:published_at],
+            source_type: meta[:source_type] || :youtube
+          }
+      end
 
     {:noreply, assign(socket, url_preview: preview, url_preview_loading: false)}
+  end
+
+  # ── YouTube preview routing ────────────────────────────────────────────
+  # Splits the YouTube case so the same code path covers single-video
+  # URLs AND playlist URLs (with or without a `v=` focus video). Falls
+  # back to the single-video preview whenever Playlists.fetch fails for
+  # any reason (no API key, quota out, private playlist, autogen mix).
+  defp fetch_youtube_preview(url, source_id) do
+    case Byob.MediaItem.youtube_playlist(url) do
+      {:ok, list_id, focus} ->
+        case Byob.YouTube.Playlists.fetch(list_id) do
+          {:ok, %{items: items} = pl} when items != [] ->
+            %{
+              source_type: :playlist,
+              playlist_id: list_id,
+              title: pl[:title],
+              channel_title: pl[:channel_title],
+              total_count: pl[:total_count] || length(items),
+              truncated?: pl[:truncated?] || false,
+              focus_video_id: focus,
+              items: sort_with_focus_first(items, focus)
+            }
+
+          _ ->
+            single_video_preview(url, source_id)
+        end
+
+      :none ->
+        single_video_preview(url, source_id)
+    end
+  end
+
+  defp single_video_preview(url, source_id) do
+    case source_id && Byob.YouTube.Videos.fetch(source_id) do
+      {:ok, data} ->
+        Map.put(data, :source_type, :youtube)
+
+      _ ->
+        case Byob.OEmbed.fetch_youtube(url) do
+          {:ok, data} -> Map.put(data, :source_type, :youtube)
+          _ -> %{title: nil, thumbnail_url: nil, source_type: :youtube}
+        end
+    end
+  end
+
+  # If the user pasted `youtube.com/watch?v=X&list=Y`, X is the video
+  # they actually clicked. Hoist it to position 0 of the rendered list
+  # so the preview matches expectation; everything else keeps its
+  # natural playlist order.
+  defp sort_with_focus_first(items, nil), do: items
+
+  defp sort_with_focus_first(items, focus) do
+    case Enum.split_with(items, &(&1.video_id == focus)) do
+      {[], rest} -> rest
+      {focused, rest} -> focused ++ rest
+    end
   end
 end
