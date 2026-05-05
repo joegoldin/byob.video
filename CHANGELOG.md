@@ -3,6 +3,24 @@
 
 ---
 
+# v6.8.68
+
+### Hotfix: prune_stale_rooms crash-loops production
+
+`Exqlite.Sqlite3.changes/1` returns `{:ok, n}` (a tuple), not a
+bare integer. The v6.8.67 prune handler stringified that directly
+in `Logger.info("[byob] pruned #{deleted} ...")`, which raised
+`Protocol.UndefinedError: protocol String.Chars not implemented
+for Tuple` and took the `Byob.Persistence` GenServer down. With
+`Persistence` being a critical child in the supervision tree
+the whole app went into a crash loop on every fly machine
+restart, hitting the 10-restart cap.
+
+Both the `:prune_stale_rooms` `handle_info` and `handle_call`
+now unwrap `{:ok, n}` before using the count.
+
+---
+
 # v6.8.67
 
 ### "Server is at maximum capacity" — count live rooms, not persisted ones

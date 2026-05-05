@@ -178,7 +178,14 @@ defmodule Byob.Persistence do
 
     :ok = Exqlite.Sqlite3.bind(stmt, [cutoff])
     Exqlite.Sqlite3.step(db, stmt)
-    deleted = Exqlite.Sqlite3.changes(db)
+    # `changes/1` returns `{:ok, n}` — unwrap before stringifying.
+    deleted =
+      case Exqlite.Sqlite3.changes(db) do
+        {:ok, n} when is_integer(n) -> n
+        n when is_integer(n) -> n
+        _ -> 0
+      end
+
     Exqlite.Sqlite3.release(db, stmt)
 
     if deleted > 0 do
@@ -302,7 +309,14 @@ defmodule Byob.Persistence do
 
     :ok = Exqlite.Sqlite3.bind(stmt, [cutoff])
     Exqlite.Sqlite3.step(db, stmt)
-    deleted = Exqlite.Sqlite3.changes(db)
+
+    deleted =
+      case Exqlite.Sqlite3.changes(db) do
+        {:ok, n} when is_integer(n) -> n
+        n when is_integer(n) -> n
+        _ -> 0
+      end
+
     Exqlite.Sqlite3.release(db, stmt)
     {:reply, deleted, s}
   end
