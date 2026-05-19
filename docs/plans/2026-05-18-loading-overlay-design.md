@@ -25,7 +25,7 @@ Two new methods on the `VideoPlayer` hook:
   - Build a `<div class="byob-loading">` child of `this.el`: thumbnail background (or fall back to black if `thumbnailUrl` is null), 0.55-opacity dim layer, centered spinner SVG, "Loading…" label under it.
   - Stamp `_loadingShownAt = performance.now()` for the minimum-lifetime gate.
   - Use the same `byob-spin` `@keyframes` the syncing pill uses (line 1729). Important: that keyframe is injected lazily inside `_showSyncingOverlay` only. On a fresh video, `_showLoadingOverlay` runs *before* any syncing pill, so the loading overlay must inject the same `byob-syncing-style` `<style>` block itself if it isn't already in the DOM (idempotent — same `getElementById` guard).
-  - z-index: above the player surface, below the syncing pill (z-index 30). Use z-index 20.
+  - z-index 10 — same layer as `byob-join-ready` and `byob-click-to-play`. They never coexist (early-returns in show + preemptive hide in install paths), so sharing the layer is safe and avoids obscuring the interactive overlays during any tiny race.
 
 - `_hideLoadingOverlay()`:
   - If `performance.now() - _loadingShownAt < 250 ms`, defer the hide on a timeout (prevents flicker on the fast `loadVideoById` reuse path).
