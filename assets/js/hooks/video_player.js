@@ -390,6 +390,12 @@ const VideoPlayer = {
     this._lastThumb = mediaItem?.thumbnail_url ||
       (sourceType === "youtube" && sourceId ? `https://img.youtube.com/vi/${sourceId}/hqdefault.jpg` : null);
     this._embedBlocked = false;
+    // Cover the load window (5-8 s during the server-side ready-check
+    // handshake) with a thumbnail-backed spinner so the user doesn't
+    // see a black screen. Skip for extension placeholder (isPlaceholder
+    // guard inside _showLoadingOverlay). Hide is wired in
+    // _onPlayerStateChange when _playerSettled first flips true.
+    this._showLoadingOverlay(this._lastThumb);
     if (this._extPollInterval) { clearInterval(this._extPollInterval); this._extPollInterval = null; }
     if (this._extBtnPoll) { clearInterval(this._extBtnPoll); this._extBtnPoll = null; }
     // Structural offset is a property of the current player pipeline. A new
