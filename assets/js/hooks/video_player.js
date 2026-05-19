@@ -253,7 +253,6 @@ const VideoPlayer = {
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
     if (this._unloadHandler) window.removeEventListener("beforeunload", this._unloadHandler);
     if (this._resizeHandler) window.removeEventListener("resize", this._resizeHandler);
-    if (this._onVisibilityChange) document.removeEventListener("visibilitychange", this._onVisibilityChange);
     this._unloadHandler?.();
     if (this.player && this.player.destroy) {
       this.player.destroy();
@@ -1461,44 +1460,16 @@ const VideoPlayer = {
       }
     }, 100);
 
-    // When the tab returns from the background, aggressively reconcile:
-    // timers were throttled, reconcile drift is likely huge, and the
-    // player may have been paused by the OS/browser. Echo our state
-    // back to the server so everyone is on the same page again.
-    if (this._onVisibilityChange) {
-      document.removeEventListener("visibilitychange", this._onVisibilityChange);
-    }
-    this._onVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-      if (!this.player) return;
-
-      // Kick the reconcile: if the player was paused while backgrounded,
-      // force it back to the expected state via the mismatch path above.
-      this._mismatchSince = null;
-      this._stuckBufferingSince = null;
-
-      // Force a quick clock resync so drift-correction isn't acting on
-      // stale offsets.
-      if (this.clockSync && this.clockSync.resync) {
-        this.clockSync.resync(3).catch(() => {});
-      }
-
-      // Echo our current state to the server. If we locally pushed through
-      // play/pause while backgrounded (or got desynced from the room),
-      // this pulls the server onto our actual state.
-      setTimeout(() => {
-        try {
-          const localState = this.player?.getState?.();
-          const pos = this._getCurrentTime();
-          if (localState === "playing") {
-            this.pushEvent(LV_EVT.EV_VIDEO_PLAY, { position: pos });
-          } else if (localState === "paused") {
-            this.pushEvent(LV_EVT.EV_VIDEO_PAUSE, { position: pos });
-          }
-        } catch (_) {}
-      }, 200);
-    };
-    document.addEventListener("visibilitychange", this._onVisibilityChange);
+    // No visibilitychange handler here on purpose. The room is canonical:
+    // a returning tab must take its truth from server broadcasts (sync
+    // correction at 1 Hz, state heartbeat at 5 s, drift-report → seek
+    // command), never echo its own stale getCurrentTime() back — the
+    // IFrame's cached position can lag by tens of seconds while the
+    // postMessage queue drains, and the server rebroadcasts that position
+    // to every peer. If the player actually changed state (e.g. user
+    // paused via OS media keys), _onPlayerStateChange handles it once the
+    // IFrame's queued events flush. Clock-offset resync on return is
+    // owned by ClockSync's own visibilitychange listener.
 
     // SponsorBlock skip check
     this._lastSkippedUUID = null;

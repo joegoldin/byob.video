@@ -3,6 +3,44 @@
 
 ---
 
+# v6.8.69
+
+### Hotfix: backgrounded tab snaps the whole room back on return
+
+When a user switched away from the byob tab and came back, every
+other peer in the room would visibly jump back to the position the
+returning user was at when they first backgrounded — then crawl
+forward over the next 1–2 seconds as `SyncDecision` corrected the
+drift.
+
+Root cause: `VideoPlayer`'s `visibilitychange` handler echoed local
+state (`getCurrentTime()` + play/pause) to the server 200 ms after
+the tab became visible. Two factors combined to make that echo a lie:
+
+1. While the tab was hidden the browser throttled JS execution, but
+   the YT IFrame kept playing audibly. `getCurrentTime()` reads a
+   value the IFrame posts over `postMessage` — that queue couldn't
+   be drained by the throttled main thread, so the cached number
+   stayed frozen at whatever it was when the tab was last visible.
+2. The server's `:play` / `:pause` handler correctly refuses to
+   overwrite `current_time` on a non-transition (its "buggy client
+   stuck at 0 can poison the room" guard works), but it *still
+   rebroadcasts* the client-reported position to every peer. Each
+   peer's `_onSyncPlay` then unconditionally `_seekTo(data.time)`'d
+   to that stale position.
+
+Fix: remove the visibility-handler echo entirely. The room is
+canonical — a returning tab must take its truth from the server
+(`:sync_correction` at 1 Hz, `:state_heartbeat` at 5 s, drift report
+→ `:user_seek_command`), never push its own stale `getCurrentTime()`
+back. Real local state changes (e.g. OS-media-key pause while
+backgrounded) still propagate via `_onPlayerStateChange` once the
+IFrame's queued events flush. The redundant `clockSync.resync(3)`
+call is also dropped — `ClockSync` already runs its own
+`visibilitychange` mini-burst.
+
+---
+
 # v6.8.68
 
 ### Hotfix: prune_stale_rooms crash-loops production
