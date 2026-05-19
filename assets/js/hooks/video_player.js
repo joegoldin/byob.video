@@ -1805,6 +1805,98 @@ const VideoPlayer = {
     setTimeout(() => overlay.remove(), 200);
   },
 
+  // Full-surface "Loading…" overlay shown from _loadVideo until the
+  // player fires its first stable state (playing or paused). Mirrors
+  // _showSyncingOverlay's structure but full-screen with a thumbnail
+  // background, not a corner pill. Cosmetic only — pointer-events:none.
+  // 250 ms minimum lifetime prevents a flicker on the fast
+  // loadVideoById reuse path. z-index 10 matches the existing
+  // interactive overlays (byob-join-ready, byob-click-to-play) —
+  // they never coexist with us (early-returns + preemptive hide
+  // wired into both install paths).
+  _showLoadingOverlay(thumbnailUrl) {
+    if (this.player?.isPlaceholder) return;
+    if (this.el.querySelector(".byob-join-ready")) return;
+    if (this.el.querySelector(".byob-click-to-play")) return;
+    if (this.el.querySelector(".byob-loading")) return;
+
+    // The byob-spin @keyframes is lazy-injected inside _showSyncingOverlay.
+    // The loading overlay typically runs FIRST on a fresh video (before
+    // any syncing pill ever fires), so we have to inject it ourselves.
+    if (!document.getElementById("byob-syncing-style")) {
+      const style = document.createElement("style");
+      style.id = "byob-syncing-style";
+      style.textContent = "@keyframes byob-spin { to { transform: rotate(360deg); } }";
+      document.head.appendChild(style);
+    }
+
+    this._loadingShownAt = performance.now();
+    if (this._loadingHideTimer) {
+      clearTimeout(this._loadingHideTimer);
+      this._loadingHideTimer = null;
+    }
+
+    const overlay = document.createElement("div");
+    overlay.className = "byob-loading";
+    const thumbBg = thumbnailUrl
+      ? `background-image:url(${JSON.stringify(thumbnailUrl)});background-size:cover;background-position:center;`
+      : "";
+    overlay.style.cssText = [
+      "position:absolute",
+      "inset:0",
+      "z-index:10",
+      "display:flex",
+      "flex-direction:column",
+      "align-items:center",
+      "justify-content:center",
+      "gap:12px",
+      "background:#000",
+      "pointer-events:none",
+      thumbBg,
+    ].join(";");
+
+    const dim = document.createElement("div");
+    dim.style.cssText = "position:absolute;inset:0;background:rgba(0,0,0,0.55);";
+    overlay.appendChild(dim);
+
+    const stack = document.createElement("div");
+    stack.style.cssText = "position:relative;display:flex;flex-direction:column;align-items:center;gap:10px;";
+    stack.innerHTML =
+      `<svg width="32" height="32" viewBox="0 0 24 24" style="animation:byob-spin 0.8s linear infinite">` +
+      `<circle cx="12" cy="12" r="10" stroke="rgba(255,255,255,0.3)" stroke-width="3" fill="none"/>` +
+      `<path d="M12 2 a10 10 0 0 1 10 10" stroke="white" stroke-width="3" fill="none" stroke-linecap="round"/>` +
+      `</svg>` +
+      `<span style="font:600 13px/1 system-ui;color:rgba(255,255,255,0.9)">Loading…</span>`;
+    overlay.appendChild(stack);
+
+    this.el.appendChild(overlay);
+  },
+
+  // Hide the loading overlay. Honors a 250 ms minimum lifetime so the
+  // fast YouTube loadVideoById reuse path doesn't flicker the overlay
+  // in and out within a few hundred ms.
+  _hideLoadingOverlay() {
+    const overlay = this.el.querySelector(".byob-loading");
+    if (!overlay) return;
+
+    const LOADING_MIN_LIFETIME_MS = 250;
+    const elapsed = performance.now() - (this._loadingShownAt || 0);
+    if (elapsed < LOADING_MIN_LIFETIME_MS) {
+      if (this._loadingHideTimer) return;
+      this._loadingHideTimer = setTimeout(
+        () => this._hideLoadingOverlay(),
+        LOADING_MIN_LIFETIME_MS - elapsed
+      );
+      return;
+    }
+
+    if (this._loadingHideTimer) {
+      clearTimeout(this._loadingHideTimer);
+      this._loadingHideTimer = null;
+    }
+    overlay.remove();
+  },
+
   // Tell the server we've loaded the current media item. Called
   // from each player adapter's onReady (which fires regardless of
   // whether autoplay succeeded) AND as a belt-and-suspenders signal
