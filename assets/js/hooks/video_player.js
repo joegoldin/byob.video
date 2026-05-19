@@ -1585,6 +1585,13 @@ const VideoPlayer = {
     // The click-to-play overlay takes over the surface from us.
     this._hideLoadingOverlay();
 
+    // Pre-seek the player to the room's expected position BEFORE the
+    // user clicks. The IFrame caches the position so when they click
+    // the YT play button (through our pass-through overlay), playback
+    // starts at the right spot instead of 0. (`seekTo` doesn't require
+    // a user gesture — only `playVideo` does.)
+    if (position != null) this._seekTo(position);
+
     const overlay = document.createElement("div");
     overlay.className = "byob-click-to-play";
     // Thumbnail background so the user sees the video even when the
@@ -1592,7 +1599,14 @@ const VideoPlayer = {
     const thumbBg = this._lastThumb
       ? `background-image:url(${JSON.stringify(this._lastThumb)});background-size:cover;background-position:center;`
       : "";
-    overlay.style.cssText = `position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;cursor:pointer;background:#000;${thumbBg}`;
+    // pointer-events:none — the click goes through to the YouTube IFrame
+    // underneath. Programmatic playVideo() doesn't satisfy strict
+    // autoplay policies (mobile, some desktop configs), but a direct
+    // click on the IFrame does. Our play-button graphic sits over YT's
+    // play button so the user's click lands on the right target either
+    // way. The overlay is removed by _onPlayerStateChange when the
+    // player actually transitions to playing or buffering.
+    overlay.style.cssText = `position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;background:#000;pointer-events:none;${thumbBg}`;
 
     const dim = document.createElement("div");
     dim.style.cssText = "position:absolute;inset:0;background:rgba(0,0,0,0.4);";
@@ -1608,14 +1622,6 @@ const VideoPlayer = {
       <span style="color:white;opacity:0.8;font-size:11px;text-shadow:0 1px 3px rgba(0,0,0,0.5);">(Tip: enable autoplay to skip this)</span>
     `;
     overlay.appendChild(btn);
-
-    overlay.addEventListener("click", () => {
-      overlay.remove();
-      this.suppression.suppress("playing");
-      if (position != null) this._seekTo(position);
-      this._play();
-      this.reconcile.start();
-    }, { once: true });
 
     this.el.appendChild(overlay);
 

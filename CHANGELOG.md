@@ -3,6 +3,35 @@
 
 ---
 
+# v6.8.72
+
+### Click-to-play overlay is now pass-through
+
+The "Click to join playback" overlay (`byob-click-to-play`,
+shown when autoplay was blocked) used to capture the click and
+call `playVideo()` programmatically. On mobile and some strict-
+autoplay desktop configs, programmatic play doesn't satisfy
+YouTube's user-gesture requirement — so users had to click twice:
+once to dismiss our overlay, once on the YouTube player itself.
+
+The overlay is now `pointer-events: none`. The click passes
+straight through to the YT IFrame underneath. Our play-button
+graphic is positioned where YT's play button is, so a single
+click lands on the right target either way. The overlay is
+removed by `_onPlayerStateChange` once playback actually starts.
+
+We also pre-seek the player to the room's expected position when
+showing the overlay (the IFrame caches the seek without needing a
+gesture), so when the user clicks YT, playback starts at the
+right position instead of 0.
+
+`byob-join-ready` (the paused-room "Click to join the room"
+overlay) is unchanged — it intentionally does NOT start playback
+(the room is paused), so it still needs its play+pause-poke
+click handler.
+
+---
+
 # v6.8.71
 
 ### Loading overlay so new-video starts don't look broken
