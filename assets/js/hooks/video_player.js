@@ -784,6 +784,10 @@ const VideoPlayer = {
   },
 
   _onYTError(event) {
+    // Error fallback (handleYTError) replaces el.innerHTML, which would
+    // implicitly nuke any overlay child anyway — but be explicit so
+    // _loadingHideTimer / _loadingShownAt are cleaned up too.
+    this._hideLoadingOverlay();
     handleYTError(this, event);
   },
 
@@ -1518,6 +1522,8 @@ const VideoPlayer = {
     // pill — playback is paused waiting on the user, so the syncing
     // status is misleading. Bypass the deferred-hide grace.
     this._hideSyncingOverlayNow?.();
+    // The join-ready overlay takes over the surface from us.
+    this._hideLoadingOverlay();
     const overlay = document.createElement("div");
     overlay.className = "byob-join-ready";
     // Background layer: video thumbnail (so the user sees the video even
@@ -1576,6 +1582,8 @@ const VideoPlayer = {
     // Click-to-play means playback is gated on the user — the
     // "Re-syncing…" pill would be misleading next to the gated state.
     this._hideSyncingOverlayNow?.();
+    // The click-to-play overlay takes over the surface from us.
+    this._hideLoadingOverlay();
 
     const overlay = document.createElement("div");
     overlay.className = "byob-click-to-play";
