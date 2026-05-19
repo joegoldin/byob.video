@@ -3,6 +3,51 @@
 
 ---
 
+# v6.8.70
+
+### Stop the periodic "everyone hitches" cascade
+
+Every ~minute or two, all peers in a room would briefly show the
+"Syncing…" overlay one after another — sometimes once each, sometimes
+two or three rounds in a row. Nothing was actually broken; the system
+was correctly seek-correcting individual peers as their drift crossed
+the 300 ms tolerance line. The problem was that drift was *allowed* to
+grow that far before the room-clock-adjust mechanism kicked in.
+
+`@clock_adjust_min_drift_ms` was set to 50 ms. With YouTube IFrame
+peers accumulating ~1–3 ms/s of playback-rate skew (typical), after
+each 5 s clock-adjust pass the `raw_shift` (least-bad drift in the
+all-behind case, damped median in the mixed case) was almost always
+under 50 ms — so the adjust silently no-op'd. Drift kept piling up
+until individual peers crossed 300 ms one by one and got seek-
+commanded, producing the visible cascade.
+
+Lowering the threshold to 15 ms — just above typical room jitter —
+lets the adjust fire on the actual drift patterns we see in
+production:
+
+- **Same-sign drifts** (everyone behind canonical): every 5 s, shift
+  by the least-negative drift. With typical 3 ms/s accumulation,
+  drift never exceeds ~15 ms.
+- **Mixed-sign drifts** (one peer at -227 ms while others sit near
+  0): the 0.5× damping is unchanged, so corrections stay
+  conservative — but now they actually fire on the realistic
+  magnitudes. The asymmetric case in our screenshot shifts by ~27
+  ms instead of being ignored.
+
+Per-pass shift remains bounded by `@clock_adjust_max_per_pass_ms`
+(1000 ms) and is well below the client-side
+`JITTER_REJECT_DELTA_MS` (500 ms), so peers merge it smoothly
+instead of treating it as a position discontinuity. Symmetric
+zero-mean cases (drifts like `[-5, +5, 0]`) still don't trigger —
+damped median is 0, no churn.
+
+Truly bidirectional drift (one peer at +300 while another is at
+-300) still needs individual seeks; the room clock can only go one
+way. That's the same trade-off as before.
+
+---
+
 # v6.8.69
 
 ### Hotfix: backgrounded tab snaps the whole room back on return

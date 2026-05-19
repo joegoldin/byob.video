@@ -114,7 +114,18 @@ defmodule Byob.RoomServer do
   # corrections converge in a handful of seconds without yanking the
   # canonical reference dramatically in any single broadcast.
   @clock_adjust_interval_ms 5_000
-  @clock_adjust_min_drift_ms 50
+  # Lowered from 50 → 15 ms (v6.8.70). At 50 ms the room-clock-adjust
+  # silently skipped most realistic drift patterns: peers typically
+  # accumulate 1–3 ms/s of playback-rate skew, so after a 5 s pass the
+  # all-behind raw_shift was ≤ 30 ms — never crossing the threshold.
+  # Drifts kept growing until individual peers crossed the 300 ms seek
+  # tolerance one-by-one, producing the visible cascade of "Syncing…"
+  # hitches. 15 ms is just above typical room jitter (~15 ms in
+  # production), so we track real systematic skew without chasing noise.
+  # Each per-pass shift is still bounded by @clock_adjust_max_per_pass_ms
+  # and well below the client-side JITTER_REJECT_DELTA_MS (500 ms), so
+  # peers smooth-merge it instead of treating it as a discontinuity.
+  @clock_adjust_min_drift_ms 15
   @clock_adjust_mixed_damping 0.5
   @clock_adjust_max_per_pass_ms 1_000
   @drift_sample_stale_ms 5_000
