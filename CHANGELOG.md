@@ -3,6 +3,27 @@
 
 ---
 
+# v6.8.71
+
+### Loading overlay so new-video starts don't look broken
+
+The 5-8 s "black screen" between `:video_changed` and `:sync_play`
+(server ready-check handshake + YT IFrame load) now shows a
+full-surface overlay: video thumbnail dimmed, centered spinner,
+"Loading…" label. Hides on the player's first stable state
+(playing or paused), and yields to the `byob-join-ready` /
+`byob-click-to-play` / YT embed-error fallback when those take
+over the surface.
+
+Cosmetic only — doesn't touch `@ready_check_timeout_ms`, doesn't
+change the sync protocol, doesn't preload the next queue item.
+Reuses the same `byob-spin` keyframe the syncing pill uses
+(injected lazily, idempotent guard) and the same z-index 10 layer
+as the existing interactive thumbnail overlays. 250 ms minimum
+lifetime keeps the fast `loadVideoById` reuse path from flickering.
+
+---
+
 # v6.8.70
 
 ### Stop the periodic "everyone hitches" cascade
