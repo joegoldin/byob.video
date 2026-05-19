@@ -703,6 +703,8 @@ const VideoPlayer = {
       // (rare but possible during reuse paths). _signalLoaded is
       // idempotent per item_id.
       this._signalLoaded();
+      // Player has reached a stable state — the loading overlay's job is done.
+      this._hideLoadingOverlay();
       // If we were loading-for-pause, the pause has landed — don't push it
       if (this._loadingPaused && stateName === "paused") {
         this._loadingPaused = false;
