@@ -250,6 +250,7 @@ const VideoPlayer = {
     if (this._liveDetectionInterval) clearInterval(this._liveDetectionInterval);
     if (this._extPollInterval) clearInterval(this._extPollInterval);
     if (this._extBtnPoll) clearInterval(this._extBtnPoll);
+    if (this._loadingWatchdog) clearInterval(this._loadingWatchdog);
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
     if (this._unloadHandler) window.removeEventListener("beforeunload", this._unloadHandler);
     if (this._resizeHandler) window.removeEventListener("resize", this._resizeHandler);
@@ -643,6 +644,16 @@ const VideoPlayer = {
     if (stateName === "playing" || stateName === "buffering") {
       this.el.querySelector(".byob-join-ready")?.remove();
       this.el.querySelector(".byob-click-to-play")?.remove();
+    }
+
+    // Loading overlay's job is done the moment the player reaches a stable
+    // state. Defensive: not gated by `_playerSettled` so an event firing
+    // when the flag is already true (e.g. an LV-reconnect-triggered
+    // second _loadVideo whose state changes arrive before _playerSettled
+    // gets reset) still hides any stale overlay. Idempotent — no-op if
+    // there's nothing to hide.
+    if (stateName === "playing" || stateName === "paused") {
+      this._hideLoadingOverlay();
     }
 
     // The "Syncing…" overlay hides only when the player has actually
@@ -1892,6 +1903,21 @@ const VideoPlayer = {
     overlay.appendChild(stack);
 
     this.el.appendChild(overlay);
+
+    // Watchdog: poll the player state every 500 ms and hide the overlay
+    // if the player is already playing or paused. The primary hide is
+    // event-driven (_onPlayerStateChange), but the YT IFrame sometimes
+    // doesn't re-emit state events when loadVideoById is called for the
+    // same video already playing (notably after an LV reconnect that
+    // re-runs `_loadVideo` against the live player). Without the
+    // watchdog the overlay would sit forever in that case.
+    if (this._loadingWatchdog) clearInterval(this._loadingWatchdog);
+    this._loadingWatchdog = setInterval(() => {
+      const s = this.player?.getState?.();
+      if (s === "playing" || s === "paused") {
+        this._hideLoadingOverlay();
+      }
+    }, 500);
   },
 
   // Hide the loading overlay. Honors a 250 ms minimum lifetime so the
@@ -1899,7 +1925,15 @@ const VideoPlayer = {
   // in and out within a few hundred ms.
   _hideLoadingOverlay() {
     const overlay = this.el.querySelector(".byob-loading");
-    if (!overlay) return;
+    if (!overlay) {
+      // No overlay to remove, but still clean up the watchdog so an
+      // orphaned interval doesn't keep polling after the final hide.
+      if (this._loadingWatchdog) {
+        clearInterval(this._loadingWatchdog);
+        this._loadingWatchdog = null;
+      }
+      return;
+    }
 
     const LOADING_MIN_LIFETIME_MS = 250;
     const elapsed = performance.now() - (this._loadingShownAt || 0);
@@ -1915,6 +1949,10 @@ const VideoPlayer = {
     if (this._loadingHideTimer) {
       clearTimeout(this._loadingHideTimer);
       this._loadingHideTimer = null;
+    }
+    if (this._loadingWatchdog) {
+      clearInterval(this._loadingWatchdog);
+      this._loadingWatchdog = null;
     }
     overlay.remove();
   },

@@ -3,6 +3,36 @@
 
 ---
 
+# v6.8.73
+
+### Loading overlay sometimes got stuck while video played underneath
+
+The hide path was gated on `_onPlayerStateChange` firing with
+`stateName` of `"playing"` or `"paused"` while `_playerSettled` was
+still `false`. Some paths failed that gate even though the player
+had genuinely reached a stable state:
+
+- **LV reconnect re-loads the same video.** After a >15 s WS drop
+  the LiveView process dies, reconnect re-runs mount, server
+  re-pushes `:sync_state`, client runs `_loadVideo` against the
+  player that's *still* playing. The YT IFrame may treat
+  `loadVideoById` for the same videoId as a no-op and never
+  re-emit state events. `_playerSettled` resets to `false` but no
+  event fires to flip it back — overlay stays.
+- **Missed state events** for other transient reasons.
+
+Two defenses:
+
+1. The hide call in `_onPlayerStateChange` is now unconditional on
+   `playing`/`paused` — not gated by `_playerSettled`. Multiple
+   hides are no-ops (overlay element is queried before removal).
+2. A 500 ms polling watchdog inside `_showLoadingOverlay` checks
+   `player.getState()` and hides if the player is in a stable
+   state. Cleared on hide and on hook teardown. Catches the
+   no-state-event case.
+
+---
+
 # v6.8.72
 
 ### Click-to-play overlay is now pass-through
