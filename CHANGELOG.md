@@ -3,6 +3,40 @@
 
 ---
 
+# v6.8.74
+
+### Extension stays quiet + idle on non-byob pages
+
+The content script is injected on `<all_urls>` — it has to be, because
+when you click "open in window" for a third-party player the script must
+already be present on whatever arbitrary site opens. On ordinary pages it
+was already *dormant* (it never hooks video or syncs unless the tab was
+opened from a byob room), but it was noisy and chatty about it:
+
+- `_DEBUG` was hardcoded `true`, so every page — and every iframe, since
+  the content script runs with `all_frames: true` — printed `[byob] …`
+  lines to the console.
+- `tryActivate` polled the service worker 6× per frame
+  (`BYOB_CHECK_MANAGED`, 500 ms apart) on every page before giving up,
+  waking the MV3 worker repeatedly for nothing.
+
+Now:
+
+- Debug logging defaults **off** in both `content.js` and
+  `background.js` (the `[byob/bg]` console output is gated too).
+  Re-enable with `chrome.storage.local.set({ byob_debug: true })`.
+- The background reports `idle: true` from `BYOB_CHECK_MANAGED` when no
+  popup-open is in flight; the content script then stops after a single
+  probe instead of retrying. Genuine "open in window" popups are
+  unaffected — they probe at `document_idle`, well after the opener's
+  `byob:open-external` registers a pending entry, so `idle` is `false`
+  and the retry race-guard still runs.
+
+Net effect: on a non-byob page the extension does one silent managed
+check and stops — no console spam, no repeated service-worker wakeups.
+
+---
+
 # v6.8.73
 
 ### Loading overlay sometimes got stuck while video played underneath

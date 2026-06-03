@@ -86,6 +86,21 @@ const EVT = Object.freeze({
   BYOB_READY_COUNT: "byob:ready-count",
 });
 
+// Debug logging is off by default so the service worker doesn't print
+// [byob/bg] lines for the managed-check probes that fire on every page.
+// Flip on with: chrome.storage.local.set({ byob_debug: true }). We gate
+// at the console.log seam rather than at ~30 call sites; console.error
+// is left untouched so genuine failures always surface.
+let _BG_DEBUG = false;
+try {
+  chrome.storage.local
+    .get("byob_debug")
+    .then((r) => { _BG_DEBUG = !!(r && r.byob_debug); })
+    .catch(() => {});
+} catch (_) {}
+const _origConsoleLog = console.log.bind(console);
+console.log = (...args) => { if (_BG_DEBUG) _origConsoleLog(...args); };
+
 // Tabs the user opened *from a byob room* are tracked so the content
 // script only activates sync there. Without this, any stale chrome
 // .storage.local entry let us hook into tabs opened by other tools
@@ -1048,7 +1063,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           `tabUrl=${tabUrl} claimedFrom=${claimedFrom || "none"} ` +
           `pending=[${[...pendingByobOpens.keys()]}] managed=[${[...byobManagedTabs.keys()]}]`
       );
-      sendResponse(cfg ? { managed: true, config: cfg } : { managed: false });
+      // When no popup-open is in flight, no tab can become managed — tell
+      // the content script to stop polling rather than retry 6× on every
+      // ordinary page. Race-safe: a genuine popup probes at document_idle,
+      // long after the opener's BYOB_OPEN_EXTERNAL set a pending entry.
+      expirePendingOpens();
+      const idle = !cfg && pendingByobOpens.size === 0;
+      sendResponse(cfg ? { managed: true, config: cfg } : { managed: false, idle });
     })();
     return true; // async response
   }

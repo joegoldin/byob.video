@@ -170,7 +170,16 @@
   let clockSynced = false;
   let syncToleranceMs = 250;       // room-wide dead zone (server can widen)
 
-  const _DEBUG = true;
+  // Off by default so the content script is silent on every ordinary page
+  // it's injected into (manifest matches <all_urls>). Flip on for debugging
+  // with: chrome.storage.local.set({ byob_debug: true }).
+  let _DEBUG = false;
+  try {
+    chrome.storage.local
+      .get("byob_debug")
+      .then((r) => { _DEBUG = !!(r && r.byob_debug); })
+      .catch(() => {});
+  } catch (_) {}
   function _log(...args) {
     if (!_DEBUG) return;
     console.log("[byob]", ...args);
@@ -448,6 +457,12 @@
           activate(room_id, server_url, token, username);
           return;
         }
+        // BG has no popup-open in flight, so this tab can never become
+        // managed — stop immediately instead of polling the service
+        // worker 6× on every ordinary page. Race-safe: a genuine popup
+        // probes at document_idle, long after the opener page's
+        // BYOB_OPEN_EXTERNAL registered a pending entry (idle=false).
+        if (response?.idle) return;
       } catch (e) {
         _log(`tryActivate attempt=${attempt} error:`, e);
       }
