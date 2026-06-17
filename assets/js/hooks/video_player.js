@@ -7,6 +7,7 @@ import * as TwitchPlayer from "../players/twitch";
 import * as DirectPlayer from "../players/direct";
 import * as ExtensionPlayer from "../players/extension";
 import { handleYTError } from "../players/youtube_error";
+import { loadYouTubeAPI } from "../lib/youtube_loader";
 import * as SponsorBlock from "../sponsor_block";
 import { showToast, showSkipToast } from "../ui/toasts";
 import { showQueueFinished } from "../ui/queue_finished";
@@ -24,6 +25,15 @@ const LIVE_DETECTION_INTERVAL_MS = 3000;
 
 const VideoPlayer = {
   mounted() {
+    // Warm up playback BEFORE anything else so the network requests are
+    // in flight while the rest of mount runs. The first video otherwise
+    // pays a full cold-start tax — DNS + TLS to YouTube's hosts and a
+    // fetch of iframe_api → www-widgetapi.js → base.js — all serially,
+    // ~1-1.5 s of dead time before the player can even fire onReady.
+    // Scoped to the room (this hook) rather than the global layout so the
+    // landing page never opens connections to YouTube.
+    this._warmUpPlayback();
+
     this.player = null;
     this.clockSync = new ClockSync((event, payload) =>
       this.pushEvent(event, payload)
@@ -1987,6 +1997,41 @@ const VideoPlayer = {
     if (this._loadedReportedFor === itemId) return;
     this._loadedReportedFor = itemId;
     this.pushEvent(LV_EVT.EV_VIDEO_LOADED, { item_id: itemId });
+  },
+
+  // Preconnect to the hosts a YouTube embed pulls from and kick off the
+  // IFrame API load immediately, so the first video's player is created
+  // against an already-warm connection + ready window.YT instead of a
+  // cold start. The API loader is a page-level singleton, so this is a
+  // no-op if a previous mount (or the first _loadVideo) already started
+  // it. Idempotent: each preconnect link is added at most once.
+  _warmUpPlayback() {
+    try {
+      const hosts = [
+        "https://www.youtube.com",
+        "https://s.ytimg.com",
+        "https://i.ytimg.com",
+      ];
+      for (const href of hosts) {
+        if (
+          document.head.querySelector(
+            `link[rel="preconnect"][data-byob-preconnect="${href}"]`
+          )
+        ) {
+          continue;
+        }
+        const link = document.createElement("link");
+        link.rel = "preconnect";
+        link.href = href;
+        link.dataset.byobPreconnect = href;
+        document.head.appendChild(link);
+      }
+      // Fire-and-forget — we don't await; we just want the script fetch
+      // happening now so it overlaps room render and the user's first
+      // interaction. Swallow errors (non-YouTube rooms still benefit from
+      // the preconnects; a failed API load is the same as the lazy path).
+      loadYouTubeAPI().catch(() => {});
+    } catch (_) {}
   },
 
   // Push the current tab visibility to the server, deduped so we only
