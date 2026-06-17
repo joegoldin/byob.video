@@ -82,10 +82,15 @@ defmodule Byob.RoomServer do
   @persist_interval_ms 5_000
   @rate_limit_reset_interval_ms 5_000
   @sync_broadcast_debounce_ms 500
-  # Max time to wait for all clients to signal `video:loaded` before
-  # we broadcast :sync_play anyway. Long enough for cold YT loads on
-  # mobile, short enough that one stuck peer doesn't strand the room.
-  @ready_check_timeout_ms 8_000
+  # Max time to wait for the visible clients to signal `video:loaded`
+  # before we broadcast :sync_play anyway. This is the ceiling on "time
+  # to first play" when a peer is slow to load — w2g-style, we'd rather
+  # start promptly and let a laggard hard-seek to catch up than make the
+  # whole room stare at a black frame. Was 8 s (a backgrounded tab that
+  # never reported `video:loaded` made every start hit the full timeout);
+  # now that hidden tabs are excluded from the quorum, the remaining wait
+  # is only a genuinely-slow visible loader, so a tight cap is safe.
+  @ready_check_timeout_ms 2_500
   # How long after a user-initiated seek to keep the room clock
   # frozen. The originator's player is still settling at the new
   # position during this window; their drift contribution would
@@ -105,10 +110,16 @@ defmodule Byob.RoomServer do
   # All peers ahead (drift > 0):
   #   Shift by `Enum.min(drifts)` — symmetric.
   #
-  # Mixed signs:
-  #   Shift by median (robust to outliers). Damped 0.5 because some peers
-  #   *will* end up further from 0 (the ones on the opposite side of
-  #   median); half-step keeps that disruption bounded.
+  # Mixed signs (peers disagree — some ahead, some behind):
+  #   HOLD. There's no room-wide skew to track here; any shift would push
+  #   the peers on the far side of 0 further out, knock the already-synced
+  #   peers off, and feed a round-robin reseek cascade. Leave the canonical
+  #   reference put and let per-user `Byob.SyncDecision` seek the individual
+  #   outliers in to it — the "only the bad client syncs up" consensus rule.
+  #
+  # Only VISIBLE peers' drift samples feed this (hidden/backgrounded tabs
+  # are filtered out up front): a throttled tab's stale drift must never
+  # drag the shared reference and hitch everyone else.
   #
   # Capped at 1000 ms per pass and run every 5 s, so even pathological
   # corrections converge in a handful of seconds without yanking the
@@ -126,7 +137,6 @@ defmodule Byob.RoomServer do
   # and well below the client-side JITTER_REJECT_DELTA_MS (500 ms), so
   # peers smooth-merge it instead of treating it as a discontinuity.
   @clock_adjust_min_drift_ms 15
-  @clock_adjust_mixed_damping 0.5
   @clock_adjust_max_per_pass_ms 1_000
   @drift_sample_stale_ms 5_000
   # Defer the side effects of a leave (broadcast "left" toast, pause room
@@ -208,6 +218,14 @@ defmodule Byob.RoomServer do
   # ready check; once everyone has reported in, broadcasts :sync_play.
   def video_loaded(pid, user_id, item_id) do
     GenServer.cast(pid, {:video_loaded, user_id, item_id})
+  end
+
+  # A user's browser tab changed visibility (Page Visibility API). Hidden
+  # tabs are excluded from the ready-check quorum, server-driven seek
+  # commands, and room-clock consensus — see the `hidden` field on the
+  # user struct and its read sites.
+  def set_visibility(pid, user_id, hidden) do
+    GenServer.cast(pid, {:set_visibility, user_id, hidden})
   end
 
   def add_to_queue(pid, user_id, url, mode) do
@@ -448,7 +466,11 @@ defmodule Byob.RoomServer do
         username: username,
         joined_at: System.monotonic_time(:millisecond),
         connected: true,
-        is_extension: is_extension
+        is_extension: is_extension,
+        # Page Visibility state. Fresh joiners default to visible; the
+        # client's VideoPlayer hook reports actual visibility on mount
+        # (covers tabs opened in the background) and on every change.
+        hidden: false
       })
       |> maybe_set_host(user_id)
 
@@ -1510,6 +1532,31 @@ defmodule Byob.RoomServer do
   end
 
   @impl true
+  def handle_cast({:set_visibility, user_id, hidden}, state) do
+    case Map.get(state.users, user_id) do
+      nil ->
+        {:noreply, state}
+
+      user ->
+        was_hidden = Map.get(user, :hidden, false)
+        state = put_in(state.users[user_id], Map.put(user, :hidden, !!hidden))
+
+        # If a tab goes hidden while we're mid ready-check, it no longer
+        # counts toward the quorum — re-evaluate so the room can start
+        # without waiting on a backgrounded peer that may never emit
+        # `video:loaded` until it's foregrounded again.
+        state =
+          if hidden and not was_hidden and state.ready_check_timer != nil do
+            maybe_finish_ready_check(state)
+          else
+            state
+          end
+
+        {:noreply, state}
+    end
+  end
+
+  @impl true
   def handle_info(:check_empty, state) do
     connected_count = Enum.count(state.users, fn {_, u} -> u.connected end)
 
@@ -1737,8 +1784,23 @@ defmodule Byob.RoomServer do
           updated_at: now
         })
 
-      {user_state, new_user_state, seek_command, tolerance_ms, cooldown_ms} =
+      hidden? = user_hidden?(state, user_id)
+
+      {user_state, computed_user_state, computed_seek, tolerance_ms, cooldown_ms} =
         run_sync_decision(state, data, drift_samples, user_id, now)
+
+      # Backgrounded tab: never force a resync (its throttled player can't
+      # act on the seek promptly, and nobody's watching it) and don't let
+      # this report mutate the tab's decision state — keep it pristine so
+      # it can take a single corrective seek the instant it's foregrounded
+      # again. Drift is still recorded above; clock-adjust and room-jitter
+      # exclude hidden tabs at their own read sites.
+      {new_user_state, seek_command} =
+        if hidden? do
+          {Map.get(state.user_sync_states, user_id) || Byob.SyncDecision.new(), nil}
+        else
+          {computed_user_state, computed_seek}
+        end
 
       user_sync_states = Map.put(state.user_sync_states, user_id, new_user_state)
       state = %{state | drift_samples: drift_samples, user_sync_states: user_sync_states}
@@ -1788,9 +1850,16 @@ defmodule Byob.RoomServer do
   def handle_info(:adjust_room_clock, state) do
     now = System.monotonic_time(:millisecond)
 
+    # Only HEALTHY peers shape the canonical clock: non-stale samples from
+    # VISIBLE tabs. A backgrounded tab's timers are throttled, so its drift
+    # sample is stale/jumpy; letting it into the consensus drags the shared
+    # reference and forces every other peer to re-seek — the "round-robin"
+    # hitch. Hidden tabs catch up via their own seek on return instead.
     active_drifts =
       state.drift_samples
-      |> Enum.filter(fn {_, %{updated_at: t}} -> now - t < @drift_sample_stale_ms end)
+      |> Enum.filter(fn {uid, %{updated_at: t}} ->
+        now - t < @drift_sample_stale_ms and not user_hidden?(state, uid)
+      end)
       |> Enum.map(fn {_, %{drift_ms: d}} -> d end)
 
     user_seek_recent? =
@@ -2165,11 +2234,16 @@ defmodule Byob.RoomServer do
   # cancel the timer and start playback.
   defp maybe_finish_ready_check(state) do
     item_id = current_media_id(state)
-    connected_ids = connected_user_ids(state)
+    # Only the VISIBLE connected users gate the start. A backgrounded tab's
+    # player is timer-throttled and may not fire `video:loaded` until it's
+    # foregrounded; making the whole room wait on it (up to the timeout)
+    # was the dominant cause of the multi-second "time to first play". The
+    # hidden peer catches up via a single SyncDecision seek once it returns.
+    waiting_on = visible_connected_user_ids(state)
 
     all_loaded? =
-      connected_ids != [] and
-        Enum.all?(connected_ids, fn uid ->
+      waiting_on != [] and
+        Enum.all?(waiting_on, fn uid ->
           Map.get(state.media_loaded_for, uid) == item_id
         end)
 
@@ -2190,7 +2264,8 @@ defmodule Byob.RoomServer do
 
     Logger.info(
       "[ready_check] room=#{state.room_id} reason=#{reason} " <>
-        "loaded=#{map_size(state.media_loaded_for)}/#{length(connected_user_ids(state))}"
+        "loaded=#{map_size(state.media_loaded_for)}/#{length(visible_connected_user_ids(state))} " <>
+        "(connected=#{length(connected_user_ids(state))})"
     )
 
     broadcast(state, {:sync_play, %{time: 0.0, server_time: now, user_id: nil}})
@@ -2224,6 +2299,28 @@ defmodule Byob.RoomServer do
     |> Enum.map(fn {uid, _} -> uid end)
   end
 
+  # True if the user's tab is backgrounded (Page Visibility "hidden").
+  # Unknown users are treated as visible (conservative — never silently
+  # drop a participant we don't have visibility data for yet).
+  defp user_hidden?(state, user_id) do
+    case Map.get(state.users, user_id) do
+      %{} = u -> Map.get(u, :hidden, false)
+      _ -> false
+    end
+  end
+
+  # Connected users whose tab is currently visible. This — not
+  # `connected_user_ids/1` — is the set the ready-check waits on, so a
+  # backgrounded peer (whose throttled player may never emit
+  # `video:loaded` until foregrounded) can't stall the room's start.
+  defp visible_connected_user_ids(state) do
+    state.users
+    |> Enum.filter(fn {_, u} ->
+      Map.get(u, :connected, false) and not Map.get(u, :hidden, false)
+    end)
+    |> Enum.map(fn {uid, _} -> uid end)
+  end
+
   # Choose how much to shift the canonical clock to minimize peers' |drift|.
   # Returns `{shift_ms, reason}`.
   defp clock_adjust_target(drifts) do
@@ -2242,23 +2339,20 @@ defmodule Byob.RoomServer do
         {Enum.min(drifts), "all-ahead"}
 
       true ->
-        # Mixed signs — peers on opposite sides of 0. Shifting in either
-        # direction moves some peers toward 0 and others away. Use median
-        # for the robust optimum and damp to limit per-pass disruption.
-        median = compute_median(drifts)
-        {trunc(median * @clock_adjust_mixed_damping), "mixed"}
-    end
-  end
-
-  defp compute_median(values) do
-    sorted = Enum.sort(values)
-    n = length(sorted)
-    mid = div(n, 2)
-
-    if rem(n, 2) == 0 do
-      div(Enum.at(sorted, mid - 1) + Enum.at(sorted, mid), 2)
-    else
-      Enum.at(sorted, mid)
+        # Mixed signs — peers disagree (some ahead, some behind). This is
+        # NOT room-wide systematic skew (that's the all-same-sign branches
+        # above, where a shift moves everyone toward 0 and makes nobody
+        # worse). Here any shift necessarily pushes the peers on the far
+        # side of 0 FURTHER out — moving the reference toward the laggards
+        # knocks the already-synced peers off, and their resulting seek
+        # feeds the next pass: the round-robin cascade the user is seeing.
+        #
+        # So HOLD the canonical reference and let per-user SyncDecision pull
+        # the individual outliers in to it. Consensus = the stable majority
+        # position stays put; only the off clients move. (Hidden tabs are
+        # already filtered out before we get here, so a backgrounded peer
+        # can't force us into this branch in the first place.)
+        {0, "mixed-hold"}
     end
   end
 

@@ -75,6 +75,11 @@ defmodule Byob.Events do
   def ev_video_drift_report, do: "video:drift_report"
   def ev_video_embed_blocked, do: "video:embed_blocked"
   def ev_video_live_status, do: "video:live_status"
+  # Browser tab visibility (Page Visibility API). Hidden tabs are
+  # excluded from the ready-check quorum, server-driven seek commands,
+  # and room-clock consensus — a backgrounded tab's throttled timers
+  # otherwise report stale drift and drag every other peer's sync.
+  def ev_video_visibility, do: "video:visibility"
 
   # ── Presence event strings (inside room_presence payloads) ──────────────
   def presence_joined, do: "joined"

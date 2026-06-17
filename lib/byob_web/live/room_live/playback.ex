@@ -32,6 +32,16 @@ defmodule ByobWeb.RoomLive.Playback do
 
   def handle_loaded(_, socket), do: {:noreply, socket}
 
+  def handle_visibility(%{"hidden" => hidden}, socket) do
+    if socket.assigns[:user_id] && socket.assigns[:room_pid] do
+      RoomServer.set_visibility(socket.assigns.room_pid, socket.assigns.user_id, !!hidden)
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_visibility(_, socket), do: {:noreply, socket}
+
   def handle_embed_blocked(_params, socket) do
     Analytics.track(
       "video_embed_blocked",

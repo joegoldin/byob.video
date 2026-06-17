@@ -24,6 +24,7 @@ defmodule ByobWeb.RoomLive do
   @ev_video_drift_report Events.ev_video_drift_report()
   @ev_video_live_status Events.ev_video_live_status()
   @ev_video_loaded Events.ev_video_loaded()
+  @ev_video_visibility Events.ev_video_visibility()
   @ev_sync_ping Events.in_sync_ping()
 
   def mount(%{"id" => room_id}, _session, socket) do
@@ -228,6 +229,9 @@ defmodule ByobWeb.RoomLive do
   def handle_event(@ev_video_seek, params, socket), do: Playback.handle_seek(params, socket)
   def handle_event(@ev_video_loaded, params, socket), do: Playback.handle_loaded(params, socket)
 
+  def handle_event(@ev_video_visibility, params, socket),
+    do: Playback.handle_visibility(params, socket)
+
   def handle_event(@ev_video_drift_report, params, socket) do
     # Local (browser) player reports its adjusted drift and learned offset so
     # the "Stats for nerds" panel can show it next to extension clients.
@@ -248,6 +252,7 @@ defmodule ByobWeb.RoomLive do
       observed_l_ms = trunc(params["observed_l_ms"] || 0)
       gesture_blocked = !!params["gesture_blocked"]
       playing = params["playing"] || false
+      hidden = !!params["hidden"]
 
       state = Byob.RoomServer.get_state(room_pid)
       now = System.monotonic_time(:millisecond)
@@ -275,6 +280,7 @@ defmodule ByobWeb.RoomLive do
            noise_floor_ms: noise_floor_ms,
            observed_l_ms: observed_l_ms,
            gesture_blocked: gesture_blocked,
+           hidden: hidden,
            server_position: Float.round(server_pos * 1.0, 1),
            play_state: if(playing, do: "playing", else: "paused")
          }}

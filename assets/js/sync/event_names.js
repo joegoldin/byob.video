@@ -40,6 +40,7 @@ export const LV_EVT = Object.freeze({
   EV_VIDEO_EMBED_BLOCKED: "video:embed_blocked",
   EV_VIDEO_DRIFT_REPORT: "video:drift_report",
   EV_VIDEO_LIVE_STATUS: "video:live_status",
+  EV_VIDEO_VISIBILITY: "video:visibility",
   EV_SYNC_PING: "sync:ping",
 
   // Page-world postMessage types (contract with extension/content.js)

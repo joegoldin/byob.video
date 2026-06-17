@@ -86,6 +86,22 @@ const VideoPlayer = {
     };
     window.addEventListener("beforeunload", this._unloadHandler);
 
+    // Report tab visibility to the server. A backgrounded tab's
+    // setInterval/timeout cadence is throttled by the browser (drift
+    // report, reconcile tick, state-check all slow to ~1 Hz or worse),
+    // so its drift measurements go stale and its player can't promptly
+    // act on a seek command. The server uses this flag to EXCLUDE hidden
+    // tabs from the ready-check quorum (so one backgrounded peer doesn't
+    // stall everyone's start), from server-driven seek commands (don't
+    // force-resync a tab nobody's looking at), and from room-clock
+    // consensus (a frozen tab must not drag the canonical reference and
+    // make every other peer hitch). Fire on every change AND once now —
+    // a tab opened in the background (cmd-click) is hidden at mount.
+    this._lastReportedHidden = null;
+    this._visibilityHandler = () => this._reportVisibility();
+    document.addEventListener("visibilitychange", this._visibilityHandler);
+    this._reportVisibility();
+
     // Listen for server events
     this.handleEvent(LV_EVT.SYNC_STATE, (state) => this._onSyncState(state));
     this.handleEvent(LV_EVT.SYNC_PLAY, (data) => this._onSyncPlay(data));
@@ -253,6 +269,7 @@ const VideoPlayer = {
     if (this._loadingWatchdog) clearInterval(this._loadingWatchdog);
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
     if (this._unloadHandler) window.removeEventListener("beforeunload", this._unloadHandler);
+    if (this._visibilityHandler) document.removeEventListener("visibilitychange", this._visibilityHandler);
     if (this._resizeHandler) window.removeEventListener("resize", this._resizeHandler);
     this._unloadHandler?.();
     if (this.player && this.player.destroy) {
@@ -1972,6 +1989,19 @@ const VideoPlayer = {
     this.pushEvent(LV_EVT.EV_VIDEO_LOADED, { item_id: itemId });
   },
 
+  // Push the current tab visibility to the server, deduped so we only
+  // emit on actual transitions (plus the initial mount report). Sent
+  // synchronously from the visibilitychange handler — that fires at the
+  // moment of transition, before the browser fully throttles this tab's
+  // timers, so the "I'm now hidden" signal reliably gets out even though
+  // subsequent drift reports will be throttled.
+  _reportVisibility() {
+    const hidden = !!document.hidden;
+    if (hidden === this._lastReportedHidden) return;
+    this._lastReportedHidden = hidden;
+    this.pushEvent(LV_EVT.EV_VIDEO_VISIBILITY, { hidden });
+  },
+
   // Push a single drift report to the server. Called both by the
   // regular cadence interval AND immediately when a sync seek lands
   // (so SyncDecision can fire the next compensating seek without
@@ -2037,6 +2067,7 @@ const VideoPlayer = {
       observed_l_ms: Math.round(observedL),
       gesture_blocked: gestureBlocked,
       playing: state === "playing",
+      hidden: !!document.hidden,
     });
   },
 
