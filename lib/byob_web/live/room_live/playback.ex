@@ -2,8 +2,9 @@ defmodule ByobWeb.RoomLive.Playback do
   @moduledoc """
   Handles playback event handlers extracted from RoomLive.
 
-  Covers: video:play, video:pause, video:seek, video:embed_blocked,
-  video:ended (two clauses), analytics:has_extension, and sync:ping.
+  Covers: video:play, video:pause, video:seek, video:rate,
+  video:embed_blocked, video:ended (two clauses), analytics:has_extension,
+  and sync:ping.
   """
 
   import Phoenix.LiveView, only: [push_event: 3]
@@ -24,6 +25,13 @@ defmodule ByobWeb.RoomLive.Playback do
     RoomServer.seek(socket.assigns.room_pid, socket.assigns.user_id, position)
     {:noreply, socket}
   end
+
+  def handle_rate(%{"rate" => rate}, socket) do
+    RoomServer.set_rate(socket.assigns.room_pid, socket.assigns.user_id, rate)
+    {:noreply, socket}
+  end
+
+  def handle_rate(_, socket), do: {:noreply, socket}
 
   def handle_loaded(%{"item_id" => item_id}, socket) when is_binary(item_id) do
     RoomServer.video_loaded(socket.assigns.room_pid, socket.assigns.user_id, item_id)

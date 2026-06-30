@@ -76,6 +76,10 @@ defmodule Byob.RoomServer do
 
   @max_log_entries 200
 
+  # Playback-speed bounds — match YouTube's selectable range (0.25×–2×).
+  @min_playback_rate 0.25
+  @max_playback_rate 2.0
+
   # Timing constants
   @state_heartbeat_interval_ms 5_000
   @sync_correction_interval_ms 1_000
@@ -211,6 +215,14 @@ defmodule Byob.RoomServer do
 
   def seek(pid, user_id, position) do
     GenServer.call(pid, {:seek, user_id, position})
+  end
+
+  # Set the canonical playback speed for the room. `rate` is a multiplier
+  # (e.g. 1.5 for 1.5×) originated by a user changing speed via the
+  # player's native controls. Server clamps it, stores it as canonical,
+  # and broadcasts `:sync_rate` so every client applies the same speed.
+  def set_rate(pid, user_id, rate) do
+    GenServer.call(pid, {:set_rate, user_id, rate})
   end
 
   # Client-side player has finished loading the given media item and is
@@ -1061,6 +1073,36 @@ defmodule Byob.RoomServer do
         # Originator is excluded — their player is already at `position`.
         state = broadcast_personalized_seek(state, position, now, user_id)
         {:reply, :ok, state}
+    end
+  end
+
+  def handle_call({:set_rate, user_id, rate}, _from, state) do
+    case normalize_rate(rate) do
+      nil ->
+        {:reply, {:error, :invalid_rate}, state}
+
+      new_rate ->
+        if rate_unchanged?(state.playback_rate, new_rate) do
+          # Already at this speed (or this is the echo of a rate we just
+          # broadcast). Don't re-broadcast — prevents echo loops.
+          {:reply, :ok, state}
+        else
+          old_rate = state.playback_rate || 1.0
+          now = System.monotonic_time(:millisecond)
+
+          state = %{state | playback_rate: new_rate, last_sync_at: now}
+
+          state =
+            log_activity(
+              state,
+              :rate_changed,
+              user_id,
+              "#{format_rate(old_rate)} → #{format_rate(new_rate)}"
+            )
+
+          broadcast(state, {:sync_rate, %{rate: new_rate, server_time: now, user_id: user_id}})
+          {:reply, :ok, state}
+        end
     end
   end
 
@@ -2188,8 +2230,10 @@ defmodule Byob.RoomServer do
     # Force paused while we wait for everyone to load, even if the
     # caller had set :playing intent. We remember the wanted state in
     # the timer; today every video-change caller wants :playing, so
-    # we hard-code that path.
-    state = %{state | play_state: :paused}
+    # we hard-code that path. Playback speed resets to 1× on each new
+    # video — `playback_rate` rides in `snapshot/1`, so a late joiner
+    # mid-video still picks up the room's current speed.
+    state = %{state | play_state: :paused, playback_rate: 1.0}
 
     state = cancel_ready_check(state)
     state = %{state | media_loaded_for: %{}}
@@ -2825,6 +2869,39 @@ defmodule Byob.RoomServer do
   end
 
   defp format_seconds(_), do: "0:00"
+
+  # Coerce a client-supplied playback rate into the allowed range, or nil
+  # if it isn't a usable number.
+  defp normalize_rate(rate) when is_number(rate) do
+    cond do
+      rate < @min_playback_rate -> @min_playback_rate
+      rate > @max_playback_rate -> @max_playback_rate
+      true -> rate / 1.0
+    end
+  end
+
+  defp normalize_rate(rate) when is_binary(rate) do
+    case Float.parse(rate) do
+      {n, _} -> normalize_rate(n)
+      :error -> nil
+    end
+  end
+
+  defp normalize_rate(_), do: nil
+
+  defp rate_unchanged?(current, new_rate), do: abs((current || 1.0) - new_rate) < 0.001
+
+  # 1.0 → "1x", 1.5 → "1.5x", 1.25 → "1.25x"
+  defp format_rate(rate) do
+    str =
+      rate
+      |> Float.round(2)
+      |> :erlang.float_to_binary(decimals: 2)
+      |> String.trim_trailing("0")
+      |> String.trim_trailing(".")
+
+    "#{str}x"
+  end
 
   defp current_media_added_by(state) do
     case state.current_index do

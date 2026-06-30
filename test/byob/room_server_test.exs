@@ -108,6 +108,51 @@ defmodule Byob.RoomServerTest do
     end
   end
 
+  describe "set_rate/3" do
+    test "stores canonical rate and broadcasts sync_rate", %{pid: pid, room_id: room_id} do
+      {:ok, _} = RoomServer.join(pid, "user1", "Test")
+      RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :now)
+
+      Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
+      :ok = RoomServer.set_rate(pid, "user1", 1.5)
+
+      assert_receive {:sync_rate, %{rate: 1.5, user_id: "user1"}}
+      assert RoomServer.get_state(pid).playback_rate == 1.5
+    end
+
+    test "clamps out-of-range rates to YouTube's bounds", %{pid: pid} do
+      {:ok, _} = RoomServer.join(pid, "user1", "Test")
+      RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :now)
+
+      :ok = RoomServer.set_rate(pid, "user1", 9.0)
+      assert RoomServer.get_state(pid).playback_rate == 2.0
+
+      :ok = RoomServer.set_rate(pid, "user1", 0.05)
+      assert RoomServer.get_state(pid).playback_rate == 0.25
+    end
+
+    test "does not re-broadcast when the rate is unchanged", %{pid: pid, room_id: room_id} do
+      {:ok, _} = RoomServer.join(pid, "user1", "Test")
+      RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :now)
+      :ok = RoomServer.set_rate(pid, "user1", 1.5)
+
+      Phoenix.PubSub.subscribe(Byob.PubSub, "room:#{room_id}")
+      :ok = RoomServer.set_rate(pid, "user1", 1.5)
+      refute_receive {:sync_rate, _}
+    end
+
+    test "resets to 1x when the video changes", %{pid: pid} do
+      {:ok, _} = RoomServer.join(pid, "user1", "Test")
+      RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=abc123", :now)
+      :ok = RoomServer.set_rate(pid, "user1", 1.75)
+      assert RoomServer.get_state(pid).playback_rate == 1.75
+
+      # Play-now a different video — broadcast_video_changed resets speed.
+      RoomServer.add_to_queue(pid, "user1", "https://youtube.com/watch?v=def456", :now)
+      assert RoomServer.get_state(pid).playback_rate == 1.0
+    end
+  end
+
   describe "add_to_queue/4" do
     test "adds item to queue with :queue mode", %{pid: pid} do
       {:ok, _} = RoomServer.join(pid, "user1", "Test")

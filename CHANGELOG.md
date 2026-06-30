@@ -3,6 +3,36 @@
 
 ---
 
+# v6.8.75
+
+### Synced playback speed + remembered YouTube volume
+
+Two playback quality-of-life additions for the YouTube player.
+
+**Speed is now synced across the room.** Change the speed from YouTube's
+own gear menu (1.25×, 1.5×, 2×, …) and everyone else follows instantly.
+The server holds the canonical rate, so a late joiner mid-video lands at
+the room's current speed, and the change shows up in the activity log
+("Alice set speed 1× → 1.5×") with a toast for everyone else. Speed
+resets to 1× on each new video.
+
+- Server: `playback_rate` is now a live, broadcast field. New
+  `RoomServer.set_rate/3` clamps to YouTube's 0.25×–2× range, logs a
+  `:rate_changed` activity entry, and broadcasts `sync:rate`. The rate
+  resets to 1× whenever the video changes.
+- Client: the hook listens to YouTube's `onPlaybackRateChange` and
+  echoes genuine user changes to the server, applying incoming
+  `sync:rate` to the player. An echo guard (compare against the known
+  room rate) keeps it from looping. Non-YouTube players still *receive*
+  and apply the synced rate; only YouTube's menu can originate one.
+
+**Your YouTube volume is remembered.** The player's volume and mute
+state are saved per-browser in `localStorage` (`byob_yt_volume`) — same
+local-only treatment as nicknames — and restored on every YouTube load.
+Nothing about volume is shared with the room.
+
+---
+
 # v6.8.74
 
 ### Extension stays quiet + idle on non-byob pages

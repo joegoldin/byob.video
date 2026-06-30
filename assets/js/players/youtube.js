@@ -75,6 +75,11 @@ export async function create(el, callbacks, opts) {
         },
         onStateChange: (event) => _onStateChange(event, callbacks),
         onError: (event) => callbacks.onError(event),
+        // Fires when the user picks a speed from YouTube's native gear
+        // menu. The hook broadcasts it so the whole room follows.
+        onPlaybackRateChange: (event) =>
+          callbacks.onPlaybackRateChange &&
+          callbacks.onPlaybackRateChange(event.data),
       },
     });
   });
@@ -105,6 +110,26 @@ function _wrap(rawPlayer) {
     },
     setPlaybackRate(rate) {
       if (rawPlayer.setPlaybackRate) rawPlayer.setPlaybackRate(rate);
+    },
+    getPlaybackRate() {
+      return rawPlayer.getPlaybackRate ? rawPlayer.getPlaybackRate() : 1;
+    },
+    // Volume is a per-browser preference (persisted in localStorage,
+    // never synced). 0–100 scale, matching the YT IFrame API.
+    getVolume() {
+      return rawPlayer.getVolume ? rawPlayer.getVolume() : null;
+    },
+    setVolume(v) {
+      if (rawPlayer.setVolume) rawPlayer.setVolume(v);
+    },
+    isMuted() {
+      return rawPlayer.isMuted ? rawPlayer.isMuted() : false;
+    },
+    mute() {
+      if (rawPlayer.mute) rawPlayer.mute();
+    },
+    unMute() {
+      if (rawPlayer.unMute) rawPlayer.unMute();
     },
     getState() {
       if (!rawPlayer.getPlayerState) return null;

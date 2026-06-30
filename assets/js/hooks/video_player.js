@@ -74,6 +74,15 @@ const VideoPlayer = {
     // report (server uses it as the overshoot for future seeks).
     this._seekIssuedAt = 0;
     this._lastObservedL = 0;
+    // Canonical room playback speed (server-authoritative). Applied to the
+    // player on load and whenever `sync:rate` arrives. Reset to 1× on each
+    // video change. `_onYTPlaybackRateChange` compares against this to tell
+    // a real user change (broadcast it) from the echo of one we applied.
+    this._roomRate = 1.0;
+    // Per-browser YouTube volume preference (NOT synced). Polled because
+    // the YT IFrame API has no volume-change event.
+    this._ytVolumePollInterval = null;
+    this._lastPersistedVolume = null;
     this.sponsorSegments = [];
     this.sponsorCheckInterval = null;
     this.sbSettings = {};
@@ -118,6 +127,7 @@ const VideoPlayer = {
     this.handleEvent(LV_EVT.SYNC_PAUSE, (data) => this._onSyncPause(data));
     this.handleEvent(LV_EVT.SYNC_PONG, (data) => this.clockSync.handlePong(data));
     this.handleEvent(LV_EVT.SYNC_CORRECTION, (data) => this._onSyncCorrection(data));
+    this.handleEvent(LV_EVT.SYNC_RATE, (data) => this._onSyncRate(data));
     this.handleEvent(LV_EVT.SYNC_HEARTBEAT, (data) => this._onSyncHeartbeat(data));
     this.handleEvent(LV_EVT.SYNC_ROOM_TOLERANCE, (data) => {
       // Server-driven model: room consensus is informational only. The
@@ -277,6 +287,7 @@ const VideoPlayer = {
     if (this._extPollInterval) clearInterval(this._extPollInterval);
     if (this._extBtnPoll) clearInterval(this._extBtnPoll);
     if (this._loadingWatchdog) clearInterval(this._loadingWatchdog);
+    if (this._ytVolumePollInterval) clearInterval(this._ytVolumePollInterval);
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
     if (this._unloadHandler) window.removeEventListener("beforeunload", this._unloadHandler);
     if (this._visibilityHandler) document.removeEventListener("visibilitychange", this._visibilityHandler);
@@ -290,6 +301,11 @@ const VideoPlayer = {
   // Two-step join: buffer state, clock sync, then apply
   async _onSyncState(state) {
     if (state.user_id) this.userId = state.user_id;
+    // Canonical speed from the snapshot — applied to the player in its
+    // onReady once it loads (a fresh join mid-video at 1.5× lands at 1.5×).
+    if (typeof state.playback_rate === "number") {
+      this._roomRate = state.playback_rate;
+    }
     this.bufferedState = state;
     await this.clockSync.start();
     this.clockSync.maintainSync();
@@ -485,6 +501,12 @@ const VideoPlayer = {
         this._applyPendingState();
         this._startSeekDetector();
         this._retrySponsorBar();
+        // Restore the user's saved volume, enforce the room's current
+        // speed (1× unless a late join landed mid-video), and start
+        // watching for native volume changes to persist.
+        this._applyYtVolumePref();
+        this._applyRoomRate();
+        this._startYtVolumePoll();
       },
       onLoadStart: () => {
         this.isReady = false;
@@ -502,6 +524,7 @@ const VideoPlayer = {
       onError: (event) => {
         this._onYTError(event);
       },
+      onPlaybackRateChange: (rate) => this._onYTPlaybackRateChange(rate),
     };
 
     if (canReuse) {
@@ -1018,6 +1041,10 @@ const VideoPlayer = {
     const item = data.media_item;
     this.el.dataset.currentIndex = data.index;
     this.reconcile.stop();
+    // Speed resets to 1× per video (server resets its canonical rate on
+    // change too). YouTube preserves the rate across loadVideoById, so the
+    // new player's onReady re-applies this explicitly via _applyRoomRate.
+    this._roomRate = 1.0;
 
     // If the new video is also extension-required, keep the popup window
     // and chrome.storage config alive — the extension's content script
@@ -2122,6 +2149,97 @@ const VideoPlayer = {
 
   _setPlaybackRate(rate) {
     this.player?.setPlaybackRate?.(rate);
+  },
+
+  // ── Synced playback speed ────────────────────────────────────────────
+
+  // Apply the room's canonical speed to the current player. Called on load
+  // and on every `sync:rate`. `_roomRate` is set first so the resulting
+  // onPlaybackRateChange echo is recognized and not re-broadcast.
+  _applyRoomRate() {
+    this._setPlaybackRate(this._roomRate || 1.0);
+  },
+
+  // Server pushed a new canonical speed (someone changed it). Apply it and
+  // toast when it originated from another user.
+  _onSyncRate(data) {
+    const rate = typeof data?.rate === "number" ? data.rate : 1.0;
+    this._roomRate = rate;
+    this._applyRoomRate();
+    if (data?.user_id && data.user_id !== this.userId) {
+      showToast(`Speed set to ${this._formatRate(rate)}`);
+    }
+  },
+
+  // YouTube's native gear menu changed the speed. If it differs from the
+  // room's known rate it's a genuine user action → broadcast it. If it
+  // matches, it's the echo of a rate we just applied → swallow it.
+  _onYTPlaybackRateChange(rate) {
+    if (typeof rate !== "number") return;
+    if (Math.abs(rate - (this._roomRate || 1.0)) < 0.001) return;
+    this._roomRate = rate;
+    this.pushEvent(LV_EVT.EV_VIDEO_RATE, { rate });
+  },
+
+  _formatRate(rate) {
+    // 1 -> "1×", 1.5 -> "1.5×", 1.25 -> "1.25×"
+    return `${parseFloat(Number(rate).toFixed(2))}×`;
+  },
+
+  // ── YouTube volume preference (per-browser, never synced) ────────────
+
+  _loadYtVolumePref() {
+    try {
+      const pref = JSON.parse(localStorage.getItem("byob_yt_volume") || "null");
+      if (!pref || typeof pref.volume !== "number") return null;
+      return { volume: pref.volume, muted: !!pref.muted };
+    } catch (_) {
+      return null;
+    }
+  },
+
+  // Restore the saved volume + mute state onto a freshly-loaded YT player.
+  _applyYtVolumePref() {
+    if (this.sourceType !== "youtube" || !this.player) return;
+    const pref = this._loadYtVolumePref();
+    if (!pref) return;
+    try {
+      this.player.setVolume?.(pref.volume);
+      if (pref.muted) this.player.mute?.();
+      else this.player.unMute?.();
+      // Seed the de-dupe key so the poll doesn't immediately re-persist
+      // the value we just applied.
+      this._lastPersistedVolume = `${Math.round(pref.volume)}:${pref.muted ? 1 : 0}`;
+    } catch (_) {}
+  },
+
+  // The YT IFrame API has no volume-change event, so poll and persist only
+  // when the value actually changes. Idempotent — clears any prior timer.
+  _startYtVolumePoll() {
+    if (this.sourceType !== "youtube") return;
+    if (this._ytVolumePollInterval) clearInterval(this._ytVolumePollInterval);
+    this._ytVolumePollInterval = setInterval(() => this._saveYtVolumePref(), 3000);
+  },
+
+  _saveYtVolumePref() {
+    if (this.sourceType !== "youtube" || !this.player) return;
+    let volume, muted;
+    try {
+      volume = this.player.getVolume?.();
+      muted = this.player.isMuted?.();
+    } catch (_) {
+      return;
+    }
+    if (typeof volume !== "number") return;
+    const key = `${Math.round(volume)}:${muted ? 1 : 0}`;
+    if (key === this._lastPersistedVolume) return;
+    this._lastPersistedVolume = key;
+    try {
+      localStorage.setItem(
+        "byob_yt_volume",
+        JSON.stringify({ volume: Math.round(volume), muted: !!muted })
+      );
+    } catch (_) {}
   },
 
   _sizePlayer() {

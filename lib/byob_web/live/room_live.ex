@@ -19,6 +19,7 @@ defmodule ByobWeb.RoomLive do
   @ev_video_play Events.ev_video_play()
   @ev_video_pause Events.ev_video_pause()
   @ev_video_seek Events.ev_video_seek()
+  @ev_video_rate Events.ev_video_rate()
   @ev_video_ended Events.ev_video_ended()
   @ev_video_embed_blocked Events.ev_video_embed_blocked()
   @ev_video_drift_report Events.ev_video_drift_report()
@@ -227,6 +228,7 @@ defmodule ByobWeb.RoomLive do
   def handle_event(@ev_video_play, params, socket), do: Playback.handle_play(params, socket)
   def handle_event(@ev_video_pause, params, socket), do: Playback.handle_pause(params, socket)
   def handle_event(@ev_video_seek, params, socket), do: Playback.handle_seek(params, socket)
+  def handle_event(@ev_video_rate, params, socket), do: Playback.handle_rate(params, socket)
   def handle_event(@ev_video_loaded, params, socket), do: Playback.handle_loaded(params, socket)
 
   def handle_event(@ev_video_visibility, params, socket),
@@ -381,6 +383,9 @@ defmodule ByobWeb.RoomLive do
 
   def handle_info({:sync_correction, data}, socket),
     do: PubSub.handle_sync_correction(data, socket)
+
+  def handle_info({:sync_rate, data}, socket),
+    do: PubSub.handle_sync_rate(data, socket)
 
   def handle_info({:state_heartbeat, data}, socket),
     do: PubSub.handle_state_heartbeat(data, socket)

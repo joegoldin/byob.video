@@ -20,6 +20,10 @@ defmodule ByobWeb.RoomLive.PubSub do
     {:noreply, push_event(socket, Events.sync_correction(), data)}
   end
 
+  def handle_sync_rate(data, socket) do
+    {:noreply, push_event(socket, Events.sync_rate(), data)}
+  end
+
   def handle_state_heartbeat(data, socket) do
     {:noreply, push_event(socket, Events.sync_heartbeat(), data)}
   end
