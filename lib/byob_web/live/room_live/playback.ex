@@ -50,13 +50,17 @@ defmodule ByobWeb.RoomLive.Playback do
 
   def handle_visibility(_, socket), do: {:noreply, socket}
 
-  def handle_embed_blocked(_params, socket) do
+  def handle_embed_blocked(params, socket) do
     Analytics.track(
       "video_embed_blocked",
       socket.assigns[:browser_id] || socket.assigns.user_id,
       %{
         room_id: socket.assigns.room_id,
-        source_type: "youtube_restricted"
+        source_type: "youtube_restricted",
+        # YT IFrame API code: 100 not found, 101/150 embed disabled,
+        # 153 missing Referer (client-side privacy tooling) — nil from
+        # clients older than this field.
+        error_code: params["code"]
       }
     )
 

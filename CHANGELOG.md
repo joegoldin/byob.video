@@ -3,6 +3,38 @@
 
 ---
 
+# v6.8.76
+
+### Explain YouTube embed failures caused by the viewer's own browser
+
+Some viewers were stuck popping out the player for *every* video, in
+every room, while everyone else played embedded fine. Root cause:
+YouTube now requires embeds to identify the host site via the HTTP
+`Referer` header (enforced since late 2025). Privacy tooling that
+strips that header — uBlock Origin's "Remove referrers", AdGuard's
+"Hide Referer", strict browser referrer prefs — breaks every embed
+for that one person. YouTube Restricted Mode (account, network, or
+DNS-level) causes the same one-user-only symptom.
+
+The page can't force the header (YouTube's IFrame API already sets
+`referrerpolicy="strict-origin-when-cross-origin"` on its iframe; the
+stripping happens at the network layer). What we can do is stop
+misdiagnosing it:
+
+- Handle YT error **153** (`embedder.identity.missing.referrer`) —
+  previously ignored entirely, leaving a dead player with no fallback
+  UI. It now gets the pop-out fallback with a message naming the real
+  cause and the permanent fix (allow referrers for this site, reload).
+- Error 100 (not found) no longer claims the video is age-restricted.
+- Errors 101/150 keep the age-restricted message but add a hint: if
+  the video plays for everyone else, referrer-stripping privacy
+  extensions or YouTube Restricted Mode are the likely cause.
+- The `video_embed_blocked` analytics event now records the numeric
+  `error_code`, so per-user failure patterns are diagnosable from
+  PostHog.
+
+---
+
 # v6.8.75
 
 ### Synced playback speed + remembered YouTube volume

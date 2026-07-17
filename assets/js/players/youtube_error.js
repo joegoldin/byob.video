@@ -2,13 +2,18 @@
  * YouTube embed error handler — builds fallback UI when a video can't be embedded
  * (age-restricted, embedding disabled by uploader, etc.).
  *
- * Error codes: 100 = not found, 101/150 = embedding restricted.
+ * Error codes: 100 = not found, 101/150 = embedding restricted,
+ * 153 = missing Referer header (YouTube enforces embedder identification
+ * since late 2025 — privacy extensions/settings that strip the Referer
+ * header break EVERY embed for that one user, while everyone else in the
+ * room plays fine).
  */
 import { LV_EVT } from "../sync/event_names";
 
 const YT_ERR_NOT_FOUND = 100;
 const YT_ERR_EMBED_DISABLED_1 = 101;
 const YT_ERR_EMBED_DISABLED_2 = 150;
+const YT_ERR_MISSING_REFERRER = 153;
 const EXT_POLL_INTERVAL_MS = 2000;
 
 /**
@@ -20,7 +25,12 @@ const EXT_POLL_INTERVAL_MS = 2000;
  */
 export function handleYTError(ctx, event) {
   const code = event.data;
-  if (code !== YT_ERR_NOT_FOUND && code !== YT_ERR_EMBED_DISABLED_1 && code !== YT_ERR_EMBED_DISABLED_2) return;
+  if (
+    code !== YT_ERR_NOT_FOUND &&
+    code !== YT_ERR_EMBED_DISABLED_1 &&
+    code !== YT_ERR_EMBED_DISABLED_2 &&
+    code !== YT_ERR_MISSING_REFERRER
+  ) return;
 
   ctx._embedBlocked = true;
   const videoId = ctx.sourceId;
@@ -37,7 +47,7 @@ export function handleYTError(ctx, event) {
   // Detect extension from page attribute (set by extension content script)
   const hasExtension = document.documentElement.hasAttribute("data-byob-extension");
 
-  const container = _buildFallbackUI(title, thumb, url, hasExtension);
+  const container = _buildFallbackUI(title, thumb, url, hasExtension, code);
 
   ctx.el.innerHTML = "";
   ctx.el.appendChild(container);
@@ -89,10 +99,39 @@ export function handleYTError(ctx, event) {
     }, EXT_POLL_INTERVAL_MS);
   }
 
-  ctx.pushEvent(LV_EVT.EV_VIDEO_EMBED_BLOCKED, { video_id: videoId, url });
+  ctx.pushEvent(LV_EVT.EV_VIDEO_EMBED_BLOCKED, { video_id: videoId, url, code });
 }
 
-function _buildFallbackUI(title, thumb, url, hasExtension) {
+// Headline / explanation / hint per error code. 153 gets an explicit
+// "it's your browser, here's the permanent fix" message — without it,
+// affected users assume every video is age-restricted and resign
+// themselves to popping out the player forever.
+function _errorCopy(code) {
+  if (code === YT_ERR_NOT_FOUND) {
+    return {
+      headline: "This video is unavailable",
+      explanation: "It may have been removed, made private, or the link is wrong",
+      hint: null,
+    };
+  }
+  if (code === YT_ERR_MISSING_REFERRER) {
+    return {
+      headline: "Your browser is blocking YouTube playback",
+      explanation:
+        "A privacy setting or extension is hiding the Referer header YouTube requires for embedded videos",
+      hint:
+        'To fix permanently: allow referrers for this site (uBlock Origin: Settings → Privacy → uncheck "Remove referrers"; AdGuard: Stealth Mode → "Hide Referer"), then reload',
+    };
+  }
+  return {
+    headline: "This video can't be embedded",
+    explanation: "Age-restricted or embedding disabled by uploader",
+    hint:
+      "Plays fine for everyone else? A privacy extension hiding the Referer header, or YouTube Restricted Mode (account, network, or DNS filter), can also cause this",
+  };
+}
+
+function _buildFallbackUI(title, thumb, url, hasExtension, code) {
   const container = document.createElement("div");
   container.className = "absolute inset-0 flex flex-col items-center justify-center gap-3 text-base-content/60 bg-base-300";
 
@@ -106,9 +145,11 @@ function _buildFallbackUI(title, thumb, url, hasExtension) {
   const warning = document.createElement("div");
   warning.className = "flex items-center gap-2 text-warning";
   warning.innerHTML = `<svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 15.75h.007v.008H12v-.008z"/></svg>`;
+  const copy = _errorCopy(code);
+
   const warningText = document.createElement("span");
   warningText.className = "text-sm font-medium";
-  warningText.textContent = "This video can't be embedded";
+  warningText.textContent = copy.headline;
   warning.appendChild(warningText);
   container.appendChild(warning);
 
@@ -118,9 +159,16 @@ function _buildFallbackUI(title, thumb, url, hasExtension) {
   container.appendChild(titleEl);
 
   const subtext = document.createElement("p");
-  subtext.className = "text-xs text-base-content/30";
-  subtext.textContent = "Age-restricted or embedding disabled by uploader";
+  subtext.className = "text-xs text-base-content/30 max-w-md text-center px-4";
+  subtext.textContent = copy.explanation;
   container.appendChild(subtext);
+
+  if (copy.hint) {
+    const hintEl = document.createElement("p");
+    hintEl.className = "text-[10px] text-base-content/40 max-w-md text-center px-4";
+    hintEl.textContent = copy.hint;
+    container.appendChild(hintEl);
+  }
 
   const btnContainer = document.createElement("div");
   btnContainer.className = "flex gap-2 mt-1";
@@ -153,7 +201,10 @@ function _buildFallbackUI(title, thumb, url, hasExtension) {
 
     const hint = document.createElement("p");
     hint.className = "text-[10px] text-base-content/20 mt-1";
-    hint.textContent = "Install the byob extension to watch age-restricted videos in sync";
+    hint.textContent =
+      code === YT_ERR_MISSING_REFERRER
+        ? "Or install the byob extension to watch this in a synced player window"
+        : "Install the byob extension to watch age-restricted videos in sync";
     container.appendChild(btnContainer);
     container.appendChild(hint);
   }
