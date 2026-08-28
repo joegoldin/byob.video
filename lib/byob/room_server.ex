@@ -1,5 +1,13 @@
 defmodule Byob.RoomServer do
-  use GenServer
+  # :transient, not the default :permanent — a room that hits its
+  # empty-timeout stops with reason :normal and must STAY stopped. Under
+  # :permanent the supervisor resurrected it immediately, so every room
+  # ever created kept a live process forever (monotonically climbing to
+  # the @max_rooms gate: "Server is at maximum capacity") and a room with
+  # a short timeout restart-looped hard enough to take Byob.RoomSupervisor
+  # down with it. Crashes still restart; RoomManager.ensure_room reloads
+  # a reaped room from SQLite on the next visit.
+  use GenServer, restart: :transient
 
   alias Byob.Events
   alias Byob.RoomServer.Round
@@ -295,6 +303,18 @@ defmodule Byob.RoomServer do
     GenServer.call(pid, :get_api_key)
   end
 
+  @doc """
+  Milliseconds left on this room's empty-timeout, or `nil` if anyone is
+  still connected. RoomManager uses it to reap the longest-idle rooms
+  when the server is at capacity — a lower number means emptier for
+  longer.
+  """
+  def idle_ms_left(pid) do
+    GenServer.call(pid, :idle_ms_left, 500)
+  catch
+    :exit, _ -> nil
+  end
+
   def start_round(pid, mode, user_id) when mode in [:voting, :roulette] do
     GenServer.call(pid, {:start_round, mode, user_id})
   end
@@ -564,7 +584,8 @@ defmodule Byob.RoomServer do
   # propagated. The ext peer's display name still comes from
   # state.users[ext_user_id].username (kept in sync by the join
   # handler's propagation), but popup ownership doesn't rely on it.
-  def handle_call({:mark_tab_opened, tab_id, owner_user_id}, _from, state) when is_binary(tab_id) do
+  def handle_call({:mark_tab_opened, tab_id, owner_user_id}, _from, state)
+      when is_binary(tab_id) do
     open_tabs = Map.get(state, :open_tabs, %{})
     state = Map.put(state, :open_tabs, Map.put(open_tabs, tab_id, owner_user_id))
     broadcast_ready_count(state)
@@ -606,7 +627,10 @@ defmodule Byob.RoomServer do
       username = get_in(state, [Access.key(:users), closing_owner, Access.key(:username)])
 
       if username do
-        broadcast(state, {:room_presence, %{event: Events.presence_ext_closed(), username: username}})
+        broadcast(
+          state,
+          {:room_presence, %{event: Events.presence_ext_closed(), username: username}}
+        )
       end
     end
 
@@ -908,6 +932,16 @@ defmodule Byob.RoomServer do
 
   def handle_call(:get_api_key, _from, state) do
     {:reply, state.api_key, state}
+  end
+
+  # `cleanup_ref` is set exactly while nobody is connected — on init and
+  # on the last leave — and cancelled on the next join.
+  def handle_call(:idle_ms_left, _from, %{cleanup_ref: nil} = state) do
+    {:reply, nil, state}
+  end
+
+  def handle_call(:idle_ms_left, _from, state) do
+    {:reply, Process.read_timer(state.cleanup_ref) || 0, state}
   end
 
   def handle_call({:play, user_id, position}, _from, state) do
@@ -1247,6 +1281,7 @@ defmodule Byob.RoomServer do
 
       true ->
         current = Enum.at(state.queue, state.current_index)
+
         match? =
           cond do
             is_binary(ref_value) -> current && current.id == ref_value
@@ -1275,7 +1310,14 @@ defmodule Byob.RoomServer do
           # and SyncDecision fires a "rewind to 0" seek inside the 5 s
           # autoplay-countdown window.
           frozen_position = current_position(state)
-          state = %{state | pending_advance_ref: timer_ref, play_state: :paused, current_time: frozen_position, last_sync_at: now}
+
+          state = %{
+            state
+            | pending_advance_ref: timer_ref,
+              play_state: :paused,
+              current_time: frozen_position,
+              last_sync_at: now
+          }
 
           has_next = state.current_index + 1 < length(state.queue)
 
@@ -1763,7 +1805,12 @@ defmodule Byob.RoomServer do
       broadcast(state, {:sync_correction, %{expected_time: position, server_time: now}})
     end
 
-    state = %{state | sync_correction_ref: Process.send_after(self(), :sync_correction, @sync_correction_interval_ms)}
+    state = %{
+      state
+      | sync_correction_ref:
+          Process.send_after(self(), :sync_correction, @sync_correction_interval_ms)
+    }
+
     {:noreply, state}
   end
 
@@ -2434,6 +2481,7 @@ defmodule Byob.RoomServer do
           if is_ext do
             ready_tabs = Map.get(state, :ready_tabs, %{})
             open_tabs = Map.get(state, :open_tabs, %{})
+
             owner_user_id =
               case user_id do
                 "ext:" <> rest -> rest
@@ -2964,6 +3012,7 @@ defmodule Byob.RoomServer do
     case URI.parse(url) do
       %URI{host: host} when is_binary(host) ->
         h = String.downcase(host)
+
         h in ~w(youtube.com www.youtube.com m.youtube.com youtu.be) or
           h in ~w(twitch.tv www.twitch.tv m.twitch.tv)
 

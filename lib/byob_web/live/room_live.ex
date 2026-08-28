@@ -326,6 +326,8 @@ defmodule ByobWeb.RoomLive do
   def handle_event("comments:load_more", params, socket),
     do: Comments.handle_load_more(params, socket)
 
+  def handle_event("comments:seek", params, socket), do: Comments.handle_seek(params, socket)
+
   def handle_event("toggle_comments_collapse", _params, socket) do
     {:noreply, assign(socket, comments_collapsed: !socket.assigns.comments_collapsed)}
   end

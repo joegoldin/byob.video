@@ -38,4 +38,61 @@ defmodule Byob.RoomManagerTest do
       assert length(Enum.uniq(pids)) == 1
     end
   end
+
+  describe "empty-room reaping" do
+    setup do
+      # Earlier tests leave idle rooms in the app supervisor; clear them
+      # so the reaper's choice is unambiguous.
+      Stream.repeatedly(&RoomManager.reap_idlest_room/0)
+      |> Enum.find(&(&1 == :none))
+
+      :ok
+    end
+
+    test "a room that times out empty stays stopped and frees its capacity slot" do
+      room_id = "test_reap_#{:erlang.unique_integer([:positive])}"
+      supervisor = Process.whereis(Byob.RoomSupervisor)
+
+      {:ok, pid} =
+        DynamicSupervisor.start_child(
+          Byob.RoomSupervisor,
+          {Byob.RoomServer, room_id: room_id, empty_timeout: 20}
+        )
+
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 1_000
+
+      # The DynamicSupervisor must not resurrect it — otherwise every room
+      # ever created counts against @max_rooms forever.
+      Process.sleep(100)
+      assert Registry.lookup(Byob.RoomRegistry, room_id) == []
+
+      # Under :permanent the restart loop also took the supervisor itself
+      # down, killing every other live room with it.
+      assert Process.whereis(Byob.RoomSupervisor) == supervisor
+    end
+
+    test "reap_idlest_room/0 stops an empty room and spares an occupied one" do
+      occupied_id = "test_occupied_#{:erlang.unique_integer([:positive])}"
+      empty_id = "test_empty_#{:erlang.unique_integer([:positive])}"
+
+      {:ok, occupied} = RoomManager.ensure_room(occupied_id)
+      {:ok, _state} = Byob.RoomServer.join(occupied, "user1", "SwiftHawk42")
+      {:ok, empty} = RoomManager.ensure_room(empty_id)
+
+      assert RoomManager.reap_idlest_room() == :ok
+
+      refute Process.alive?(empty)
+      assert Process.alive?(occupied)
+    end
+
+    test "reap_idlest_room/0 returns :none when every room is occupied" do
+      room_id = "test_all_busy_#{:erlang.unique_integer([:positive])}"
+      {:ok, pid} = RoomManager.ensure_room(room_id)
+      {:ok, _state} = Byob.RoomServer.join(pid, "user1", "SwiftHawk42")
+
+      assert RoomManager.reap_idlest_room() == :none
+      assert Process.alive?(pid)
+    end
+  end
 end

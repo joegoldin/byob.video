@@ -3,6 +3,36 @@
 
 ---
 
+# v6.8.77
+
+### Rooms no longer resurrect themselves into "maximum capacity"
+
+Creating a room (site or Discord bot) could fail with *"Server is at
+maximum capacity. Please try again later."* on an otherwise idle
+server. `RoomServer` used the default `:permanent` child spec, so when
+a room hit its 8-hour empty-timeout and stopped with reason `:normal`,
+the supervisor immediately restarted it — every room ever created kept
+a live process forever, climbing monotonically to the 100-room gate.
+A room with a short timeout restart-looped fast enough to exceed
+`max_restarts` and take `Byob.RoomSupervisor` down with it, killing
+every live room in the process. Rooms are now `:transient`: a clean
+empty-timeout exit stays exited, crashes still restart, and the next
+visitor reloads the room from SQLite as before.
+
+As a backstop, a create request that arrives at capacity now stops the
+room that has been empty the longest instead of refusing. That's
+lossless — the reaped room persists on the way out and comes back with
+its queue, history, and api_key intact if anyone returns to the link.
+
+### Clickable timestamps in YouTube comments
+
+`1:23`-style timestamps in the comments panel render as links that
+seek the room to that spot, the way YouTube's own comments do. Because
+it goes through the normal seek path, everyone in the room jumps
+together. Handles `m:ss`, `mm:ss`, and `h:mm:ss`.
+
+---
+
 # v6.8.76
 
 ### Explain YouTube embed failures caused by the viewer's own browser

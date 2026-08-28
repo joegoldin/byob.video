@@ -45,6 +45,22 @@ defmodule ByobWeb.RoomLiveTest do
       assert html =~ "dQw4w9WgXcQ"
     end
 
+    test "clicking a comment timestamp seeks the room", %{conn: conn} do
+      room_id = "testroomseek"
+      {:ok, view, _html} = live(conn, "/room/#{room_id}")
+
+      view
+      |> render_submit("add_url", %{
+        "url" => "https://youtube.com/watch?v=dQw4w9WgXcQ",
+        "mode" => "queue"
+      })
+
+      render_click(view, "comments:seek", %{"seconds" => "83"})
+
+      {:ok, pid} = Byob.RoomManager.ensure_room(room_id)
+      assert Byob.RoomServer.get_state(pid).current_time == 83
+    end
+
     test "navigating to any room ID creates the room", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/room/anyrandomid")
       assert html =~ "anyrandomid"

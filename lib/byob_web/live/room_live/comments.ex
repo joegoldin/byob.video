@@ -6,6 +6,12 @@ defmodule ByobWeb.RoomLive.Comments do
 
   use Phoenix.Component
 
+  alias Byob.RoomServer
+
+  # m:ss, mm:ss or h:mm:ss, not glued to more digits (so "1234:56" and
+  # dates like "2:30:00.5" don't half-match).
+  @timestamp_re ~r/(?<!\d)(\d{1,3}:[0-5]\d(?::[0-5]\d)?)(?!\d)/
+
   @doc """
   Renders the YouTube comments panel below the video player.
   """
@@ -66,9 +72,7 @@ defmodule ByobWeb.RoomLive.Comments do
                 {relative_time(comment.published_at)}
               </span>
             </div>
-            <p class="text-xs text-base-content/60 mt-0.5 whitespace-pre-line break-words">
-              {comment.text}
-            </p>
+            <.comment_text text={comment.text} />
             <div class="flex gap-3 mt-1">
               <span :if={comment.likes > 0} class="text-[10px] text-base-content/30">
                 👍 {comment.likes}
@@ -119,6 +123,91 @@ defmodule ByobWeb.RoomLive.Comments do
     </div>
     """
   end
+
+  @doc """
+  Comment body with `12:34`-style timestamps turned into buttons that
+  seek the room to that position, the way YouTube's own comments do.
+  """
+  attr :text, :string, default: nil
+
+  def comment_text(assigns) do
+    assigns = assign(assigns, :segments, timestamp_segments(assigns.text))
+
+    ~H"""
+    <p class="text-xs text-base-content/60 mt-0.5 break-words">
+      <.comment_segment :for={segment <- @segments} segment={segment} />
+    </p>
+    """
+  end
+
+  # `whitespace-pre-line` sits on the text spans rather than the paragraph:
+  # a comment's own newlines still show, while the newlines HEEx leaves
+  # between segments collapse like any other markup whitespace instead of
+  # breaking a sentence in half around a timestamp.
+  defp comment_segment(%{segment: {:timestamp, label, seconds}} = assigns) do
+    assigns = assign(assigns, label: label, seconds: seconds)
+
+    ~H"""
+    <button
+      type="button"
+      phx-click="comments:seek"
+      phx-value-seconds={@seconds}
+      class="text-primary hover:underline"
+    >
+      {@label}
+    </button>
+    """
+  end
+
+  defp comment_segment(%{segment: {:text, text}} = assigns) do
+    assigns = assign(assigns, :body, text)
+
+    ~H"""
+    <span class="whitespace-pre-line">{@body}</span>
+    """
+  end
+
+  @doc false
+  def timestamp_segments(text) when is_binary(text) do
+    @timestamp_re
+    |> Regex.split(text, include_captures: true)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(fn part ->
+      case parse_timestamp(part) do
+        nil -> {:text, part}
+        seconds -> {:timestamp, part, seconds}
+      end
+    end)
+  end
+
+  def timestamp_segments(_), do: []
+
+  defp parse_timestamp(part) do
+    if Regex.match?(~r/^\d{1,3}:[0-5]\d(?::[0-5]\d)?$/, part) do
+      part |> String.split(":") |> Enum.map(&String.to_integer/1) |> to_seconds()
+    end
+  end
+
+  defp to_seconds([m, s]), do: m * 60 + s
+  defp to_seconds([h, m, s]), do: h * 3600 + m * 60 + s
+
+  @doc """
+  Seek the room from a timestamp click in a comment. Same path as any
+  other user seek, so everyone in the room jumps together.
+  """
+  def handle_seek(%{"seconds" => seconds}, socket) do
+    case Integer.parse(seconds) do
+      {position, ""} when position >= 0 ->
+        RoomServer.seek(socket.assigns.room_pid, socket.assigns.user_id, position)
+
+      _ ->
+        :ok
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_seek(_params, socket), do: {:noreply, socket}
 
   defp relative_time(iso_string) when is_binary(iso_string) do
     case DateTime.from_iso8601(iso_string) do
