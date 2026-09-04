@@ -32,7 +32,7 @@ const JITTER_REJECT_DELTA_MS = 500;
 
 export class Reconcile {
   constructor(playerAdapter) {
-    // playerAdapter: { getCurrentTime(), seekTo(seconds), setPlaybackRate(rate) }
+    // playerAdapter: { getCurrentTime(), seekTo(seconds) }
     this.player = playerAdapter;
     this.clockSync = null;
     this.serverPosition = 0; // seconds
@@ -147,7 +147,6 @@ export class Reconcile {
     this.noiseSamples = 0;
     this.lastDriftMs = 0;
     this.lastExecutedSeekAt = 0;
-    try { this.player.setPlaybackRate(1.0); } catch (_) {}
   }
 
   // Just measure: drift + jitter. Send report to server (handled by the

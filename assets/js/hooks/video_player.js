@@ -22,6 +22,13 @@ const PAUSE_ON_LOAD_MAX_ATTEMPTS = 10;
 const VIDEO_CHANGE_RETRY_1_MS = 1000;
 const VIDEO_CHANGE_RETRY_2_MS = 3000;
 const LIVE_DETECTION_INTERVAL_MS = 3000;
+// How long after we set a rate ourselves to treat incoming rate-change
+// events as our own echo. Generous because YouTube reports the change
+// asynchronously, and a snapped value arrives looking like a user pick.
+const RATE_ECHO_QUIET_MS = 1500;
+// YouTube's speed slider fires an event per step while dragging; only the
+// value it lands on is worth telling the room about.
+const RATE_BROADCAST_DEBOUNCE_MS = 400;
 
 const VideoPlayer = {
   mounted() {
@@ -51,7 +58,6 @@ const VideoPlayer = {
         this.suppression.suppress("playing");
         this._seekTo(t);
       },
-      setPlaybackRate: (r) => this._setPlaybackRate(r),
     });
 
     this.sourceType = null;
@@ -79,6 +85,11 @@ const VideoPlayer = {
     // video change. `_onYTPlaybackRateChange` compares against this to tell
     // a real user change (broadcast it) from the echo of one we applied.
     this._roomRate = 1.0;
+    // The rate we last handed to the player (post-snap) and when. Together
+    // they let `_onYTPlaybackRateChange` recognize our own echo.
+    this._appliedRate = 1.0;
+    this._appliedRateAt = 0;
+    this._rateBroadcastTimer = null;
     // Per-browser YouTube volume preference (NOT synced). Polled because
     // the YT IFrame API has no volume-change event.
     this._ytVolumePollInterval = null;
@@ -288,6 +299,7 @@ const VideoPlayer = {
     if (this._extBtnPoll) clearInterval(this._extBtnPoll);
     if (this._loadingWatchdog) clearInterval(this._loadingWatchdog);
     if (this._ytVolumePollInterval) clearInterval(this._ytVolumePollInterval);
+    if (this._rateBroadcastTimer) clearTimeout(this._rateBroadcastTimer);
     if (this._embedReadyHandler) window.removeEventListener("message", this._embedReadyHandler);
     if (this._unloadHandler) window.removeEventListener("beforeunload", this._unloadHandler);
     if (this._visibilityHandler) document.removeEventListener("visibilitychange", this._visibilityHandler);
@@ -1045,6 +1057,8 @@ const VideoPlayer = {
     // change too). YouTube preserves the rate across loadVideoById, so the
     // new player's onReady re-applies this explicitly via _applyRoomRate.
     this._roomRate = 1.0;
+    this._appliedRate = 1.0;
+    clearTimeout(this._rateBroadcastTimer);
 
     // If the new video is also extension-required, keep the popup window
     // and chrome.storage config alive — the extension's content script
@@ -2154,10 +2168,28 @@ const VideoPlayer = {
   // ── Synced playback speed ────────────────────────────────────────────
 
   // Apply the room's canonical speed to the current player. Called on load
-  // and on every `sync:rate`. `_roomRate` is set first so the resulting
-  // onPlaybackRateChange echo is recognized and not re-broadcast.
+  // and on every `sync:rate`. The rate we ask for isn't always the rate we
+  // get: YouTube honors only the values in getAvailablePlaybackRates(), so
+  // a 0.9× picked on another client's fine-grained slider snaps to the
+  // nearest supported step here. Both the requested and the snapped value
+  // are remembered so `_onYTPlaybackRateChange` can recognize the snap as
+  // our own doing instead of reading it as a fresh user action.
   _applyRoomRate() {
-    this._setPlaybackRate(this._roomRate || 1.0);
+    const target = this._snapRate(this._roomRate || 1.0);
+    this._appliedRate = target;
+    this._appliedRateAt = Date.now();
+    this._setPlaybackRate(target);
+  },
+
+  // Nearest rate the current player will actually accept. Players that
+  // take any rate (direct <video>, Vimeo) report no list — pass through.
+  _snapRate(rate) {
+    const available = this.player?.getAvailablePlaybackRates?.();
+    if (!available) return rate;
+    return available.reduce(
+      (best, r) => (Math.abs(r - rate) < Math.abs(best - rate) ? r : best),
+      available[0],
+    );
   },
 
   // Server pushed a new canonical speed (someone changed it). Apply it and
@@ -2171,14 +2203,28 @@ const VideoPlayer = {
     }
   },
 
-  // YouTube's native gear menu changed the speed. If it differs from the
-  // room's known rate it's a genuine user action → broadcast it. If it
-  // matches, it's the echo of a rate we just applied → swallow it.
+  // YouTube's native speed control changed the rate. Two things have to be
+  // told apart here, or the room melts down into a rate-change storm:
+  //
+  //   1. The echo of a rate *we* just applied — including a snapped one
+  //      (asked 0.9×, YouTube gave 1×). Broadcasting that would push the
+  //      snapped value back to the room, every client would snap it again,
+  //      and the room would ping-pong forever. Swallowed by the quiet
+  //      window after our own apply.
+  //   2. A genuine pick from the gear menu or speed slider. Broadcast —
+  //      but debounced, because dragging YouTube's slider fires an event
+  //      per 0.05 step and only the value it settles on matters.
   _onYTPlaybackRateChange(rate) {
     if (typeof rate !== "number") return;
-    if (Math.abs(rate - (this._roomRate || 1.0)) < 0.001) return;
-    this._roomRate = rate;
-    this.pushEvent(LV_EVT.EV_VIDEO_RATE, { rate });
+    if (Date.now() - (this._appliedRateAt || 0) < RATE_ECHO_QUIET_MS) return;
+    if (Math.abs(rate - (this._appliedRate ?? this._roomRate ?? 1.0)) < 0.001) return;
+
+    this._appliedRate = rate;
+    clearTimeout(this._rateBroadcastTimer);
+    this._rateBroadcastTimer = setTimeout(() => {
+      this._roomRate = rate;
+      this.pushEvent(LV_EVT.EV_VIDEO_RATE, { rate });
+    }, RATE_BROADCAST_DEBOUNCE_MS);
   },
 
   _formatRate(rate) {

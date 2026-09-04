@@ -114,6 +114,15 @@ function _wrap(rawPlayer) {
     getPlaybackRate() {
       return rawPlayer.getPlaybackRate ? rawPlayer.getPlaybackRate() : 1;
     },
+    // The rates this player will actually honor. setPlaybackRate silently
+    // ignores anything outside this list, so the hook snaps to the nearest
+    // entry before applying a room rate that came from another client.
+    getAvailablePlaybackRates() {
+      const rates = rawPlayer.getAvailablePlaybackRates
+        ? rawPlayer.getAvailablePlaybackRates()
+        : null;
+      return Array.isArray(rates) && rates.length ? rates : null;
+    },
     // Volume is a per-browser preference (persisted in localStorage,
     // never synced). 0–100 scale, matching the YT IFrame API.
     getVolume() {

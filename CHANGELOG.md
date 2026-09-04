@@ -3,6 +3,46 @@
 
 ---
 
+# v6.8.78
+
+### Playback speed no longer storms the room
+
+Changing speed on a YouTube video could send the room into an endless
+cascade of speed changes — the activity log filling with entries whose
+"from" value never matched the previous entry's "to", every client
+fighting every other one, toasts everywhere. Three separate bugs
+compounded into it:
+
+**Snapped rates echoed back as user actions.** YouTube's speed slider
+produces fine-grained values (0.55×, 0.9×), but the IFrame API's
+`setPlaybackRate` honors only the values in
+`getAvailablePlaybackRates()` and silently snaps anything else. A peer
+receiving `sync:rate 0.9` landed on 1×, and because that didn't match
+the room's known rate the client read its own snap as a fresh user
+pick and broadcast it back. Everyone snapped again, re-broadcast
+again, forever. The room rate is now snapped to a value the local
+player will actually accept before it's applied, and rate-change
+events arriving in the quiet window right after our own apply are
+recognized as the echo they are.
+
+**Reconcile reset the speed behind the room's back.** Stopping the
+reconcile loop — which happens on every pause, video change, and
+buffering stall — forced the player to 1×, and that fired a
+rate-change event the room dutifully treated as somebody setting the
+speed. Drift correction has been seek-only for a while, so the line
+was dead legacy doing nothing but damage. Gone.
+
+**Slider drags fired one broadcast per step.** Dragging from 1× to
+0.5× emitted ten rate-change events, ten server broadcasts, and ten
+toasts for everyone in the room. Outgoing speed changes are debounced
+now, so only the value you settle on is sent.
+
+Where a peer's player won't accept the exact rate someone picked, it
+lands on the nearest supported step and the existing drift correction
+absorbs the difference.
+
+---
+
 # v6.8.77
 
 ### Rooms no longer resurrect themselves into "maximum capacity"
