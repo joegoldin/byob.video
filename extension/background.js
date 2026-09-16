@@ -181,6 +181,7 @@ let lastReadyCount = null;
 let currentServerUrl = null;
 let initialRoomState = null;
 let lastConnectAt = 0;
+let connectRetryTimer = null;
 let autoplayCountdownActive = false;
 // Canonical URL of the room's current media item. Set on join and updated on
 // video:change / queue:updated. Sent to content scripts so they can detect
@@ -328,6 +329,10 @@ chrome.runtime.onConnect.addListener((port) => {
         readyTabs.delete(tabId);
       }
     }
+    if (ports.length === 0) {
+      clearTimeout(connectRetryTimer);
+      connectRetryTimer = null;
+    }
     if (ports.length === 0 && channel) {
       // All external player windows closed — pause so next joiner doesn't autoplay.
       // CRITICAL: defer the channel.leave + socket.disconnect so the
@@ -369,7 +374,7 @@ chrome.runtime.onConnect.addListener((port) => {
 function handleContentMessage(msg, port, tabId) {
   switch (msg.type) {
     case EVT.CONNECT:
-      if (currentRoomId === msg.room_id && channel) {
+      if (currentRoomId === msg.room_id && channel?.isJoined()) {
         // Already connected — just notify this port it's ready
         port.postMessage({ type: EVT.BYOB_CHANNEL_READY });
         if (lastReadyCount) port.postMessage(lastReadyCount);
@@ -662,11 +667,19 @@ function connectToRoom(roomId, serverUrl, token, username) {
   // Don't reconnect if already connected to this room
   if (currentRoomId === roomId && channel) return;
 
+  clearTimeout(connectRetryTimer);
+  connectRetryTimer = null;
+
   // Per-SW cooldown — prevents reconnection storms within one service worker.
   // Different SWs (normal + incognito) each get their own cooldown.
   const now = Date.now();
   if (now - lastConnectAt < CONNECT_COOLDOWN_MS) {
     console.log("[byob] Connection cooldown");
+    // A content port stays open after CONNECT; it will not retry for us.
+    connectRetryTimer = setTimeout(() => {
+      connectRetryTimer = null;
+      connectToRoom(roomId, serverUrl, token, username);
+    }, CONNECT_COOLDOWN_MS - (now - lastConnectAt));
     return;
   }
   lastConnectAt = now;
@@ -685,14 +698,11 @@ function connectToRoom(roomId, serverUrl, token, username) {
   currentServerUrl = serverUrl;
   currentToken = token || null;
 
-  // Connect Phoenix Socket with auth token — disable built-in reconnect
-  // so we don't spam errors when the server is down. The content script's
-  // port reconnect logic handles recovery.
+  // The close handler stops Phoenix retries; content ports drive recovery.
   const wsUrl = serverUrl.replace(/^http/, "ws") + "/extension";
   socket = new Socket(wsUrl, {
     heartbeatIntervalMs: SOCKET_HEARTBEAT_MS,
     params: token ? { token } : {},
-    reconnectAfterMs: () => null, // disable auto-reconnect
     // Firefox MV3 backgrounds are event pages with a real `window`,
     // so Phoenix.js's default pagehide / visibilitychange listeners
     // would disconnect the socket every time the BG goes idle —
@@ -842,9 +852,14 @@ function connectToRoom(roomId, serverUrl, token, username) {
     if (data && Array.isArray(data.queue)) currentQueueSize = data.queue.length;
   });
 
+  const roomSocket = socket;
   socket.onOpen(() => console.log("[byob] WebSocket connected to", wsUrl));
   socket.onError(() => {}); // suppress — onClose handles cleanup
   socket.onClose(() => {
+    // Phoenix schedules its reconnect before invoking onClose. Cancel it
+    // before discarding the socket, including callbacks from older sockets.
+    roomSocket.disconnect();
+    if (socket !== roomSocket) return;
     console.log("[byob] WebSocket closed, cleaning up");
     stopClockSyncMaintenance();
     // Send tab_closed/unready for all ports BEFORE clearing channel —
