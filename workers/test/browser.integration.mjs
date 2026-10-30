@@ -177,7 +177,15 @@ try {
       for (const direction of ['framesent', 'framereceived']) socket.on(direction, frame => recordFrame(direction, frame.payload));
     });
   }
-  await alice.goto(origin);
+  const screenshots = await mkdtemp(join(tmpdir(), 'byob-browser-review-'));
+  console.log(`Screenshots: ${screenshots}`);
+  for (const page of [alice, bob]) {
+    await page.goto(origin);
+    await page.locator('[data-action="create-room"]').waitFor();
+    const homeGap = await page.evaluate(() => document.querySelector('section').getBoundingClientRect().top - document.querySelector('nav').getBoundingClientRect().bottom);
+    assert.ok(homeGap >= 24, 'Home information card must be padded below the navigation on desktop and mobile');
+    await page.screenshot({ path: join(screenshots, page === alice ? 'home.png' : 'home-mobile.png'), fullPage: true });
+  }
   await alice.locator('[data-action="create-room"]').click();
   await alice.waitForURL(/\/room\/[a-z0-9]{8}$/);
   const roomUrl = alice.url();
@@ -186,20 +194,39 @@ try {
     try { await page.waitForFunction(() => document.getElementById('connection-status')?.textContent === ''); }
     catch (error) { throw new Error(`${error.message}; ${JSON.stringify({ errors, page: await page.locator('body').innerText() })}`); }
     assert.ok((await page.locator('#url-input').boundingBox()).width >= 160, 'URL input must remain usable on mobile');
+    assert.equal(await page.locator('[data-action="pause"]').count(), 0, 'No duplicate controls below the player');
+    assert.ok(await page.locator('#users-panel .bg-success').count(), 'Connected users have a green status dot');
+    await page.screenshot({ path: join(screenshots, page === alice ? 'empty-desktop.png' : 'empty-mobile.png'), fullPage: true });
+    if (page === alice) {
+      await page.locator('[data-action="settings"]').click();
+      await page.waitForFunction(() => document.getElementById('room-api-key')?.value.length > 20);
+      assert.ok((await page.locator('#settings-modal .modal-box').boundingBox()).width <= 448);
+      await page.screenshot({ path: join(screenshots, 'settings.png'), fullPage: true, animations: 'disabled' });
+      await page.locator('[aria-label="Close settings"]').click();
+    }
     await page.locator('[data-action="theme"]').click();
   }
+  await alice.locator('#url-input').fill('not a video URL');
+  await alice.waitForFunction(() => document.getElementById('url-preview').textContent.includes('Preview unavailable:'));
+  assert.equal(await alice.locator('#notice').isVisible(), false, 'Optional preview failures must not report a rejected room action');
+  assert.ok(await alice.locator('#url-preview button[value="queue"]').isVisible(), 'Metadata failure must not remove queue controls');
   await alice.locator('#url-input').fill(`http://localhost:${media.address().port}/fixture.webm`);
-  await alice.locator('#url-form button[value="queue"]').click();
+  await alice.locator('#url-preview button[value="queue"]').click();
   for (const page of [alice, bob]) {
     try { await page.waitForFunction(() => { const video = document.querySelector('#player video'); return video && !video.paused && video.currentTime > 0.3; }, null, { timeout: 15000 }); }
     catch (error) { throw new Error(`${error.message}; ${JSON.stringify(await page.evaluate(() => { const video = document.querySelector('#player video'); return { body: document.body.innerText, media: video && { source: video.currentSrc, error: video.error?.message, network: video.networkState, ready: video.readyState, paused: video.paused, time: video.currentTime, duration: video.duration }, activated: navigator.userActivation.hasBeenActive }; }))}`); }
   }
-  await alice.locator('[data-action="pause"]').click();
+  await alice.locator('#player video').evaluate(video => video.pause());
   for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.paused === true);
-  await alice.locator('#playback-rate').selectOption('1.5');
+  await alice.locator('#player video').evaluate(video => { video.playbackRate = 1.5; });
   for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.playbackRate === 1.5);
-  await alice.locator('[data-action="play"]').click();
+  await alice.locator('#player video').evaluate(video => video.play());
   for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.paused === false);
+  for (const page of [alice, bob]) await page.waitForFunction(() => {
+    const activity = document.getElementById('activity-panel').textContent;
+    return activity.includes('paused') && activity.includes('resumed') && activity.includes('changed speed: 1× → 1.5×');
+  });
+  console.log('PASS: both clients render attributed pause, resume and rate activity');
   bob.once('dialog', dialog => dialog.accept('<img src=x onerror=alert(1)>'));
   await bob.locator('[data-action="rename"]').click();
   await alice.locator('[data-action="settings"]').click();
@@ -248,18 +275,17 @@ try {
   assert.equal(await alice.locator('[data-queue-idx]').count(), 1);
   for (const page of [alice, bob]) assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'room layout must not overflow horizontally');
   assert.deepEqual(errors, []);
-  const screenshots = await mkdtemp(join(tmpdir(), 'byob-browser-review-'));
   await alice.screenshot({ path: join(screenshots, 'desktop.png'), fullPage: true, animations: 'disabled' });
   await bob.screenshot({ path: join(screenshots, 'mobile.png'), fullPage: true, animations: 'disabled' });
   console.log(`Screenshots: ${screenshots}`);
   for (const rate of [0.25, 0.5, 0.75, 1, 1.25, 1.75, 2]) {
-    await alice.locator('#playback-rate').selectOption(String(rate));
+    await alice.locator('#player video').evaluate((video, rate) => { video.playbackRate = rate; }, rate);
     for (const page of [alice, bob]) await page.waitForFunction(rate => document.querySelector('#player video')?.playbackRate === rate, rate);
     const anchor = await alice.locator('#player video').evaluate(video => video.currentTime);
     await alice.waitForFunction(anchor => document.querySelector('#player video').currentTime > anchor + 3, anchor, { timeout: 16000 });
     await measureDrift(rate);
   }
-  await alice.locator('[data-action="pause"]').click();
+  await alice.locator('#player video').evaluate(video => video.pause());
   for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.paused === true);
   await alice.locator('#player video').evaluate(video => { video.currentTime = 20; });
   for (const page of [alice, bob]) {
@@ -278,8 +304,8 @@ try {
   assert.equal((await roomState()).play_state, 'paused', 'rejoining must not resume a paused room');
   assert.equal((await roomState()).user_count, 2, 'reload must retain the same tab identity');
   await bob.locator('[data-action="theme"]').click();
-  await alice.locator('#playback-rate').selectOption('1.5');
-  await alice.locator('[data-action="play"]').click();
+  await alice.locator('#player video').evaluate(video => { video.playbackRate = 1.5; });
+  await alice.locator('#player video').evaluate(video => video.play());
   for (const page of [alice, bob]) await page.waitForFunction(() => { const video = document.querySelector('#player video'); return !video.paused && video.currentTime > 23 && video.playbackRate === 1.5; });
   await measureDrift(1.5);
   console.log('PASS: native paused seek, retained tab identity and paused-room reload/resume');

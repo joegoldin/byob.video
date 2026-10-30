@@ -1,5 +1,6 @@
 import { changeMedia } from './playback.mjs';
 import { currentPosition } from './room-sync.mjs';
+import { withActivity } from './room-state.mjs';
 
 export const queueLimits = Object.freeze({ queue: 200, history: 99 });
 
@@ -70,11 +71,11 @@ export function videoEnded(state, reference, now) {
   const item = state.current_index === null ? null : state.queue[state.current_index];
   const matches = typeof reference === 'string' ? reference === item?.id : Number.isInteger(reference) && reference === state.current_index;
   if (!item || !matches || state.advance_deadline !== null) return { state, events: [], status: 'stale' };
-  return {
+  return withActivity({
     state: { ...state, advance_deadline: now + 5000, play_state: 'paused', current_time: currentPosition(state, now), last_sync_at: now },
     events: [['autoplay_countdown', { duration_ms: 5000, server_time: now, has_next: state.current_index + 1 < state.queue.length }]],
     status: 'ok',
-  };
+  }, 'finished', null, item.title ?? item.url, now);
 }
 
 export function advanceQueue(state, now) {

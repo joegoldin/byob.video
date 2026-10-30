@@ -68,7 +68,19 @@ try {
   await page.waitForURL(/\/room\/[a-z0-9]{8}$/);
   await page.waitForFunction(() => document.getElementById('connection-status')?.textContent === '');
   await page.locator('#url-input').fill(`http://127.0.0.1:${media.address().port}/watch`);
-  await page.locator('#url-form button[value="queue"]').click();
+  await page.locator('#url-preview button[value="queue"]').click();
+  await page.locator('[data-action="settings"]').click();
+  await page.waitForFunction(() => document.getElementById('room-api-key')?.value.length > 20);
+  const key = await page.locator('#room-api-key').inputValue();
+  const endpoint = page.url().replace('/room/', '/api/rooms/');
+  await page.getByRole('button', { name: 'Close settings', exact: true }).click();
+  const control = action => page.evaluate(async ({ endpoint, key, action }) => {
+    const stateResponse = await fetch(endpoint, { headers: { Authorization: `Bearer ${key}` } });
+    if (!stateResponse.ok) throw new Error(`Room state failed: ${stateResponse.status}`);
+    const { data } = await stateResponse.json();
+    const response = await fetch(`${endpoint}/${action}`, { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ position: data.current_time }) });
+    if (!response.ok) throw new Error(`Room ${action} failed: ${response.status}`);
+  }, { endpoint, key, action });
   const popupPromise = context.waitForEvent('page');
   await page.getByRole('button', { name: 'Open Player Window', exact: true }).click();
   const popup = await popupPromise;
@@ -76,20 +88,17 @@ try {
   await popup.locator('video').waitFor();
   // Give the external page a genuine browser user gesture, not a mocked ready event.
   await popup.locator('h1').click();
-  await page.locator('[data-action="play"]').click();
+  await control('play');
   await popup.waitForFunction(() => { const video = document.querySelector('video'); return video && !video.paused && video.currentTime > 0.2; }, null, { timeout: 20000 });
-  await page.locator('[data-action="pause"]').click();
+  await control('pause');
   await popup.waitForFunction(() => document.querySelector('video').paused);
-  await page.locator('#playback-rate').selectOption('1.5');
-  await page.locator('[data-action="play"]').click();
+  await popup.locator('video').evaluate(video => { video.playbackRate = 1.5; });
+  await page.waitForFunction(() => document.getElementById('activity-panel').textContent.includes('changed speed: 1× → 1.5×'));
+  await control('play');
   await popup.waitForFunction(() => { const video = document.querySelector('video'); return !video.paused && video.playbackRate === 1.5; });
-  await page.locator('[data-action="pause"]').click();
+  await control('pause');
   await popup.waitForFunction(() => document.querySelector('video').paused);
   await popup.locator('video').evaluate(video => { video.currentTime = 20; });
-  await page.locator('[data-action="settings"]').click();
-  await page.waitForFunction(() => document.getElementById('room-api-key')?.value.length > 20);
-  const key = await page.locator('#room-api-key').inputValue();
-  const endpoint = page.url().replace('/room/', '/api/rooms/');
   await page.waitForFunction(async ({ endpoint, key }) => {
     const response = await fetch(endpoint, { headers: { Authorization: `Bearer ${key}` } });
     const { data } = await response.json();

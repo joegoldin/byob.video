@@ -47,6 +47,10 @@ export function create(el, callbacks, opts) {
     callbacks.onSeeked(video.currentTime);
   });
 
+  video.addEventListener("ratechange", () => {
+    callbacks.onPlaybackRateChange?.(video.playbackRate);
+  });
+
   video.addEventListener("ended", () => {
     callbacks.onStateChange("ended");
   });

@@ -141,7 +141,7 @@ export class RoomChannel {
       clearTimeout(pending.timer);
       this.pending.delete(ref);
       if (payload?.status === 'ok') pending.resolve(payload.response);
-      else pending.reject(new Error(payload?.response?.reason ?? 'The room rejected that action.'));
+      else pending.reject(new Error(payload?.response?.reason ?? payload?.response?.error ?? 'The room rejected that action.'));
     } else if (topic === `room:${this.roomId}` && joinRef === this.joinRef) {
       if (event === 'phx_error' || event === 'phx_close') this.socket.close();
       else this.emit(event, payload);

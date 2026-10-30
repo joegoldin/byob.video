@@ -665,6 +665,12 @@ const VideoPlayer = {
           }
         }
       },
+      onPlaybackRateChange: (rate) => {
+        // Native controls report exact rates; canonical applications are echoes.
+        if (Math.abs(rate - (this._roomRate ?? 1)) < 0.001) return;
+        this._roomRate = rate;
+        this.pushEvent(LV_EVT.EV_VIDEO_RATE, { rate });
+      },
       onProgrammaticSeeked: (elapsed) => {
         // Zero is the wire protocol's missing-observation sentinel. Preserve
         // sub-millisecond completions as the smallest positive millisecond.

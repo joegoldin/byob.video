@@ -30,3 +30,49 @@ test('roulette view supplies the legacy animation hook with stable slice and ove
   assert.equal((markup.match(/class="slice-winner-outline"/g) || []).length, 12);
   assert.equal(markup.includes('NaN'), false);
 });
+
+test('room preserves compact legacy navigation and expanded activity without duplicate player controls', () => {
+  const shell = String(views.roomShell('abc123'));
+  assert.ok(shell.includes('id="url-preview" class="absolute'));
+  assert.ok(shell.includes('max-w-[40vw]'));
+  assert.ok(shell.includes('aria-label="Settings"'));
+  assert.ok(shell.includes('id="activity-panel" class="max-h-32 overflow-y-auto'));
+  assert.equal(shell.includes('<summary class="cursor-pointer text-sm">Activity'), false);
+  for (const action of ['play', 'pause', 'restart', 'skip', 'toggle-comments']) assert.equal(shell.includes(`data-action="${action}"`), false);
+});
+
+test('settings retain branded compact layout, named colored categories and comments toggle', () => {
+  const settings = String(views.settingsPanel(newRoom('abc123', 1000), true));
+  assert.ok(settings.includes('/images/logo.svg'));
+  assert.ok(settings.includes('toggle toggle-sm toggle-primary'));
+  assert.ok(settings.includes('Filler/Tangent'));
+  assert.ok(settings.includes('Self Promotion'));
+  assert.ok(settings.includes('Settings apply to this room for all users.'));
+  assert.ok(settings.includes('type="password"'), 'retain private credential masking');
+});
+
+test('connected presence uses the original green dot and identifies the current user', () => {
+  const users = String(views.usersPanel({ alice: { username: 'Alice', connected: true } }, 'alice'));
+  assert.ok(users.includes('bg-success'));
+  assert.ok(users.includes('(you)'));
+  assert.ok(users.includes('Users'));
+});
+
+test('activity is chronological, readable and escaped for the expanded scroll box', () => {
+  const log = String(views.activityPanel([
+    { action: 'pause', user: 'Alice', detail: '<script>bad</script>', at: '2026-01-01T00:00:02Z' },
+    { action: 'joined', user: 'Alice', at: '2026-01-01T00:00:01Z' },
+  ]));
+  assert.ok(log.indexOf('Alice joined') < log.indexOf('Alice paused'));
+  assert.ok(log.includes('datetime="2026-01-01T00:00:02Z"'));
+  assert.equal(log.includes('<script>'), false);
+});
+
+test('optional preview and comment failures have local context and preserve video actions', () => {
+  const preview = String(views.previewPanel({ error: 'metadata_unavailable', resolved_url: 'https://video.test/movie.mp4' }));
+  assert.ok(preview.includes('Preview unavailable: metadata unavailable'));
+  assert.ok(preview.includes('value="now"'));
+  assert.ok(preview.includes('value="queue"'));
+  const comments = String(views.commentsPanel({ comments: [], error: 'comments_disabled' }));
+  assert.ok(comments.includes('Comments unavailable: comments disabled'));
+});

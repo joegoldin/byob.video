@@ -1,8 +1,8 @@
 import { parseFrame, reply, push } from './protocol.mjs';
 import { channelState, channelEvent, driftReport } from './channel.mjs';
 import { joinPeer, leavePeer } from './peers.mjs';
-import { transitionPlayback, seekPlayback, mediaLoaded, setVisibility } from './playback.mjs';
-import { recordDrift, adjustRoomClock, currentPosition, setPlaybackRate } from './room-sync.mjs';
+import { transitionPlayback, seekPlayback, mediaLoaded, setVisibility, changePlaybackRate } from './playback.mjs';
+import { recordDrift, adjustRoomClock, currentPosition } from './room-sync.mjs';
 import { videoEnded } from './queue.mjs';
 import { updateTabs } from './tabs.mjs';
 import { roomCommand } from './commands.mjs';
@@ -204,11 +204,7 @@ export class RoomSockets {
         case 'video:ended':
           result = videoEnded(state, payload.item_id ?? payload.index ?? state.queue[state.current_index]?.id, now);
           break;
-        case 'video:rate': {
-          const next = setPlaybackRate(state, payload.rate, now);
-          result = { state: next, events: next === state ? [] : [['sync_rate', { rate: next.playback_rate, current_time: next.current_time, server_time: now, user_id: peer.userId }]] };
-          break;
-        }
+        case 'video:rate': result = changePlaybackRate(state, peer.userId, payload.rate, now); break;
         case 'video:state': {
           if (peer.role !== 'extension') throw new Error('extension_required');
           const position = payload.position ?? 0;

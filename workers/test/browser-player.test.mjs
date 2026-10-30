@@ -81,6 +81,14 @@ test('native player reconnect and initial seeks retain authoritative playback an
     video.currentTime = 40;
     video.dispatchEvent(new Event('seeked'));
     assert.deepEqual(seeks.at(-1), ['video:seek', { position: 40 }]);
+    video.playbackRate = 1.5;
+    video.dispatchEvent(new Event('ratechange'));
+    assert.deepEqual(seeks.at(-1), ['video:rate', { rate: 1.5 }], 'native speed controls must synchronize without an external toolbar');
+    const sent = seeks.length;
+    direct._roomRate = 1;
+    direct.player.setPlaybackRate(1);
+    video.dispatchEvent(new Event('ratechange'));
+    assert.equal(seeks.length, sent, 'canonical speed application must not echo');
     const originalInterval = globalThis.setInterval;
     try {
       const ticks = [];
