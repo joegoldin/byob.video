@@ -3,7 +3,7 @@
 
 ---
 
-# v7.0.0 (unreleased)
+# v7.0.0 (2026-10-30)
 
 ### Native Cloudflare Workers
 
@@ -18,6 +18,17 @@ protocol remain supported, including an HTTP fallback when browser WebSockets
 are unavailable. Temporary compatibility endpoints transition old LiveView pages
 and preserve signed legacy identities during the configured migration window.
 
+### Interface and cost guardrails
+
+- Restore compact navigation, branded settings and green connected-user presence.
+- Align preview Play/Queue actions beside the title and restore queue/history context menus.
+- Load comment replies on demand, with pagination, local retries and clearer threads.
+- Restore attributed playback, seek, rate and finished-video activity.
+- Enforce100 active rooms globally and32 connections per room; disconnect message floods.
+- Release empty-room capacity after24 hours while retaining saved queues, history and API keys.
+- Deploy main through fast acceptance checks, then verify exact assets on both domains.
+  Keep the browser matrix available locally and as a manual workflow.
+
 ### Playback corrections
 
 - Scale seek-processing and message-transit compensation by the room rate.
@@ -25,7 +36,8 @@ and preserve signed legacy identities during the configured migration window.
 - Learn fast direct-video seek latency instead of retaining a500ms prior.
 - Advance remote resume targets through message transit; keep paused positions
   stationary.
-- Let explicit playback controls supersede pending load-readiness deadlines.
+- Let explicit playback controls supersede pending load-readiness deadlines and stale autoplay retries.
+- Track direct-player control echoes without swallowing immediate native play/pause.
 - Preserve queued successors on restart and reject stale readiness/ended events.
 
 ### Migration and verification

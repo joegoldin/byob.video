@@ -50,9 +50,9 @@ normal deployments do not extend.
 
 See [migration and rollback details](docs/cloudflare-data-migration.md),
 [Workers contracts](docs/cloudflare-contracts.md), and
-[synchronization research](docs/video-synchronization-research.md). The data
-cutover is complete; final UI additions and automatic-deployment acceptance are
-still being finished. That distinction matters more than the version number.
+[synchronization research](docs/video-synchronization-research.md). The production data cutover and main-push automatic deployment are verified.
+The faster deployment workflow checks both public domains against the exact
+HTML, JavaScript and CSS hashes from its build.
 
 ## Scaling and cost guardrails
 
@@ -160,8 +160,9 @@ It then verifies health and exact HTML/JavaScript/CSS build hashes on both publi
 domains. Configure the `CLOUDFLARE_ACCOUNT_ID` repository variable and a scoped
 `CLOUDFLARE_API_TOKEN` Actions secret; never copy a local Wrangler OAuth token
 into CI. See the [deployment setup](docs/cloudflare-data-migration.md#automated-production-deployment)
-for permissions and credential handling. Credential setup and a real main-push
-run must be verified before calling automation complete.
+for permissions and credential handling. Production credentials are configured;
+a real main-push run passed acceptance, deployed the Worker and verified both
+domains. The browser matrix remains available as a manual development check.
 
 For an explicitly authorized manual production deployment, after acceptance:
 

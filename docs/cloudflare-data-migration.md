@@ -22,9 +22,13 @@ but subsequent checks confirmed both production domains serve Workers. The
 migration gateway was removed: Cloudflare's deployments API reports that
 `byob-migration` does not exist (code10007).
 
-UI parity fixes and automated main-branch deployment are undergoing final
-acceptance; a successful data cutover alone does not establish release completion.
-The evidence below distinguishes local rehearsals from hosted checks.
+The restored interface, contextual errors, on-demand comment replies and global
+capacity guards are deployed. Main-push run41014373716 passed required acceptance
+and deployed version `ddaa4cfd-8f95-4664-829a-7a2b35cc0117`; both production domains
+passed health and exact HTML/JavaScript/CSS build-hash verification. The fast push
+workflow retains precommit/unit/oracle/runtime/migration/packaging gates; the
+browser matrix is manual-only as requested. The evidence below distinguishes
+local rehearsals from hosted checks.
 
 ## Export
 
