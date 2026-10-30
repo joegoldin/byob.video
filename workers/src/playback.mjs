@@ -1,5 +1,6 @@
 import { newSyncState } from './sync-decision.mjs';
-import { resetRoomSync } from './room-sync.mjs';
+import { resetRoomSync, setPlaybackRate } from './room-sync.mjs';
+import { withActivity } from './room-state.mjs';
 
 function validPosition(position) {
   if (typeof position !== 'number' || !Number.isFinite(position) || position < 0) throw new Error('invalid_position');
@@ -17,10 +18,11 @@ export function changeMedia(previous, index, now) {
 }
 
 function finishReady(state, now) {
-  return {
+  const item = state.queue[state.current_index];
+  return withActivity({
     state: { ...state, ready_deadline: null, ready_item_id: null, play_state: 'playing', current_time: 0, last_sync_at: now },
     events: [['sync_play', { time: 0, server_time: now, user_id: null }]],
-  };
+  }, 'now_playing', null, item?.title ?? item?.url, now);
 }
 
 function checkReady(state, now) {
@@ -63,7 +65,15 @@ export function transitionPlayback(state, action, userId, position, now) {
   let next = state;
   if (state.play_state !== play_state) next = { ...state, play_state, current_time: position, last_sync_at: now };
   if (action === 'play') next = { ...next, advance_deadline: null };
-  return { state: next, events: [[action === 'play' ? 'sync_play' : 'sync_pause', { time: position, server_time: now, user_id: userId }]] };
+  const result = { state: next, events: [[action === 'play' ? 'sync_play' : 'sync_pause', { time: position, server_time: now, user_id: userId }]] };
+  const item = state.queue[state.current_index];
+  return state.play_state === play_state ? result : withActivity(result, action, userId, item?.title ?? item?.url, now);
+}
+
+export function changePlaybackRate(state, userId, rate, now) {
+  const next = setPlaybackRate(state, rate, now);
+  const result = { state: next, events: next === state ? [] : [['sync_rate', { rate: next.playback_rate, current_time: next.current_time, server_time: now, user_id: userId }]] };
+  return next === state ? result : withActivity(result, 'rate_changed', userId, `${state.playback_rate}× → ${next.playback_rate}×`, now);
 }
 
 export function seekPlayback(state, userId, position, now) {
@@ -85,5 +95,5 @@ export function seekPlayback(state, userId, position, now) {
     events.push(['user_seek_command', id, { position: Math.max(0, position + latency / 1000), server_time: now }]);
     next.user_sync_states[id] = { ...decision, last_seek_at: now, seek_streak: Math.max(1, decision.seek_streak), over_tolerance_count: 0 };
   }
-  return { state: next, events };
+  return withActivity({ state: next, events }, 'seeked', userId, `${state.current_time.toFixed(1)}s → ${position.toFixed(1)}s`, now);
 }

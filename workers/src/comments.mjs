@@ -9,6 +9,26 @@ function avatar(value) {
   try { return externalUrl(value).href; } catch { return null; }
 }
 
+function comment(item, replyCount = 0) {
+  const snippet = item?.snippet ?? {};
+  return { id: text(item?.id, 256), author: text(snippet.authorDisplayName, 300), author_avatar: avatar(snippet.authorProfileImageUrl),
+    text: text(snippet.textDisplay, 10000), likes: count(snippet.likeCount), published_at: text(snippet.publishedAt, 40), reply_count: count(replyCount) };
+}
+
+export async function fetchCommentReplies(videoId, parentId, pageToken, env, options = {}) {
+  if (typeof videoId !== 'string' || !/^[\w-]{1,128}$/.test(videoId) ||
+      typeof parentId !== 'string' || !/^[\w.-]{1,256}$/.test(parentId) ||
+      (pageToken != null && (typeof pageToken !== 'string' || pageToken.length > 2048))) return { error: 'invalid_comments_request' };
+  const params = { part: 'snippet', parentId, maxResults: '20', textFormat: 'plainText' };
+  if (pageToken) params.pageToken = pageToken;
+  const result = await youtubeData('comments', params, env, options);
+  if (['not_found', 'comments_disabled'].includes(result.error)) return { ...empty(), video_id: videoId, parent_id: parentId };
+  if (result.error) return { error: result.error, video_id: videoId, parent_id: parentId };
+  if (!Array.isArray(result.data.items)) return { error: 'invalid_response', video_id: videoId, parent_id: parentId };
+  return { video_id: videoId, parent_id: parentId, comments: result.data.items.slice(0, 20).map(item => comment(item)),
+    next_page_token: text(result.data.nextPageToken, 2048), total_count: count(result.data.pageInfo?.totalResults) };
+}
+
 export async function fetchComments(videoId, pageToken, env, options = {}) {
   if (typeof videoId !== 'string' || !/^[\w-]{1,128}$/.test(videoId) ||
       (pageToken != null && (typeof pageToken !== 'string' || pageToken.length > 2048))) return { error: 'invalid_comments_request' };
@@ -20,12 +40,7 @@ export async function fetchComments(videoId, pageToken, env, options = {}) {
   if (!Array.isArray(result.data.items)) return { error: 'invalid_response', video_id: videoId };
   return {
     video_id: videoId,
-    comments: result.data.items.slice(0, 20).map(item => {
-      const snippet = item?.snippet?.topLevelComment?.snippet ?? {};
-      return { author: text(snippet.authorDisplayName, 300), author_avatar: avatar(snippet.authorProfileImageUrl),
-        text: text(snippet.textDisplay, 10000), likes: count(snippet.likeCount), published_at: text(snippet.publishedAt, 40),
-        reply_count: count(item?.snippet?.totalReplyCount) };
-    }),
+    comments: result.data.items.slice(0, 20).map(item => comment(item?.snippet?.topLevelComment, item?.snippet?.totalReplyCount)),
     next_page_token: text(result.data.nextPageToken, 2048), total_count: count(result.data.pageInfo?.totalResults),
   };
 }

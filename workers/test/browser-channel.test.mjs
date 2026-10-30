@@ -91,3 +91,26 @@ test('browser policy blocking WebSocket construction selects HTTP fallback', asy
     assert.ok(channel.retryTimer);
   } finally { channel.stop(); }
 });
+
+test('service failures preserve their actual error instead of reporting a rejected room action', async () => {
+  const { channel, sockets } = fixture();
+  try {
+    await channel.start();
+    const request = channel.request('comments:load');
+    sockets[0].reply(sockets[0].sent.at(-1), { error: 'comments_disabled' }, 'error');
+    await assert.rejects(request, /comments_disabled/);
+  } finally { channel.stop(); }
+});
+
+test('capacity refusal displays its explicit message and backs off instead of retrying rapidly', async () => {
+  const { channel } = fixture();
+  const errors = [];
+  channel.fetch = async () => ({ ok: false, status: 429, json: async () => ({ error: 'Server is at its 100-room capacity. Try again later.' }) });
+  channel.on('connection:error', error => errors.push(error.message));
+  try {
+    await channel.start();
+    assert.match(errors[0], /100-room capacity/);
+    assert.ok(channel.attempt >= 5, 'capacity refusal should use the maximum retry backoff immediately');
+    assert.ok(channel.retryTimer);
+  } finally { channel.stop(); }
+});

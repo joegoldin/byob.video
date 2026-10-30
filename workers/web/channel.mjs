@@ -45,7 +45,14 @@ export class RoomChannel {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tab_id: this.tabId }), signal: this.abort.signal,
       });
-      if (!response.ok) throw new Error(response.status === 429 ? 'Too many connection attempts. Retrying shortly.' : 'Could not establish your room session.');
+      if (!response.ok) {
+        if (response.status === 429) {
+          this.attempt = Math.max(this.attempt, 5);
+          const result = await response.json().catch(() => ({}));
+          throw new Error(typeof result.error === 'string' ? result.error : 'Too many connection attempts. Retrying shortly.');
+        }
+        throw new Error('Could not establish your room session.');
+      }
       const session = await response.json();
       if (this.stopped || generation !== this.generation) return;
       this.session = session;
@@ -141,7 +148,7 @@ export class RoomChannel {
       clearTimeout(pending.timer);
       this.pending.delete(ref);
       if (payload?.status === 'ok') pending.resolve(payload.response);
-      else pending.reject(new Error(payload?.response?.reason ?? 'The room rejected that action.'));
+      else pending.reject(new Error(payload?.response?.reason ?? payload?.response?.error ?? 'The room rejected that action.'));
     } else if (topic === `room:${this.roomId}` && joinRef === this.joinRef) {
       if (event === 'phx_error' || event === 'phx_close') this.socket.close();
       else this.emit(event, payload);

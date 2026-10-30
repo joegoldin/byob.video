@@ -58,7 +58,19 @@ try {
       await page.waitForURL(/\/room\/[a-z0-9]{8}$/);
       await page.waitForFunction(() => document.getElementById('connection-status')?.textContent === '');
       await page.locator('#url-input').fill(provider.url);
-      await page.locator('#url-form button[value="queue"]').click();
+      await page.locator('#url-preview button[value="queue"]').click();
+      await page.locator('[data-action="settings"]').click();
+      await page.waitForFunction(() => document.getElementById('room-api-key')?.value.length > 20);
+      const key = await page.locator('#room-api-key').inputValue();
+      const endpoint = page.url().replace('/room/', '/api/rooms/');
+      await page.getByRole('button', { name: 'Close settings', exact: true }).click();
+      const control = action => page.evaluate(async ({ endpoint, key, action }) => {
+        const stateResponse = await fetch(endpoint, { headers: { Authorization: `Bearer ${key}` } });
+        if (!stateResponse.ok) throw new Error(`Room state failed: ${stateResponse.status}`);
+        const { data } = await stateResponse.json();
+        const response = await fetch(`${endpoint}/${action}`, { method: 'POST', headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ position: data.current_time }) });
+        if (!response.ok) throw new Error(`Room ${action} failed: ${response.status}`);
+      }, { endpoint, key, action });
       const iframe = page.locator(`#player iframe[src*="${provider.host}"]`).first();
       await iframe.waitFor({ timeout: 20000 });
       const frame = await (await iframe.elementHandle()).contentFrame();
@@ -67,16 +79,25 @@ try {
       const video = frame.locator('video').first();
       if (await video.evaluate(video => video.paused)) await video.click({ force: true });
       await frame.waitForFunction(() => { const video = document.querySelector('video'); return video && !video.paused && video.currentTime > 0.5; }, null, { timeout: 20000 });
-      await page.locator('[data-action="pause"]').click();
+      await control('pause');
       await frame.waitForFunction(() => document.querySelector('video')?.paused === true, null, { timeout: 10000 });
-      await page.locator('#playback-rate').selectOption('1.5');
-      await page.locator('[data-action="play"]').click();
+      if (provider.name === 'YouTube') {
+        await frame.getByRole('button', { name: /^(Playback )?Settings$/i }).click();
+        await frame.getByText(/^(Playback speed|Speed)$/).click();
+        await frame.getByText(/^1\.5(?:x|×)?$/).click();
+      } else {
+        await video.evaluate(video => { video.playbackRate = 1.5; });
+      }
+      await page.waitForFunction(() => document.getElementById('activity-panel').textContent.includes('changed speed: 1× → 1.5×'));
+      await control('play');
       await frame.waitForFunction(() => { const video = document.querySelector('video'); return video && !video.paused && video.playbackRate === 1.5; }, null, { timeout: 10000 });
       const start = await video.evaluate(video => video.currentTime);
       await frame.waitForFunction(start => document.querySelector('video').currentTime > start + 1, start, { timeout: 10000 });
       console.log(`PASS: real ${provider.name} embed playback, room pause/resume and actual1.5x rate`);
     } catch (error) {
       const messages = await Promise.all(page.frames().map(frame => frame.locator('body').innerText({ timeout: 1000 }).then(text => text.slice(0, 1200)).catch(() => 'Frame text unavailable')));
+      const controls = await Promise.all(page.frames().filter(frame => frame.url().includes(provider.host)).map(frame => frame.locator('button,[role="button"]').evaluateAll(nodes => nodes.slice(0, 40).map(node => ({ label: node.getAttribute('aria-label'), title: node.getAttribute('title'), class: node.className }))).catch(() => [])));
+      console.error(`Provider controls: ${JSON.stringify(controls)}`);
       failures.push(provider.name);
       console.error(`FAIL: ${provider.name}: ${error.message}; visible page/frame messages: ${JSON.stringify(messages)}; failed requests: ${JSON.stringify(network)}`);
     } finally { await context.close(); }

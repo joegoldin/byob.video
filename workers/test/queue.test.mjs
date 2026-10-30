@@ -77,3 +77,10 @@ test('replay cancels pending autoplay and removal cannot resurrect media through
   const removed = removeItem(started, 'a').state;
   assert.deepEqual(expireReady(removed, 'a', 4500).events, []);
 });
+
+test('finished media emits activity once, excluding duplicate ended callbacks', () => {
+  const result = videoEnded({ ...room([a]), activity_log: [] }, 'a', 2000);
+  assert.equal(result.state.activity_log[0]?.action, 'finished');
+  assert.ok(result.events.some(([event]) => event === 'activity_log_entry'));
+  assert.deepEqual(videoEnded(result.state, 'a', 2100).events, []);
+});

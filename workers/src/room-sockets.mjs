@@ -1,12 +1,12 @@
 import { parseFrame, reply, push } from './protocol.mjs';
 import { channelState, channelEvent, driftReport } from './channel.mjs';
 import { joinPeer, leavePeer } from './peers.mjs';
-import { transitionPlayback, seekPlayback, mediaLoaded, setVisibility } from './playback.mjs';
-import { recordDrift, adjustRoomClock, currentPosition, setPlaybackRate } from './room-sync.mjs';
+import { transitionPlayback, seekPlayback, mediaLoaded, setVisibility, changePlaybackRate } from './playback.mjs';
+import { recordDrift, adjustRoomClock, currentPosition } from './room-sync.mjs';
 import { videoEnded } from './queue.mjs';
 import { updateTabs } from './tabs.mjs';
 import { roomCommand } from './commands.mjs';
-import { fetchComments } from './comments.mjs';
+import { fetchComments, fetchCommentReplies } from './comments.mjs';
 import { fetchPreview, addPlaylist } from './preview.mjs';
 import { startRound } from './room-rounds.mjs';
 import { trackAnalytics } from './analytics.mjs';
@@ -37,7 +37,7 @@ export class RoomSockets {
 
   upgrade(ownerId, role, siteHost, connection = null) {
     if (!this.owner.room) return new Response('Room not found', { status: 404 });
-    if (this.owner.ctx.getWebSockets().length >= 256) return new Response('Room connection limit reached', { status: 429 });
+    if (this.owner.ctx.getWebSockets().length >= 32) return new Response('Room connection limit reached', { status: 429 });
     if (connection && this.owner.ctx.getWebSockets(`http:${connection}`).length) return new Response('Connection already exists', { status: 409 });
     const [client, server] = Object.values(new WebSocketPair());
     const userId = role === 'extension' ? `ext:${ownerId}` : ownerId;
@@ -81,7 +81,7 @@ export class RoomSockets {
       frame = parseFrame(message);
       const now = Date.now();
       if (now - peer.windowAt >= 1000) { peer.windowAt = now; peer.messageCount = 0; }
-      if (++peer.messageCount > 60) throw new Error('rate_limited');
+      if (++peer.messageCount > 60) { socket.close(1008, 'Message rate limit exceeded'); return; }
       socket.serializeAttachment(peer);
       if (frame.topic === 'phoenix' && frame.event === 'heartbeat') {
         socket.send(reply(frame, 'ok', {}));
@@ -138,7 +138,7 @@ export class RoomSockets {
         socket.send(reply(frame, 'ok', snapshot));
         return;
       }
-      if (['preview_url', 'url:preview', 'playlist:add', 'comments:load', 'comments:load_more', 'round:start'].includes(frame.event)) {
+      if (['preview_url', 'url:preview', 'playlist:add', 'comments:load', 'comments:load_more', 'comments:replies', 'round:start'].includes(frame.event)) {
         if (peer.role !== 'browser') throw new Error('browser_required');
         if (!(await this.owner.env.API_READ_LIMITER.limit({ key: `services:${this.owner.room.room_id}:${peer.userId}` })).success) throw new Error('rate_limited');
       }
@@ -168,13 +168,19 @@ export class RoomSockets {
         }
         return;
       }
-      if (['comments:load', 'comments:load_more'].includes(frame.event)) {
+      if (['comments:load', 'comments:load_more', 'comments:replies'].includes(frame.event)) {
         const item = this.owner.room.queue[this.owner.room.current_index];
         if (item?.source_type !== 'youtube') {
           socket.send(reply(frame, 'ok', { comments: [], next_page_token: null, total_count: 0, video_id: null }));
           return;
         }
-        const result = await fetchComments(item.source_id, frame.payload.page_token ?? null, this.owner.env);
+        if (frame.event === 'comments:replies' && frame.payload.video_id !== item.source_id) {
+          socket.send(reply(frame, 'ok', { stale: true }));
+          return;
+        }
+        const result = frame.event === 'comments:replies'
+          ? await fetchCommentReplies(item.source_id, frame.payload.parent_id, frame.payload.page_token ?? null, this.owner.env)
+          : await fetchComments(item.source_id, frame.payload.page_token ?? null, this.owner.env);
         const current = this.owner.room.queue[this.owner.room.current_index];
         if (current?.id !== item.id || current.url !== item.url) socket.send(reply(frame, 'ok', { stale: true }));
         else socket.send(reply(frame, result.error ? 'error' : 'ok', result));
@@ -204,11 +210,7 @@ export class RoomSockets {
         case 'video:ended':
           result = videoEnded(state, payload.item_id ?? payload.index ?? state.queue[state.current_index]?.id, now);
           break;
-        case 'video:rate': {
-          const next = setPlaybackRate(state, payload.rate, now);
-          result = { state: next, events: next === state ? [] : [['sync_rate', { rate: next.playback_rate, current_time: next.current_time, server_time: now, user_id: peer.userId }]] };
-          break;
-        }
+        case 'video:rate': result = changePlaybackRate(state, peer.userId, payload.rate, now); break;
         case 'video:state': {
           if (peer.role !== 'extension') throw new Error('extension_required');
           const position = payload.position ?? 0;

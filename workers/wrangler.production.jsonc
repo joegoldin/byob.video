@@ -80,5 +80,15 @@
         "period": 60
       }
     }
+  ],
+  "routes": [
+    {
+      "pattern": "byob.video/*",
+      "zone_name": "byob.video"
+    },
+    {
+      "pattern": "www.byob.video/*",
+      "zone_name": "byob.video"
+    }
   ]
 }

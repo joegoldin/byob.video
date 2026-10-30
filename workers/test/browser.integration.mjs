@@ -64,7 +64,7 @@ try {
       if (trace.length > 60) trace.shift();
     };
     Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', { ...descriptor, set(value) { record(this, 'set', value); descriptor.set.call(this, value); } });
-    for (const event of ['seeking', 'seeked', 'loadedmetadata']) document.addEventListener(event, e => { if (e.target instanceof HTMLMediaElement) record(e.target, event); }, true);
+    for (const event of ['seeking', 'seeked', 'loadedmetadata', 'play', 'pause', 'ratechange']) document.addEventListener(event, e => { if (e.target instanceof HTMLMediaElement) record(e.target, event); }, true);
   });
   if (process.env.BYOB_NETWORK_PROFILE === 'delayed') {
     assert.notEqual(process.env.BYOB_HTTP_ONLY, '1', 'the delayed WebSocket profile must not silently test HTTP instead');
@@ -177,7 +177,15 @@ try {
       for (const direction of ['framesent', 'framereceived']) socket.on(direction, frame => recordFrame(direction, frame.payload));
     });
   }
-  await alice.goto(origin);
+  const screenshots = await mkdtemp(join(tmpdir(), 'byob-browser-review-'));
+  console.log(`Screenshots: ${screenshots}`);
+  for (const page of [alice, bob]) {
+    await page.goto(origin);
+    await page.locator('[data-action="create-room"]').waitFor();
+    const homeGap = await page.evaluate(() => document.querySelector('section').getBoundingClientRect().top - document.querySelector('nav').getBoundingClientRect().bottom);
+    assert.ok(homeGap >= 24, 'Home information card must be padded below the navigation on desktop and mobile');
+    await page.screenshot({ path: join(screenshots, page === alice ? 'home.png' : 'home-mobile.png'), fullPage: true });
+  }
   await alice.locator('[data-action="create-room"]').click();
   await alice.waitForURL(/\/room\/[a-z0-9]{8}$/);
   const roomUrl = alice.url();
@@ -186,20 +194,42 @@ try {
     try { await page.waitForFunction(() => document.getElementById('connection-status')?.textContent === ''); }
     catch (error) { throw new Error(`${error.message}; ${JSON.stringify({ errors, page: await page.locator('body').innerText() })}`); }
     assert.ok((await page.locator('#url-input').boundingBox()).width >= 160, 'URL input must remain usable on mobile');
+    assert.equal(await page.locator('[data-action="pause"]').count(), 0, 'No duplicate controls below the player');
+    assert.ok(await page.locator('#users-panel .bg-success').count(), 'Connected users have a green status dot');
+    await page.screenshot({ path: join(screenshots, page === alice ? 'empty-desktop.png' : 'empty-mobile.png'), fullPage: true });
+    if (page === alice) {
+      await page.locator('[data-action="settings"]').click();
+      await page.waitForFunction(() => document.getElementById('room-api-key')?.value.length > 20);
+      assert.ok((await page.locator('#settings-modal .modal-box').boundingBox()).width <= 448);
+      await page.screenshot({ path: join(screenshots, 'settings.png'), fullPage: true, animations: 'disabled' });
+      await page.locator('[aria-label="Close settings"]').click();
+    }
     await page.locator('[data-action="theme"]').click();
   }
+  await alice.locator('#url-input').fill('not a video URL');
+  await alice.waitForFunction(() => document.getElementById('url-preview').textContent.includes('Preview unavailable:'));
+  assert.equal(await alice.locator('#notice').isVisible(), false, 'Optional preview failures must not report a rejected room action');
+  assert.ok(await alice.locator('#url-preview button[value="queue"]').isVisible(), 'Metadata failure must not remove queue controls');
   await alice.locator('#url-input').fill(`http://localhost:${media.address().port}/fixture.webm`);
-  await alice.locator('#url-form button[value="queue"]').click();
+  await alice.locator('#url-preview button[value="queue"]').click();
   for (const page of [alice, bob]) {
     try { await page.waitForFunction(() => { const video = document.querySelector('#player video'); return video && !video.paused && video.currentTime > 0.3; }, null, { timeout: 15000 }); }
     catch (error) { throw new Error(`${error.message}; ${JSON.stringify(await page.evaluate(() => { const video = document.querySelector('#player video'); return { body: document.body.innerText, media: video && { source: video.currentSrc, error: video.error?.message, network: video.networkState, ready: video.readyState, paused: video.paused, time: video.currentTime, duration: video.duration }, activated: navigator.userActivation.hasBeenActive }; }))}`); }
   }
-  await alice.locator('[data-action="pause"]').click();
+  await alice.locator('#player video').evaluate(video => video.pause());
   for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.paused === true);
-  await alice.locator('#playback-rate').selectOption('1.5');
+  await alice.locator('#player video').evaluate(video => { video.playbackRate = 1.5; });
   for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.playbackRate === 1.5);
-  await alice.locator('[data-action="play"]').click();
-  for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.paused === false);
+  await alice.locator('#player video').evaluate(video => video.play());
+  for (const page of [alice, bob]) {
+    try { await page.waitForFunction(() => document.querySelector('#player video')?.paused === false); }
+    catch (error) { throw new Error(`${error.message}; ${JSON.stringify({ traces: [...traces.values()], media: await Promise.all([alice, bob].map(page => page.evaluate(() => ({ trace: window.__mediaTrace, body: document.body.innerText })))) })}`); }
+  }
+  for (const page of [alice, bob]) await page.waitForFunction(() => {
+    const activity = document.getElementById('activity-panel').textContent;
+    return activity.includes('paused') && activity.includes('resumed') && activity.includes('changed speed: 1× → 1.5×');
+  });
+  console.log('PASS: both clients render attributed pause, resume and rate activity');
   bob.once('dialog', dialog => dialog.accept('<img src=x onerror=alert(1)>'));
   await bob.locator('[data-action="rename"]').click();
   await alice.locator('[data-action="settings"]').click();
@@ -248,18 +278,17 @@ try {
   assert.equal(await alice.locator('[data-queue-idx]').count(), 1);
   for (const page of [alice, bob]) assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'room layout must not overflow horizontally');
   assert.deepEqual(errors, []);
-  const screenshots = await mkdtemp(join(tmpdir(), 'byob-browser-review-'));
   await alice.screenshot({ path: join(screenshots, 'desktop.png'), fullPage: true, animations: 'disabled' });
   await bob.screenshot({ path: join(screenshots, 'mobile.png'), fullPage: true, animations: 'disabled' });
   console.log(`Screenshots: ${screenshots}`);
   for (const rate of [0.25, 0.5, 0.75, 1, 1.25, 1.75, 2]) {
-    await alice.locator('#playback-rate').selectOption(String(rate));
+    await alice.locator('#player video').evaluate((video, rate) => { video.playbackRate = rate; }, rate);
     for (const page of [alice, bob]) await page.waitForFunction(rate => document.querySelector('#player video')?.playbackRate === rate, rate);
     const anchor = await alice.locator('#player video').evaluate(video => video.currentTime);
     await alice.waitForFunction(anchor => document.querySelector('#player video').currentTime > anchor + 3, anchor, { timeout: 16000 });
     await measureDrift(rate);
   }
-  await alice.locator('[data-action="pause"]').click();
+  await alice.locator('#player video').evaluate(video => video.pause());
   for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.paused === true);
   await alice.locator('#player video').evaluate(video => { video.currentTime = 20; });
   for (const page of [alice, bob]) {
@@ -278,14 +307,46 @@ try {
   assert.equal((await roomState()).play_state, 'paused', 'rejoining must not resume a paused room');
   assert.equal((await roomState()).user_count, 2, 'reload must retain the same tab identity');
   await bob.locator('[data-action="theme"]').click();
-  await alice.locator('#playback-rate').selectOption('1.5');
-  await alice.locator('[data-action="play"]').click();
+  await alice.locator('#player video').evaluate(video => { video.playbackRate = 1.5; });
+  await alice.locator('#player video').evaluate(video => video.play());
   for (const page of [alice, bob]) await page.waitForFunction(() => { const video = document.querySelector('#player video'); return !video.paused && video.currentTime > 23 && video.playbackRate === 1.5; });
   await measureDrift(1.5);
   console.log('PASS: native paused seek, retained tab identity and paused-room reload/resume');
   const roundPage = await contexts[1].newPage();
   roundPage.on('pageerror', error => errors.push(error.message));
   await roundPage.setContent(`<link rel="stylesheet" href="${origin}/assets/app.css"><div id="round-panel" style="max-width:360px"></div>`);
+  for (const page of [alice, bob]) {
+    await page.locator('[data-queue-idx="0"]').click({ button: 'right' });
+    const menu = page.locator('#queue-context-menu');
+    await menu.getByRole('menuitem', { name: 'Restart', exact: true }).waitFor();
+    const bounds = await menu.boundingBox();
+    assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= page.viewportSize().width);
+    await page.keyboard.press('Escape');
+    assert.equal(await menu.count(), 0);
+  }
+  await alice.locator('[data-action="history-tab"]').click();
+  await alice.locator('[data-context-kind="history"]').first().click({ button: 'right' });
+  await alice.getByRole('menuitem', { name: 'Add to Queue', exact: true }).click();
+  await alice.locator('[data-action="queue-tab"]').click();
+  await alice.waitForFunction(() => document.querySelectorAll('[data-queue-idx]').length === 2);
+  await alice.locator('[data-queue-idx="1"]').click({ button: 'right' });
+  assert.ok(await alice.getByRole('menuitem', { name: 'Play Now', exact: true }).isVisible());
+  await alice.getByRole('menuitem', { name: 'Remove from Queue', exact: true }).click();
+  await alice.waitForFunction(() => document.querySelectorAll('[data-queue-idx]').length === 1);
+  for (const page of [alice, bob]) {
+    await page.locator('#url-input').fill(`http://localhost:${media.address().port}/fixture.webm`);
+    const buttons = page.locator('#url-preview button[value="now"]');
+    await buttons.waitFor();
+    const play = await buttons.boundingBox();
+    const queue = await page.locator('#url-preview button[value="queue"]').boundingBox();
+    const title = await page.locator('#url-preview strong').boundingBox();
+    assert.ok(play.x >= title.x + title.width - 1, 'Play/Queue must align to the right of the title');
+    assert.ok(play.y < title.y + title.height && play.y + play.height > title.y, 'Preview actions must share the title row');
+    assert.ok(queue.x + queue.width <= page.viewportSize().width, 'Preview actions must fit on mobile');
+    await page.screenshot({ path: join(screenshots, page === alice ? 'inline-preview-desktop.png' : 'inline-preview-mobile.png'), fullPage: true });
+    await page.locator('[data-action="clear-url"]').click();
+  }
+  console.log('PASS: desktop/mobile context menus, Escape dismissal, history requeue, queue removal and right-aligned inline preview actions');
   const fixture = await build({ entryPoints: [join(root, 'web/rounds.mjs')], bundle: true, format: 'iife', globalName: 'RoundFixture', write: false });
   await roundPage.addScriptTag({ content: fixture.outputFiles[0].text });
   const seed = 123456, winningIndex = landingSlice(seed, 12);
@@ -306,6 +367,50 @@ try {
   await roundPage.screenshot({ path: join(screenshots, 'roulette-mobile.png'), fullPage: true, animations: 'disabled' });
   await roundPage.evaluate(() => roundView.update(null, 'alice'));
   assert.equal(await roundPage.locator('#roulette-wheel').count(), 0);
+  const commentPage = await contexts[1].newPage();
+  commentPage.on('pageerror', error => errors.push(error.message));
+  await commentPage.setContent(`<link rel="stylesheet" href="${origin}/assets/app.css"><div id="comments-fixture"></div>`);
+  const commentFixture = await build({ stdin: { contents: 'export { createCommentReplies } from "./comment-replies.mjs"; export { commentsPanel } from "./views.mjs"; export { render } from "./html.mjs";', resolveDir: join(root, 'web'), loader: 'js' }, bundle: true, format: 'iife', globalName: 'CommentFixture', write: false });
+  await commentPage.addScriptTag({ content: commentFixture.outputFiles[0].text });
+  await commentPage.evaluate(() => {
+    const target = document.getElementById('comments-fixture');
+    const page = { comments: [{ id: 'parent', author: 'Viewer', text: 'A distinct comment with replies.', likes: 12, reply_count: 2 }, { id: 'other', author: 'Another viewer', text: 'A separate thread.', likes: 3, reply_count: 0 }], total_count: 2 };
+    window.replyCalls = [];
+    const response = (id, next = null) => ({ video_id: 'video', parent_id: 'parent', comments: [{ id, author: 'Reply author', text: id === 'first' ? '<img src=x onerror=alert(1)>' : 'Second reply', likes: 1 }], next_page_token: next });
+    const controller = CommentFixture.createCommentReplies({ getVideo: () => 'video', changed: () => CommentFixture.render(target, CommentFixture.commentsPanel(page, { replies: controller.entries })), request: async payload => {
+      replyCalls.push(payload);
+      if (replyCalls.length === 1) return new Promise(resolve => { window.finishReplies = () => resolve(response('first', 'next')); });
+      if (replyCalls.length === 2) throw new Error('upstream_unavailable');
+      return response('second');
+    } });
+    CommentFixture.render(target, CommentFixture.commentsPanel(page, { replies: controller.entries }));
+    target.addEventListener('click', event => {
+      const button = event.target.closest('[data-action]');
+      if (!button) return;
+      const action = button.dataset.action;
+      if (action === 'comment-replies') void controller.toggle(button.dataset.commentId);
+      if (action === 'more-replies') void controller.more(button.dataset.commentId);
+      if (action === 'retry-replies') void controller.retry(button.dataset.commentId);
+    });
+  });
+  assert.equal(await commentPage.evaluate(() => replyCalls.length), 0);
+  await commentPage.getByRole('button', { name: /View 2 replies/ }).click();
+  await commentPage.getByRole('status').filter({ hasText: 'Loading replies' }).waitFor();
+  await commentPage.getByRole('button', { name: /Hide replies/ }).click();
+  await commentPage.evaluate(() => finishReplies());
+  await commentPage.getByRole('button', { name: /View 2 replies/ }).click();
+  await commentPage.getByText('<img src=x onerror=alert(1)>', { exact: true }).waitFor();
+  assert.equal(await commentPage.locator('img[src="x"]').count(), 0);
+  assert.equal(await commentPage.evaluate(() => replyCalls.length), 1);
+  await commentPage.getByRole('button', { name: 'Load more replies', exact: true }).click();
+  await commentPage.getByRole('alert').waitFor();
+  await commentPage.getByRole('button', { name: 'Retry replies', exact: true }).click();
+  await commentPage.getByText('Second reply', { exact: true }).waitFor();
+  assert.equal(await commentPage.evaluate(() => replyCalls.length), 3);
+  await commentPage.screenshot({ path: join(screenshots, 'comments-mobile.png'), fullPage: true });
+  await commentPage.setViewportSize({ width: 1280, height: 800 });
+  await commentPage.screenshot({ path: join(screenshots, 'comments-desktop.png'), fullPage: true });
+  console.log('PASS: lazy reply clicks, loading/collapse/cache, pagination retry and escaped threaded comments');
   assert.deepEqual(errors, []);
   console.log('PASS: rendered home/create/join, two real direct-video players, play/pause/rate propagation, private settings and desktop/mobile layout');
 } finally {

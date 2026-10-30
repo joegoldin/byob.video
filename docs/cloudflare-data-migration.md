@@ -1,9 +1,30 @@
 # Legacy data migration
 
-The migration tools are implemented for staging validation. Production export,
-traffic freeze, import, session compatibility and rollback acceptance are still
-required before cutover. Do not retire Fly or its volume on the strength of a
-local round trip.
+## Production cutover status — 2026-10-30
+
+Both `byob.video` and `www.byob.video` now route to the native `byob-video`
+Worker. The final frozen snapshot imported 88 rooms and 14,769 pool records;
+repeat import and original-key verification passed before switching routes.
+The original proxied DNS records remain in place for coordinated rollback.
+
+The Fly application is frozen, not retired. A read-only release RPC confirmed
+that `Byob.Supervisor` remains stopped. Preserve its machine, volume and final
+backup; do not restart it while Workers accepts writes. A rollback now requires
+reconciling post-cutover writes, not merely restarting the old application.
+
+The final private SQLite backup and export are under
+`~/.local/state/byob-migration/final-20261030T030321Z/`, with directory mode0700
+and file mode0600. A subsequent read-only audit verified all 88 original API
+keys on `byob.video`, both domain health endpoints and the removed gateway's404;
+`receipt.json` records backup hashes and verification metadata without credentials.
+The immediate route-verification step failed during cutover,
+but subsequent checks confirmed both production domains serve Workers. The
+migration gateway was removed: Cloudflare's deployments API reports that
+`byob-migration` does not exist (code10007).
+
+UI parity fixes and automated main-branch deployment are undergoing final
+acceptance; a successful data cutover alone does not establish release completion.
+The evidence below distinguishes local rehearsals from hosted checks.
 
 ## Export
 
@@ -96,8 +117,8 @@ legacy cookie/token continuity, cutover success or rollback readiness.
 A consistent read-only `VACUUM INTO` snapshot of Fly's live SQLite database,
 including committed WAL contents, passed `integrity_check`: 87 rooms and 14,760
 pool rows. It was retrieved into a private directory with mode0600 and its
-SHA256 matched the source. The final cutover still requires a fresh snapshot
-after freezing writes; this preflight is not that snapshot.
+SHA256 matched the source. This preflight was followed by the separate frozen
+final snapshot described above; it is not the final cutover backup.
 
 The real export exposed two compatibility gaps. Transient references contained
 an old VM node atom unknown to the exporter. A bounded structural ETF traversal
@@ -119,10 +140,10 @@ node test/migration-preflight.integration.mjs /private/backup/byob-export.json
 ```
 
 `wrangler.production.jsonc` and `wrangler.migration-production.jsonc` isolate the
-production application and gateway from preview. Both pass packaging dry runs;
-the application has no production-domain routes configured yet. CI checks both
-production packages as well as preview. Neither production deployment nor import
-is established by these dry runs.
+production application and gateway from preview. Both pass packaging dry runs.
+The application now configures `byob.video/*` and `www.byob.video/*` routes.
+CI checks both production packages as well as preview. Packaging dry runs alone
+do not establish production deployment or import success.
 
 ## Hosted preview evidence
 
@@ -166,9 +187,12 @@ an unassociated peer rather than claiming someone else's owner identity.
 Verification uses PBKDF2/HMAC matching Plug and decodes only a bounded ETF subset
 after signature verification. Compressed terms, VM references, arbitrary atoms,
 oversized tokens, malformed terms and invalid identities are rejected. Remove
-the legacy secret after the chosen transition window. Actual production secret
-configuration and the transition of already-open LiveView pages still require
-release verification.
+the legacy secret after the chosen transition window. Production has the actual
+legacy signing secret and an absolute fourteen-day compatibility cutoff; normal
+deployments do not extend that cutoff. A synthetic session and extension ticket
+signed by the live Fly runtime passed native Worker authentication. Already-open
+LiveView page transitions have the real-client browser evidence below, rather
+than a claim that every existing user session was observed during cutover.
 
 ### Verified WebSocket page transition
 
@@ -198,3 +222,31 @@ native HTTP fallback and retained their original identity. Runs `bfd09bc29` and
 and Firefox, the default Chromium WebSocket regression suite, migration tests,
 precommit and a deployment dry-run. These are local checks, not production
 cutover evidence.
+
+## Automated production deployment
+
+`.github/workflows/workers.yml` deploys a push to `main` only after project
+precommit, unit/oracle/runtime/migration checks, deployment packaging, and the
+complete Chromium/Firefox WebSocket/HTTP browser matrix pass. The matrix also
+covers legacy-page transitions, the current injected Chromium extension, and
+ordered delay/jitter. Main-branch runs and production deployments are serialized;
+a newer push cannot cancel an upload already in progress. Manual dispatch from
+`main` uses the same gates.
+
+Configure the repository variable `CLOUDFLARE_ACCOUNT_ID` and repository secret
+`CLOUDFLARE_API_TOKEN`. Use a persistent API token restricted to the deployment
+account and `byob.video` zone, with Workers Scripts edit, Workers Routes edit and
+Zone read permissions. Do not use the local Wrangler OAuth token or commit token
+values. The token is exposed only to the deployment step, not dependency builds
+or tests. To set it without writing it to a file or shell history:
+
+```fish
+gh secret set CLOUDFLARE_API_TOKEN --repo joegoldin/byob.video
+```
+
+The deployment job preserves existing Worker secrets and Durable Object storage.
+It does not import data, restart Fly, deploy a migration gateway or extend legacy
+authentication. `workers/scripts/verify-deployment.mjs` then checks both public
+domains for healthy responses and exact HTML/JavaScript/CSS hashes matching that
+build, with a bounded propagation retry. Missing credentials or failed checks
+fail the workflow rather than bypassing acceptance.

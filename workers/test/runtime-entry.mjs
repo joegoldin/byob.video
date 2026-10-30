@@ -7,7 +7,7 @@ export class Room extends NativeRoom {
     await this.persist({ ...this.room, empty_deadline: Date.now() - 1 });
   }
   async inspectIdleForTest() {
-    return { deadline: this.room.empty_deadline, expired_at: this.room.idle_expired_at, alarm: await this.ctx.storage.getAlarm() };
+    return { deadline: this.room.empty_deadline, expired_at: this.room.idle_expired_at, alarm: await this.ctx.storage.getAlarm(), connections: this.ctx.getWebSockets().length };
   }
 }
 

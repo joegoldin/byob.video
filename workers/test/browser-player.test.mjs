@@ -81,6 +81,45 @@ test('native player reconnect and initial seeks retain authoritative playback an
     video.currentTime = 40;
     video.dispatchEvent(new Event('seeked'));
     assert.deepEqual(seeks.at(-1), ['video:seek', { position: 40 }]);
+    video.playbackRate = 1.5;
+    video.dispatchEvent(new Event('ratechange'));
+    assert.deepEqual(seeks.at(-1), ['video:rate', { rate: 1.5 }], 'native speed controls must synchronize without an external toolbar');
+    const sent = seeks.length;
+    direct._roomRate = 1;
+    direct.player.setPlaybackRate(1);
+    video.dispatchEvent(new Event('ratechange'));
+    assert.equal(seeks.length, sent, 'canonical speed application must not echo');
+    direct.suppression.shouldSuppress = () => true;
+    direct.reconcile.start = () => {};
+    direct.reconcile.stop = () => {};
+    video.paused = true;
+    video.play = () => { video.paused = false; video.dispatchEvent(new Event('play')); return Promise.resolve(); };
+    video.pause = () => { if (!video.paused) { video.paused = true; video.dispatchEvent(new Event('pause')); } };
+    const controls = seeks.length;
+    direct.player.play();
+    direct.player.pause();
+    assert.equal(seeks.length, controls, 'remote play/pause must not echo');
+    await video.play();
+    assert.equal(seeks.at(-1)[0], 'video:play', 'native resume immediately after remote pause must escape the old suppression window');
+    video.pause();
+    assert.equal(seeks.at(-1)[0], 'video:pause', 'native pause must not be swallowed by the prior remote command');
+    direct.player.seek(40);
+    const beforeResume = seeks.length;
+    await video.play();
+    assert.equal(seeks.length, beforeResume + 1, 'a pending programmatic seek must not own a native play action');
+    assert.equal(seeks.at(-1)[0], 'video:play');
+    video.dispatchEvent(new Event('seeked'));
+    const originalTimeout = globalThis.setTimeout;
+    try {
+      const callbacks = [];
+      globalThis.setTimeout = callback => { callbacks.push(callback); return 0; };
+      let retries = 0;
+      const pending = { sourceType: 'direct_url', expectedPlayState: 'playing', player: { getState: () => 'paused' }, suppression: { suppress() {} }, _play() { retries++; } };
+      player._retryPlayOrShowOverlay.call(pending, 0);
+      pending.expectedPlayState = 'paused';
+      callbacks[0]();
+      assert.equal(retries, 0, 'an old autoplay retry must not override a newer explicit pause');
+    } finally { globalThis.setTimeout = originalTimeout; }
     const originalInterval = globalThis.setInterval;
     try {
       const ticks = [];

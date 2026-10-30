@@ -2,7 +2,7 @@ import { parseMediaUrl, extractUrl } from './media.mjs';
 import { enqueue, playIndex, removeItem, reorderQueue, advanceQueue } from './queue.mjs';
 import { seekPlayback } from './playback.mjs';
 import { renamePeer } from './peers.mjs';
-import { logActivity, defaultSponsorSettings } from './room-state.mjs';
+import { withActivity as activity, defaultSponsorSettings } from './room-state.mjs';
 import { updateLive, updateScrapedMedia, replaceCurrentUrl } from './media-updates.mjs';
 import { voteRound, cancelRound } from './room-rounds.mjs';
 
@@ -10,13 +10,6 @@ function index(value) {
   if (typeof value === 'string' && /^\d+$/.test(value)) value = Number(value);
   if (!Number.isSafeInteger(value) || value < 0) throw new Error('invalid_index');
   return value;
-}
-
-function activity(result, action, userId, detail, now) {
-  const state = logActivity(result.state, action, userId, detail, now);
-  const events = [...result.events];
-  if (state !== result.state) events.push(['activity_log_entry', state.activity_log[0]]);
-  return { ...result, state, events };
 }
 
 export function roomCommand(state, peer, event, payload, now) {

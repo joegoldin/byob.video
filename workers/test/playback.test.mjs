@@ -25,7 +25,7 @@ test('media change waits for visible peers, rejects stale loads and starts exact
   assert.equal(first.state.play_state, 'paused');
   const second = mediaLoaded(first.state, 'b', 'next', 2300);
   assert.equal(second.state.play_state, 'playing');
-  assert.deepEqual(second.events, [['sync_play', { time: 0, server_time: 2300, user_id: null }]]);
+  assert.deepEqual(second.events, [['sync_play', { time: 0, server_time: 2300, user_id: null }], ['activity_log_entry', { action: 'now_playing', user: null, detail: null, at: '1970-01-01T00:00:02.300Z' }]]);
   assert.deepEqual(mediaLoaded(second.state, 'b', 'next', 2400).events, []);
   assert.deepEqual(expireReady(second.state, 'next', 4500).events, []);
 });
@@ -73,7 +73,7 @@ test('redundant play/pause cannot overwrite canonical position; play cancels que
 
 test('user seek preserves device learning, excludes originator and debounces repeated events', () => {
   const result = seekPlayback(room(), 'a', 30, 2000);
-  assert.deepEqual(result.events, [['user_seek_command', 'b', { position: 30.25, server_time: 2000 }]]);
+  assert.deepEqual(result.events, [['user_seek_command', 'b', { position: 30.25, server_time: 2000 }], ['activity_log_entry', { action: 'seeked', user: 'a', detail: '5.0s → 30.0s', at: '1970-01-01T00:00:02.000Z' }]]);
   assert.equal(result.state.last_user_seek_at_global, 2000);
   assert.equal(result.state.user_sync_states.b.seek_streak, 1);
   assert.equal(result.state.user_sync_states.b.learned_l_ms, 250);
@@ -97,4 +97,37 @@ test('paused user seeks do not add device latency to a stationary playhead', () 
   const result = seekPlayback({ ...room(), play_state: 'paused' }, 'a', 20, 2000);
   assert.equal(result.state.current_time, 20);
   assert.equal(result.events[0][2].position, 20);
+});
+
+test('play, pause and seek emit activity once for real controls', () => {
+  const original = { ...room(), activity_log: [], users: { a: { username: 'Alice', connected: true } } };
+  const paused = transitionPlayback(original, 'pause', 'a', 12, 2000);
+  assert.equal(paused.state.activity_log[0]?.action, 'pause');
+  assert.equal(paused.state.activity_log[0]?.user, 'Alice');
+  assert.ok(paused.events.some(([event]) => event === 'activity_log_entry'));
+  const duplicate = transitionPlayback(paused.state, 'pause', 'a', 12, 5000);
+  assert.equal(duplicate.state.activity_log.length, 1);
+  const played = transitionPlayback(duplicate.state, 'play', 'a', 12, 6000);
+  assert.equal(played.state.activity_log[0]?.action, 'play');
+  const sought = seekPlayback(played.state, 'a', 30, 7000);
+  assert.equal(sought.state.activity_log[0]?.action, 'seeked');
+});
+
+test('readiness logs now playing only once', () => {
+  const waiting = changeMedia({ ...room(), activity_log: [] }, 0, 2000).state;
+  const playing = expireReady(waiting, 'first', 4500);
+  assert.equal(playing.state.activity_log[0]?.action, 'now_playing');
+  assert.equal(expireReady(playing.state, 'first', 5000).state.activity_log.length, 1);
+});
+
+test('rate changes emit attributed activity and canonical anchors without logging echoes', async () => {
+  const { changePlaybackRate } = await import('../src/playback.mjs');
+  const changed = changePlaybackRate({ ...room(), activity_log: [] }, 'a', 1.5, 2000);
+  assert.equal(changed.state.activity_log[0]?.action, 'rate_changed');
+  assert.equal(changed.state.activity_log[0]?.user, 'a');
+  assert.ok(changed.events.some(([event]) => event === 'activity_log_entry'));
+  assert.equal(changed.events[0][1].current_time, 6);
+  const repeated = changePlaybackRate(changed.state, 'a', 1.5, 5000);
+  assert.deepEqual(repeated.events, []);
+  assert.equal(repeated.state.activity_log.length, 1);
 });

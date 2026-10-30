@@ -9,7 +9,7 @@
   "packageManager": "pnpm@12.16.1",
   "scripts": {
     "test": "cd .. && node --test workers/test/*.test.mjs test/extension/background.test.mjs",
-    "test:runtime": "node scripts/build-web.mjs && node test/workerd-api.integration.mjs && node test/workerd-sockets.integration.mjs",
+    "test:runtime": "node scripts/build-web.mjs && node test/workerd-api.integration.mjs && node test/workerd-sockets.integration.mjs && node test/capacity.integration.mjs",
     "test:browser": "node test/browser.integration.mjs",
     "test:extension": "node test/extension.integration.mjs",
     "test:providers": "node test/providers.integration.mjs",

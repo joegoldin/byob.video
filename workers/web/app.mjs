@@ -1,4 +1,5 @@
 import { RoomChannel } from './channel.mjs';
+import { createCommentReplies } from './comment-replies.mjs';
 import { mountHook } from './hooks.mjs';
 import { html, render } from './html.mjs';
 import * as views from './views.mjs';
@@ -23,6 +24,7 @@ let showComments = read(localStorage, 'byob_show_comments', 'true') !== 'false';
 let collapsed = false, expanded = false, dragFrom = null;
 let nicknames;
 try { nicknames = JSON.parse(read(localStorage, 'byob_nicknames', '{}')); } catch { nicknames = {}; }
+const commentReplies = createCommentReplies({ request: payload => channel.request('comments:replies', payload), getVideo: () => commentsVideo, changed: updateComments });
 const stats = new Map();
 let notifications = 0;
 function updateTitle() {
@@ -35,16 +37,18 @@ function notify() { if (document.hidden) { notifications++; updateTitle(); } }
 function updateComments() {
   const panel = document.getElementById('comments-panel');
   panel.hidden = !showComments;
-  render(panel, views.commentsPanel(comments, { collapsed, expanded }));
-  document.getElementById('room-layout').classList.toggle('lg:h-[calc(100vh-4rem)]', !expanded);
+  render(panel, views.commentsPanel(comments, { collapsed, expanded, replies: commentReplies.entries }));
+  document.getElementById('room-layout').classList.toggle('lg:h-[calc(100dvh-2.5rem)]', !expanded);
 }
 function updateRoom(next) {
+  closeContextMenu();
   state = next;
   render(document.getElementById('queue-panel'), sidebar === 'queue' ? views.queuePanel(state) : views.historyPanel(state.history));
   render(document.getElementById('users-panel'), views.usersPanel(state.users, channel.session?.user_id, nicknames));
-  render(document.getElementById('activity-panel'), views.activityPanel(state.activity_log));
-  const rate = document.getElementById('playback-rate');
-  if (document.activeElement !== rate) rate.value = String(state.playback_rate);
+  const activity = document.getElementById('activity-panel');
+  const following = activity.scrollHeight - activity.scrollTop - activity.clientHeight < 24;
+  render(activity, views.activityPanel(state.activity_log));
+  if (following) activity.scrollTop = activity.scrollHeight;
   for (const select of document.querySelectorAll('[data-sponsor-category]')) {
     select.value = state.sb_settings[select.dataset.sponsorCategory];
   }
@@ -53,7 +57,7 @@ function updateRoom(next) {
   updateTitle();
   const video = item?.source_type === 'youtube' ? item.source_id : null;
   if (video !== commentsVideo) {
-    commentsVideo = video; comments = null; updateComments();
+    commentsVideo = video; comments = null; commentReplies.reset(); updateComments();
     if (video && showComments) void loadComments();
   }
 }
@@ -65,21 +69,65 @@ async function loadComments(more = false) {
     if (video !== commentsVideo || result.error) return;
     comments = { ...result, comments: more ? [...(comments?.comments || []), ...result.comments] : result.comments };
     updateComments();
-  } catch (error) { message(error.message); }
-}
-function position() {
-  const hook = player.hook;
-  if (hook.isReady && !hook.player?.isPlaceholder) return hook._getCurrentTime();
-  return state.current_time + (state.play_state === 'playing' ? Math.max(0, Date.now() - state.server_time) / 1000 * state.playback_rate : 0);
+  } catch (error) {
+    if (video !== commentsVideo) return;
+    comments = { ...(comments || { comments: [] }), error: error.message };
+    updateComments();
+  }
 }
 async function command(event, payload = {}) {
   message('');
   try { return await channel.request(event, payload); }
   catch (error) { message(error.message); throw error; }
 }
+let contextOwner = null;
+function closeContextMenu(restoreFocus = false) {
+  document.getElementById('queue-context-menu')?.remove();
+  if (restoreFocus && contextOwner?.isConnected) contextOwner.focus({ preventScroll: true });
+  contextOwner = null;
+}
+root.addEventListener('contextmenu', event => {
+  const row = event.target.closest('[data-context-kind]');
+  if (!row || !state) return;
+  event.preventDefault();
+  closeContextMenu();
+  const history = row.dataset.contextKind === 'history';
+  const index = Number(history ? row.dataset.historyIndex : row.dataset.queueIdx);
+  const item = history ? state.history[index]?.item : state.queue[index];
+  if (!item) return;
+  const container = document.createElement('div');
+  render(container, views.contextMenu(item, { history, index, current: !history && index === state.current_index }));
+  const menu = container.firstElementChild;
+  root.append(menu);
+  contextOwner = row;
+  const bounds = row.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(event.clientX || bounds.left, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(event.clientY || bounds.bottom, innerHeight - menu.offsetHeight - 8))}px`;
+  menu.querySelector('button').focus({ preventScroll: true });
+});
+document.addEventListener('click', event => {
+  const menu = document.getElementById('queue-context-menu');
+  if (menu && !menu.contains(event.target)) closeContextMenu();
+});
+window.addEventListener('resize', () => closeContextMenu());
+window.addEventListener('scroll', () => closeContextMenu(), true);
+document.addEventListener('keydown', event => {
+  const menu = document.getElementById('queue-context-menu');
+  if (!menu) return;
+  if (event.key === 'Escape') { event.preventDefault(); closeContextMenu(true); }
+  else if (event.key === 'Tab') closeContextMenu();
+  else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+    event.preventDefault();
+    const buttons = [...menu.querySelectorAll('[role="menuitem"]')];
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (buttons.indexOf(document.activeElement) + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next].focus({ preventScroll: true });
+  }
+});
+
 function clearUrl() {
   previewEpoch++; clearTimeout(previewTimer); preview = null;
   document.getElementById('url-input').value = '';
+  document.getElementById('url-clear-btn').classList.add('hidden');
   render(document.getElementById('url-preview'), html``);
 }
 async function playlist(scope, mode, videoId) {
@@ -115,7 +163,9 @@ if (roomId) {
   channel.on('activity:entry', entry => { if (entry.action === 'added') notify(); });
   channel.on('status', status => {
     if (status.state === 'connected') reportExtension();
-    document.getElementById('connection-status').textContent = status.state === 'connected' ? '' : status.state === 'connecting' ? 'Connecting…' : 'Connection lost. Reconnecting…';
+    const statusPanel = document.getElementById('connection-status');
+    statusPanel.hidden = status.state === 'connected';
+    statusPanel.textContent = status.state === 'connected' ? '' : status.state === 'connecting' ? 'Connecting…' : 'Connection lost. Reconnecting…';
   });
   channel.on('connection:error', error => message(error.message));
   channel.on('action:error', error => message(error.message));
@@ -129,12 +179,19 @@ if (roomId) {
   document.getElementById('url-input').addEventListener('input', () => {
     clearTimeout(previewTimer);
     const epoch = ++previewEpoch;
+    const value = document.getElementById('url-input').value.trim();
+    document.getElementById('url-clear-btn').classList.toggle('hidden', !value);
+    if (!value) { preview = null; render(document.getElementById('url-preview'), html``); return; }
     previewTimer = setTimeout(async () => {
       try {
         const result = await channel.request('preview_url', { url: document.getElementById('url-input').value });
         if (epoch !== previewEpoch) return;
         preview = result; render(document.getElementById('url-preview'), views.previewPanel(result));
-      } catch (error) { if (epoch === previewEpoch) message(error.message); }
+      } catch (error) {
+        if (epoch !== previewEpoch) return;
+        preview = null;
+        render(document.getElementById('url-preview'), views.previewPanel({ error: error.message, resolved_url: document.getElementById('url-input').value }));
+      }
     }, 300);
   });
   document.getElementById('url-form').addEventListener('submit', async event => {
@@ -158,7 +215,6 @@ if (roomId) {
   root.addEventListener('dragend', () => { dragFrom = null; });
   root.addEventListener('change', event => {
     const input = event.target;
-    if (input.id === 'playback-rate') void command('video:rate', { rate: Number(input.value) }).catch(() => {});
     if (input.dataset.sponsorCategory) void command('sb:update', { category: input.dataset.sponsorCategory, action: input.value }).catch(() => {});
     if (input.id === 'show-comments') { showComments = input.checked; save(localStorage, 'byob_show_comments', String(showComments)); updateComments(); if (showComments) void loadComments(); }
   });
@@ -174,6 +230,7 @@ root.addEventListener('click', async event => {
   const button = event.target.closest('[data-action]');
   if (!button) return;
   const action = button.dataset.action;
+  if (button.closest('#queue-context-menu')) closeContextMenu(true);
   try {
     if (action === 'create-room') {
       button.disabled = true;
@@ -197,13 +254,8 @@ root.addEventListener('click', async event => {
       document.getElementById('byob-autoplay-help').showModal();
     } else if (action === 'copy-api-key') { await navigator.clipboard.writeText(document.getElementById('room-api-key').value); message('API key copied.'); }
     else if (action === 'reveal-api-key') { const input = document.getElementById('room-api-key'); input.type = input.type === 'password' ? 'text' : 'password'; }
-    else if (action === 'play' || action === 'pause') {
-      const time = position();
-      player.hook[action === 'play' ? '_onSyncPlay' : '_onSyncPause']({ time, server_time: player.hook.clockSync.serverNow(), user_id: null });
-      await command(`video:${action}`, { position: time });
-    }
-    else if (action === 'restart') await command('video:restart');
-    else if (action === 'skip') await command('queue:skip');
+    else if (action === 'copy-video-url') await navigator.clipboard.writeText(button.dataset.url);
+    else if (action === 'queue-restart') await command('video:restart');
     else if (action === 'queue-play') await command('queue:play_index', { index: Number(button.dataset.index) });
     else if (action === 'queue-remove') await command('queue:remove', { item_id: button.dataset.id });
     else if (action === 'queue-move') await command('queue:reorder', { from: Number(button.dataset.from), to: Number(button.dataset.to) });
@@ -227,7 +279,9 @@ root.addEventListener('click', async event => {
     else if (action === 'round-cancel') await command('round:cancel', { round_id: state.round.id });
     else if (action === 'comment-seek') await command('comments:seek', { seconds: Number(button.dataset.seconds) });
     else if (action === 'more-comments') await loadComments(true);
-    else if (action === 'toggle-comments') { showComments = !showComments; save(localStorage, 'byob_show_comments', String(showComments)); updateComments(); if (showComments) await loadComments(); }
+    else if (action === 'comment-replies') await commentReplies.toggle(button.dataset.commentId);
+    else if (action === 'more-replies') await commentReplies.more(button.dataset.commentId);
+    else if (action === 'retry-replies') await commentReplies.retry(button.dataset.commentId);
     else if (action === 'collapse-comments') { collapsed = !collapsed; updateComments(); }
     else if (action === 'expand-comments') { expanded = !expanded; updateComments(); }
   } catch (error) { message(error.message); }

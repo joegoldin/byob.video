@@ -16,7 +16,7 @@ export function newRoom(roomId, now, apiKey = newApiKey()) {
     sb_settings: { ...defaultSponsorSettings }, last_seek_at: {}, activity_log: [],
     drift_samples: {}, user_sync_states: {}, last_user_seek_at_global: 0,
     media_loaded_for: {}, ready_deadline: null, ready_item_id: null,
-    advance_deadline: null, pending_leaves: {}, empty_deadline: now + idleTimeout, idle_expired_at: null,
+    advance_deadline: null, pending_leaves: {}, empty_deadline: now + idleTimeout, idle_expired_at: null, idle_timeout_ms: idleTimeout,
     open_tabs: {}, ready_tabs: {}, round: null, event_counts: {},
     pending_metadata: [], metadata_deadline: null,
     pending_pool_picks: [], pool_pick_deadline: null,
@@ -53,10 +53,17 @@ export function roundSnapshot(round, now) {
 
 export function logActivity(state, action, userId, detail, now) {
   const user = state.users[userId]?.username ?? userId ?? null;
-  const last = state.activity_log[0];
+  const last = state.activity_log?.[0];
   if (last?.action === action && last.user === user && now - Date.parse(last.at) < 2000) return state;
   const entry = { action, user, detail: detail ?? null, at: new Date(now).toISOString() };
-  return { ...state, activity_log: [entry, ...state.activity_log].slice(0, 200) };
+  return { ...state, activity_log: [entry, ...(state.activity_log ?? [])].slice(0, 200) };
+}
+
+export function withActivity(result, action, userId, detail, now) {
+  const state = logActivity(result.state, action, userId, detail, now);
+  const events = [...result.events];
+  if (state !== result.state) events.push(['activity_log_entry', state.activity_log[0]]);
+  return { ...result, state, events };
 }
 
 export function nextDeadline(state) {
