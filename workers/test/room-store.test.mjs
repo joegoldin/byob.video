@@ -99,3 +99,20 @@ test('legacy import rejects malformed data and refuses to overwrite a non-migrat
     assert.equal(store.load().api_key, original.api_key);
   } finally { backend.db.close(); }
 });
+
+test('legacy import preserves ended queues without restarting playback', async () => {
+  const backend = eagerStorage();
+  try {
+    const store = new RoomStore(backend), record = legacyRoom();
+    record.state.play_state = 'ended';
+    record.state.current_index = null;
+    record.state.current_time = 0;
+    assert.deepEqual(await store.importLegacy(record, 1005000), { imported: true });
+    const state = new RoomStore(backend).load();
+    assert.equal(state.play_state, 'ended');
+    assert.equal(state.current_index, null);
+    assert.equal(currentPosition(state, 2000000), 0);
+    assert.deepEqual(state.history, record.state.history);
+    assert.equal(state.ready_deadline, null);
+  } finally { backend.db.close(); }
+});
