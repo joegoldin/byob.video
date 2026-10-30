@@ -124,6 +124,15 @@ document.addEventListener('keydown', event => {
   }
 });
 
+function positionPreview() {
+  const panel = document.getElementById('url-preview');
+  if (!panel) return;
+  // The HTTP fallback banner can shift navigation below the viewport top.
+  panel.style.top = innerWidth < 640 ? `${document.getElementById('url-input').getBoundingClientRect().bottom + 4}px` : '';
+}
+window.addEventListener('resize', positionPreview);
+window.addEventListener('scroll', positionPreview);
+
 function clearUrl() {
   previewEpoch++; clearTimeout(previewTimer); preview = null;
   document.getElementById('url-input').value = '';
@@ -187,10 +196,12 @@ if (roomId) {
         const result = await channel.request('preview_url', { url: document.getElementById('url-input').value });
         if (epoch !== previewEpoch) return;
         preview = result; render(document.getElementById('url-preview'), views.previewPanel(result));
+        positionPreview();
       } catch (error) {
         if (epoch !== previewEpoch) return;
         preview = null;
         render(document.getElementById('url-preview'), views.previewPanel({ error: error.message, resolved_url: document.getElementById('url-input').value }));
+        positionPreview();
       }
     }, 300);
   });

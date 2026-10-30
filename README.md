@@ -130,9 +130,11 @@ env BYOB_BROWSER=firefox BYOB_HTTP_ONLY=1 corepack pnpm test:browser
 
 Browser tests also need `ffmpeg`. `CHROMIUM_PATH` and `FIREFOX_PATH` select
 installed browser executables when needed; on NixOS, use compatible Nix-packaged
-browsers instead of the Playwright installation command. CI covers Chromium and Firefox over
-both WebSocket and HTTP transports, legacy-page transitions, the packaged
-Chromium extension, and delayed playback. The measured canonical-drift bound is
+browsers instead of the Playwright installation command. The optional
+**Workers browser acceptance (manual)** GitHub workflow covers Chromium and
+Firefox over both WebSocket and HTTP transports, legacy-page transitions, the
+packaged Chromium extension, and delayed playback. Browser tests do not run on
+every push; run them locally during development or trigger that manual workflow. The measured canonical-drift bound is
 350 ms; it is not a claim about physical display/audio skew on every device.
 
 Live-provider checks are separate from deterministic fixtures:
@@ -151,7 +153,9 @@ passing live Vimeo result.
 ## Deployment
 
 The Workers workflow deploys pushes to `main` only after required acceptance
-jobs pass. Main deployments are serialized and are not cancelled mid-upload.
+jobs pass: precommit, unit/oracle, Workers-runtime, migration, and deployment
+packaging. The browser matrix is opt-in rather than a push/deployment dependency.
+Main deployments are serialized and are not cancelled mid-upload.
 It then verifies health and exact HTML/JavaScript/CSS build hashes on both public
 domains. Configure the `CLOUDFLARE_ACCOUNT_ID` repository variable and a scoped
 `CLOUDFLARE_API_TOKEN` Actions secret; never copy a local Wrangler OAuth token

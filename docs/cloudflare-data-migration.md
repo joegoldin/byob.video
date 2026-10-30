@@ -226,10 +226,11 @@ cutover evidence.
 ## Automated production deployment
 
 `.github/workflows/workers.yml` deploys a push to `main` only after project
-precommit, unit/oracle/runtime/migration checks, deployment packaging, and the
-complete Chromium/Firefox WebSocket/HTTP browser matrix pass. The matrix also
-covers legacy-page transitions, the current injected Chromium extension, and
-ordered delay/jitter. Main-branch runs and production deployments are serialized;
+precommit, unit/oracle/runtime/migration checks and deployment packaging pass.
+The separate `workers-browsers.yml` workflow is manual-only, covering the complete
+Chromium/Firefox WebSocket/HTTP matrix, legacy-page transitions, the current
+injected Chromium extension and ordered delay/jitter. Browser suites remain
+available locally and on demand, but are not automatic push/deployment gates. Main-branch runs and production deployments are serialized;
 a newer push cannot cancel an upload already in progress. Manual dispatch from
 `main` uses the same gates.
 

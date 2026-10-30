@@ -66,6 +66,9 @@ try {
   const [pool] = await poolStorage.exec('SELECT first_seen_at, last_seen_at, last_picked_at FROM video_pool');
   assert.deepEqual(pool, { first_seen_at: 1001, last_seen_at: 2002, last_picked_at: 3003 });
   const api = `/api/rooms/${record.room_id}`;
+  const dormant = await (await native.fetch(`https://byob.test/__test/idle/${record.room_id}`)).json();
+  assert.equal(dormant.alarm, null, 'import alone must not start recurring idle work');
+  const reactivatedAt = Date.now();
   const stateResponse = await native.fetch(`https://byob.test${api}`, { headers: { Authorization: `Bearer ${record.state.api_key}` } });
   assert.equal(stateResponse.status, 200, 'the original API key must authenticate');
   const state = await stateResponse.json();
@@ -77,7 +80,9 @@ try {
   assert.deepEqual(persisted.history, record.state.history);
   assert.deepEqual(persisted.queue, record.state.queue);
   assert.equal(persisted.playback_rate, 1.5);
-  assert.equal((await (await native.fetch(`https://byob.test/__test/idle/${record.room_id}`)).json()).alarm, null);
+  const active = await (await native.fetch(`https://byob.test/__test/idle/${record.room_id}`)).json();
+  assert.equal(active.alarm, active.deadline, 'reactivated room has exactly its one-shot retirement alarm');
+  assert.ok(active.deadline >= reactivatedAt + 24 * 3600000 && active.deadline <= Date.now() + 24 * 3600000, 'original-key access admits the saved room for24 hours');
   assert.equal((await (await native.fetch('https://byob.test/__test/pool-alarm')).json()).alarm, null);
   await mf.unsafeEvictDurableObject('native', 'Room', { name: record.room_id });
   assert.equal((await native.fetch(`https://byob.test${api}`, { headers: { Authorization: `Bearer ${record.state.api_key}` } })).status, 200);
