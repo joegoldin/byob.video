@@ -35,6 +35,7 @@ export class Reconcile {
     // playerAdapter: { getCurrentTime(), seekTo(seconds) }
     this.player = playerAdapter;
     this.clockSync = null;
+    this.playbackRate = 1;
     this.serverPosition = 0; // seconds
     this.serverTime = 0;     // ms (server monotonic)
     this.interval = null;
@@ -53,10 +54,17 @@ export class Reconcile {
     this.lastExecutedSeekAt = 0;
   }
 
-  setServerState(position, serverTime, clockSync, _opts = {}) {
+  setServerState(position, serverTime, clockSync, opts = {}) {
     this.serverPosition = position;
     this.serverTime = serverTime;
     this.clockSync = clockSync;
+    this.playbackRate = opts.rate ?? this.player.getPlaybackRate?.() ?? this.playbackRate;
+  }
+
+  setPlaybackRate(rate, serverTime) {
+    if (this.clockSync) this.serverPosition += (serverTime - this.serverTime) / 1000 * this.playbackRate;
+    this.serverTime = serverTime;
+    this.playbackRate = rate;
   }
 
   // Legacy shim — server now owns room consensus. Stays for back-compat
@@ -82,7 +90,7 @@ export class Reconcile {
     if (!this.clockSync || !this.clockSync.isReady()) return this.lastDriftMs;
     const now = this.clockSync.serverNow();
     const elapsed = (now - this.serverTime) / 1000;
-    const expectedPosition = this.serverPosition + elapsed;
+    const expectedPosition = this.serverPosition + elapsed * this.playbackRate;
     const localPosition = this.player.getCurrentTime();
     const driftMs = (localPosition - expectedPosition) * 1000;
     this.lastDriftMs = driftMs;
@@ -109,15 +117,13 @@ export class Reconcile {
   // computed the right target (with rtt/2 + learned_L compensation) so we
   // just trust it and seek. Pause reconcile briefly so the seek's own
   // big Δdrift doesn't poison the jitter EMA.
-  executeSeek(targetPosition, serverTime) {
-    // Optional: factor in *any* additional in-flight time between server's
-    // server_time stamp and now. clockSync.serverNow() gives server-time-
-    // estimate now; the difference is the leftover travel slop that
-    // wasn't captured by server's rtt/2 estimate.
+  executeSeek(targetPosition, serverTime, playState = "playing") {
+    // Advance the target through command transit at the canonical room
+    // rate, not a temporary actuator rate. Paused targets remain stationary.
     let adjusted = targetPosition;
-    if (this.clockSync?.isReady?.() && typeof serverTime === "number") {
+    if (playState !== "paused" && this.clockSync?.isReady?.() && typeof serverTime === "number") {
       const slopMs = Math.max(0, this.clockSync.serverNow() - serverTime);
-      adjusted += slopMs / 1000;
+      adjusted += slopMs / 1000 * this.playbackRate;
     }
 
     const target = Math.max(0, adjusted);
@@ -157,7 +163,7 @@ export class Reconcile {
 
     const now = this.clockSync.serverNow();
     const elapsed = (now - this.serverTime) / 1000;
-    const expectedPosition = this.serverPosition + elapsed;
+    const expectedPosition = this.serverPosition + elapsed * this.playbackRate;
     const localPosition = this.player.getCurrentTime();
     const driftMs = (localPosition - expectedPosition) * 1000;
 

@@ -205,7 +205,8 @@ function renderLocalChart(host, rings, localUserId) {
     const isLocal = localUserId && ring.userId === localUserId;
     const color = isLocal ? COLOR_DRIFT : peerColor(ring.userId || key);
     const last = Math.round(ring.drift[ring.drift.length - 1]);
-    const name = isLocal ? `${ring.username} (you)` : ring.username;
+    const name = String(isLocal ? `${ring.username} (you)` : ring.username)
+      .replace(/[&<>]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[character]);
     const sign = last > 0 ? "+" : "";
     // Each peer gets its own row — `white-space:nowrap` keeps the
     // swatch / name / value grouped, and the row layout means a long

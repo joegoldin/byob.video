@@ -26,8 +26,13 @@ function background() {
     channel() {
       const replies = {};
       const push = { receive(status, callback) { replies[status] = callback; return this; } };
+      const handlers = new Map();
+      const pushes = [];
       this.room = {
-        on() {}, leave() {}, push() { return push; }, join() { return push; },
+        pushes,
+        on(event, callback) { handlers.set(event, callback); },
+        emit(event, payload) { handlers.get(event)?.(payload); },
+        leave() {}, push(event, payload) { pushes.push([event, payload]); return push; }, join() { return push; },
         joined: false, isJoined() { return this.joined; },
       };
       this.join = () => { this.room.joined = true; replies.ok({}); };
@@ -143,4 +148,18 @@ test("closing the last popup cancels its pending reconnect", () => {
   bg.run("disconnect()");
   bg.advance(3000);
   assert.equal(bg.sockets.length, 1);
+});
+
+test("forwards canonical rate and position anchors to popup content", () => {
+  const bg = background();
+  bg.run(`const messages = []; ports.push({tabId: 1, port: {postMessage(message) { messages.push(message); }}});`);
+  bg.connect();
+  bg.sockets[0].room.emit("sync:rate", { rate: 2, current_time: 42, server_time: 10000 });
+  assert.equal(bg.run('messages.at(-1)?.type'), 'command:rate');
+  assert.equal(bg.run('messages.at(-1)?.rate'), 2);
+  assert.equal(bg.run('messages.at(-1)?.current_time'), 42);
+  bg.run('handleContentMessage({type: EVT.VIDEO_RATE, rate: 1.5}, {postMessage() {}}, 1)');
+  const sent = bg.sockets[0].room.pushes.at(-1);
+  assert.equal(sent[0], 'video:rate');
+  assert.equal(sent[1].rate, 1.5);
 });

@@ -102,8 +102,7 @@ defmodule ByobWeb.RoomLive.UrlPreview do
             _ ->
               send(
                 me,
-                {:url_preview_result,
-                 %{title: nil, thumbnail_url: nil, source_type: :twitch}}
+                {:url_preview_result, %{title: nil, thumbnail_url: nil, source_type: :twitch}}
               )
           end
         end)

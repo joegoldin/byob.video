@@ -1,0 +1,25 @@
+name: Set up BYOB build and parity tools
+description: Install pinned Node and BEAM tools and locked project dependencies.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: '22.23.4'
+        package-manager-cache: false
+    - uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+      with:
+        otp-version: '28.5.0.8'
+        elixir-version: '1.19.6'
+        version-type: strict
+        install-hex: false
+        install-rebar: false
+        rebar3-version: '3.28.0'
+    - name: Install locked dependencies
+      shell: bash
+      run: |
+        echo "MIX_REBAR3=$(command -v rebar3)" >> "$GITHUB_ENV"
+        mix local.hex 2.5.1 --force
+        mix deps.get --check-locked
+        cd workers
+        corepack pnpm install --frozen-lockfile

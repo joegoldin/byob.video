@@ -141,7 +141,7 @@ defmodule ByobWeb.RoomLive.Components do
                   viewBox="0 0 24 24"
                   fill="currentColor"
                 >
-                  <path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z"/>
+                  <path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714Z" />
                 </svg>
                 <span>Twitch — native embedded player (live channels &amp; VODs)</span>
               </div>
@@ -421,6 +421,7 @@ defmodule ByobWeb.RoomLive.Components do
             local_abs_drift = abs(Map.get(local_client, :drift_ms, 0))
             seek_streak = Map.get(local_client, :seek_streak, 0)
             cooldown_remaining = Map.get(local_client, :cooldown_remaining_ms, 0)
+
             tolerance =
               if tolerance > 0, do: tolerance, else: Byob.SyncDecision.min_tolerance_ms()
 
@@ -489,9 +490,7 @@ defmodule ByobWeb.RoomLive.Components do
             room_max_drift_is_peer? = room_max_drift > local_abs_drift + drift_hysteresis_ms %>
             <div class="flex justify-between">
               <span>Room jitter (consensus)</span>
-              <span class={
-                if room_jitter_is_peer?, do: "text-warning", else: "text-base-content/40"
-              }>
+              <span class={if room_jitter_is_peer?, do: "text-warning", else: "text-base-content/40"}>
                 {room_jitter}ms{if room_jitter_is_peer?, do: " (peer)", else: ""}
               </span>
             </div>
@@ -641,13 +640,18 @@ defmodule ByobWeb.RoomLive.Components do
                  lag is real but looked like a sync bug. One value at the
                  top is honest. --%>
             <%= if map_size(active_clients) > 0 do %>
-              <% latest_client = active_clients |> Map.values() |> Enum.max_by(& &1.updated_at, fn -> %{} end)
-                 latest_pos = Map.get(latest_client, :server_position, 0.0)
-                 elapsed_since = max(0, System.system_time(:second) - Map.get(latest_client, :updated_at, 0))
-                 server_pos_now =
-                   if @play_state == :playing,
-                     do: Float.round(latest_pos + elapsed_since * 1.0, 1),
-                     else: latest_pos %>
+              <% latest_client =
+                active_clients |> Map.values() |> Enum.max_by(& &1.updated_at, fn -> %{} end)
+
+              latest_pos = Map.get(latest_client, :server_position, 0.0)
+
+              elapsed_since =
+                max(0, System.system_time(:second) - Map.get(latest_client, :updated_at, 0))
+
+              server_pos_now =
+                if @play_state == :playing,
+                  do: Float.round(latest_pos + elapsed_since * 1.0, 1),
+                  else: latest_pos %>
               <div class="flex justify-between mt-2 pt-2 border-t border-base-300/50">
                 <span>Server position</span>
                 <span class="text-base-content/70">{server_pos_now}s</span>
@@ -665,112 +669,123 @@ defmodule ByobWeb.RoomLive.Components do
                         <span
                           class="text-base-content/70 font-semibold"
                           data-byob-username={user.username}
-                        >{user.username}</span>
+                        >
+                          {user.username}
+                        </span>
                         <span class="text-base-content/30">({owner_short})</span>
                       </div>
                       <div class="text-base-content/30 italic">no drift data</div>
                     </div>
                   <% else %>
                     <% {client_id, info} = best
-                       username =
-                         Map.get(info, :username) || user.username || "(unknown)"
-                       owner_short = String.slice(user_id, 0..7)
-                       parts = String.split(client_id, ":")
-                       {_owner_parts, [tab_id]} = Enum.split(parts, length(parts) - 1)
-                       tab_short =
-                         if is_binary(tab_id) and tab_id != "",
-                           do: String.slice(tab_id, 0..7),
-                           else: nil
-                       id_label =
-                         if tab_short, do: "#{owner_short}:#{tab_short}", else: owner_short %>
-                      <% is_local? = is_self_user(user_id, @user_id) %>
-                      <div class={[
-                        "mb-2 p-1.5 rounded",
-                        if(is_local?, do: "bg-primary/10 border border-primary/30", else: "bg-base-200/50")
-                      ]}>
-                        <div class="text-[10px] truncate mb-0.5" title={client_id}>
-                          <span
-                            class={[
-                              "font-semibold",
-                              if(is_local?, do: "text-primary", else: "text-base-content/70")
-                            ]}
-                            data-byob-username={username}
-                          >{username}</span>
-                          <%= if is_local? do %>
-                            <span class="text-primary/70 font-semibold">(you)</span>
-                          <% end %>
-                          <span class="text-base-content/30">({id_label})</span>
-                        </div>
-                        <div class="flex justify-between items-center gap-2">
-                          <span>Drift</span>
-                          <%!-- StatsPanel hook fills this with an inline-SVG
-                               sparkline of the last 60s of drift_ms. --%>
-                          <div
-                            id={"byob-spark-#{client_id}"}
-                            class="flex-1 min-w-0"
-                            data-byob-spark-key={client_id}
-                            phx-update="ignore"
-                          >
-                          </div>
-                          <span class={
-                            cond do
-                              abs(info.drift_ms) > Byob.SyncDecision.max_tolerance_ms() ->
-                                "text-error"
 
-                              abs(info.drift_ms) > Byob.SyncDecision.min_tolerance_ms() ->
-                                "text-warning"
+                    username =
+                      Map.get(info, :username) || user.username || "(unknown)"
 
-                              true ->
-                                "text-success"
-                            end
-                          }>
-                            {if info.drift_ms > 0, do: "+", else: ""}{info.drift_ms}ms
-                          </span>
-                        </div>
-                        <% peer_rtt_ms = Map.get(info, :rtt_ms, 0)
-                           peer_jitter_ms = Map.get(info, :noise_floor_ms, 0)
-                           peer_l_ms = Map.get(info, :learned_l_ms, 0)
-                           peer_streak = Map.get(info, :seek_streak, 0)
-                           # Warn level at the jitter at which adaptive tolerance starts
-                           # growing past its floor (= floor / K_jitter).
-                           jitter_warn_threshold_ms = div(Byob.SyncDecision.min_tolerance_ms(), 4) %>
-                        <div class="flex justify-between">
-                          <span>RTT</span>
-                          <span class="text-base-content/40">{peer_rtt_ms}ms</span>
-                        </div>
-                        <div class="flex justify-between">
-                          <span>Jitter</span>
-                          <span class={
-                            cond do
-                              peer_jitter_ms > jitter_warn_threshold_ms -> "text-warning"
-                              peer_jitter_ms < 1 -> "text-success"
-                              true -> "text-base-content/40"
-                            end
-                          }>
-                            {if peer_jitter_ms < 1, do: "<1ms", else: "#{peer_jitter_ms}ms"}
-                          </span>
-                        </div>
-                        <div class="flex justify-between">
-                          <span>Learned seek lag</span>
-                          <span class="text-base-content/40">{peer_l_ms}ms</span>
-                        </div>
-                        <div class="flex justify-between">
-                          <span>Seek streak</span>
-                          <span class={
-                            if peer_streak > 0, do: "text-warning", else: "text-base-content/40"
-                          }>
-                            {peer_streak}
-                          </span>
-                        </div>
-                        <div class="flex justify-between">
-                          <span>State</span>
-                          <span class={
-                            if info.play_state == "playing", do: "text-success", else: "text-warning"
-                          }>
-                            {info.play_state}
-                          </span>
-                        </div>
+                    owner_short = String.slice(user_id, 0..7)
+                    parts = String.split(client_id, ":")
+                    {_owner_parts, [tab_id]} = Enum.split(parts, length(parts) - 1)
+
+                    tab_short =
+                      if is_binary(tab_id) and tab_id != "",
+                        do: String.slice(tab_id, 0..7),
+                        else: nil
+
+                    id_label =
+                      if tab_short, do: "#{owner_short}:#{tab_short}", else: owner_short %>
+                    <% is_local? = is_self_user(user_id, @user_id) %>
+                    <div class={[
+                      "mb-2 p-1.5 rounded",
+                      if(is_local?,
+                        do: "bg-primary/10 border border-primary/30",
+                        else: "bg-base-200/50"
+                      )
+                    ]}>
+                      <div class="text-[10px] truncate mb-0.5" title={client_id}>
+                        <span
+                          class={[
+                            "font-semibold",
+                            if(is_local?, do: "text-primary", else: "text-base-content/70")
+                          ]}
+                          data-byob-username={username}
+                        >
+                          {username}
+                        </span>
+                        <%= if is_local? do %>
+                          <span class="text-primary/70 font-semibold">(you)</span>
+                        <% end %>
+                        <span class="text-base-content/30">({id_label})</span>
                       </div>
+                      <div class="flex justify-between items-center gap-2">
+                        <span>Drift</span>
+                        <%!-- StatsPanel hook fills this with an inline-SVG
+                               sparkline of the last 60s of drift_ms. --%>
+                        <div
+                          id={"byob-spark-#{client_id}"}
+                          class="flex-1 min-w-0"
+                          data-byob-spark-key={client_id}
+                          phx-update="ignore"
+                        >
+                        </div>
+                        <span class={
+                          cond do
+                            abs(info.drift_ms) > Byob.SyncDecision.max_tolerance_ms() ->
+                              "text-error"
+
+                            abs(info.drift_ms) > Byob.SyncDecision.min_tolerance_ms() ->
+                              "text-warning"
+
+                            true ->
+                              "text-success"
+                          end
+                        }>
+                          {if info.drift_ms > 0, do: "+", else: ""}{info.drift_ms}ms
+                        </span>
+                      </div>
+                      <% peer_rtt_ms = Map.get(info, :rtt_ms, 0)
+                      peer_jitter_ms = Map.get(info, :noise_floor_ms, 0)
+                      peer_l_ms = Map.get(info, :learned_l_ms, 0)
+                      peer_streak = Map.get(info, :seek_streak, 0)
+                      # Warn level at the jitter at which adaptive tolerance starts
+                      # growing past its floor (= floor / K_jitter).
+                      jitter_warn_threshold_ms = div(Byob.SyncDecision.min_tolerance_ms(), 4) %>
+                      <div class="flex justify-between">
+                        <span>RTT</span>
+                        <span class="text-base-content/40">{peer_rtt_ms}ms</span>
+                      </div>
+                      <div class="flex justify-between">
+                        <span>Jitter</span>
+                        <span class={
+                          cond do
+                            peer_jitter_ms > jitter_warn_threshold_ms -> "text-warning"
+                            peer_jitter_ms < 1 -> "text-success"
+                            true -> "text-base-content/40"
+                          end
+                        }>
+                          {if peer_jitter_ms < 1, do: "<1ms", else: "#{peer_jitter_ms}ms"}
+                        </span>
+                      </div>
+                      <div class="flex justify-between">
+                        <span>Learned seek lag</span>
+                        <span class="text-base-content/40">{peer_l_ms}ms</span>
+                      </div>
+                      <div class="flex justify-between">
+                        <span>Seek streak</span>
+                        <span class={
+                          if peer_streak > 0, do: "text-warning", else: "text-base-content/40"
+                        }>
+                          {peer_streak}
+                        </span>
+                      </div>
+                      <div class="flex justify-between">
+                        <span>State</span>
+                        <span class={
+                          if info.play_state == "playing", do: "text-success", else: "text-warning"
+                        }>
+                          {info.play_state}
+                        </span>
+                      </div>
+                    </div>
                   <% end %>
                 <% end %>
               </div>
@@ -843,7 +858,8 @@ defmodule ByobWeb.RoomLive.Components do
                 <div>
                   <dt class="text-base-content/80">Ready-then-play (new videos)</dt>
                   <dd class="pl-2 text-[10px] leading-snug">
-                    When a video changes the room holds at paused. Each client signals <code class="text-[10px]">video:loaded</code>
+                    When a video changes the room holds at paused. Each client signals
+                    <code class="text-[10px]">video:loaded</code>
                     when its player is ready. Once every connected peer reports in (or 8 s elapses), the server broadcasts play and everyone starts simultaneously — no load-delay drift to compensate. Autoplay-blocked tabs are released on player-ready so they don't strand the room.
                   </dd>
                 </div>
@@ -1044,10 +1060,10 @@ defmodule ByobWeb.RoomLive.Components do
         :if={@url_preview && @url_preview.source_type == :playlist}
         class="flex flex-col max-h-[60vh]"
       >
-        <% selected = (@url_preview[:selected] || MapSet.new())
-           selected_count = MapSet.size(selected)
-           total_count = @url_preview[:total_count] || length(@url_preview.items)
-           shown_count = length(@url_preview.items) %>
+        <% selected = @url_preview[:selected] || MapSet.new()
+        selected_count = MapSet.size(selected)
+        total_count = @url_preview[:total_count] || length(@url_preview.items)
+        shown_count = length(@url_preview.items) %>
         <div class="flex items-center gap-2 p-3 border-b border-base-300/60 flex-shrink-0">
           <svg
             class="w-4 h-4 flex-shrink-0 text-red-500"
@@ -1083,7 +1099,9 @@ defmodule ByobWeb.RoomLive.Components do
               checked={MapSet.member?(selected, item.video_id)}
               phx-click="playlist:select"
               phx-value-video_id={item.video_id}
-              phx-value-checked={if MapSet.member?(selected, item.video_id), do: "false", else: "true"}
+              phx-value-checked={
+                if MapSet.member?(selected, item.video_id), do: "false", else: "true"
+              }
             />
             <img
               :if={item[:thumbnail_url]}
@@ -1656,7 +1674,9 @@ defmodule ByobWeb.RoomLive.Components do
             <span :if={entry.action == :round_cancelled} class="text-base-content/30 flex-shrink-0">
               &#8634;
             </span>
-            <span class="flex-1 line-clamp-2" data-byob-username={entry[:user]}>{format_log_entry(entry)}</span>
+            <span class="flex-1 line-clamp-2" data-byob-username={entry[:user]}>
+              {format_log_entry(entry)}
+            </span>
             <time
               :if={entry.at}
               datetime={DateTime.to_iso8601(entry.at)}
@@ -1713,13 +1733,36 @@ defmodule ByobWeb.RoomLive.Components do
               class="flex-shrink-0 inline-flex items-center justify-center w-3 h-3"
               title="Syncing playback"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" class="text-warning" style="animation:byob-spin 0.8s linear infinite">
-                <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-opacity="0.3" stroke-width="3" fill="none"/>
-                <path d="M12 2 a10 10 0 0 1 10 10" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round"/>
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                class="text-warning"
+                style="animation:byob-spin 0.8s linear infinite"
+              >
+                <circle
+                  cx="12"
+                  cy="12"
+                  r="10"
+                  stroke="currentColor"
+                  stroke-opacity="0.3"
+                  stroke-width="3"
+                  fill="none"
+                />
+                <path
+                  d="M12 2 a10 10 0 0 1 10 10"
+                  stroke="currentColor"
+                  stroke-width="3"
+                  fill="none"
+                  stroke-linecap="round"
+                />
               </svg>
             </span>
             <span
-              :if={user.connected and !Map.get(status, :resyncing, false) and Map.get(status, :gesture_blocked, false)}
+              :if={
+                user.connected and !Map.get(status, :resyncing, false) and
+                  Map.get(status, :gesture_blocked, false)
+              }
               class="flex-shrink-0 inline-flex items-center justify-center w-3 h-3 text-base-content/50"
               title="Waiting for this user to click to start playback"
             >
@@ -1729,7 +1772,10 @@ defmodule ByobWeb.RoomLive.Components do
               </svg>
             </span>
             <div
-              :if={!(user.connected and (Map.get(status, :resyncing, false) or Map.get(status, :gesture_blocked, false)))}
+              :if={
+                !(user.connected and
+                    (Map.get(status, :resyncing, false) or Map.get(status, :gesture_blocked, false)))
+              }
               class={"w-2 h-2 rounded-full flex-shrink-0 #{if user.connected, do: "bg-success", else: "bg-base-content/20"}"}
             />
             <%!-- Other users: just show name (Nicknames hook decorates) --%>
@@ -1737,7 +1783,12 @@ defmodule ByobWeb.RoomLive.Components do
               :if={!is_self_user(uid, @user_id)}
               class="truncate flex-1"
               data-byob-username={user.username}
-            >{user.username}<span :if={user.connected and Map.get(status, :resyncing, false)} class="text-warning text-xs ml-1">(syncing)</span></span>
+            >
+              {user.username}<span
+                :if={user.connected and Map.get(status, :resyncing, false)}
+                class="text-warning text-xs ml-1"
+              >(syncing)</span>
+            </span>
             <%!-- Self: show name + tab indicator --%>
             <span
               :if={is_self_user(uid, @user_id) && !@editing_username}
@@ -1748,7 +1799,12 @@ defmodule ByobWeb.RoomLive.Components do
               <span :if={uid != @user_id} class="text-base-content/30 font-normal text-xs">
                 (other tab)
               </span>
-              <span :if={user.connected and Map.get(status, :resyncing, false)} class="text-warning text-xs ml-1">(syncing)</span>
+              <span
+                :if={user.connected and Map.get(status, :resyncing, false)}
+                class="text-warning text-xs ml-1"
+              >
+                (syncing)
+              </span>
             </span>
             <button
               :if={uid == @user_id && !@editing_username}
@@ -1898,6 +1954,7 @@ defmodule ByobWeb.RoomLive.Components do
     |> Enum.filter(fn {_, c} -> now_s - Map.get(c, :updated_at, 0) < 5 end)
     |> Enum.reduce(%{}, fn {_key, c}, acc ->
       username = Map.get(c, :username)
+
       if is_binary(username) do
         prev = Map.get(acc, username, %{resyncing: false, gesture_blocked: false})
         cooldown = Map.get(c, :cooldown_remaining_ms, 0) || 0

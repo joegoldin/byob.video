@@ -53,7 +53,10 @@ defmodule ByobWeb.ExtensionChannel do
     # placeholder name, but as soon as the LV peer registers, the
     # propagation overwrites the ext peer's username to match.
     server_state = if owner_user_id, do: RoomServer.get_state(pid), else: nil
-    owner_username = owner_user_id && get_in(server_state, [Access.key(:users), owner_user_id, Access.key(:username)])
+
+    owner_username =
+      owner_user_id &&
+        get_in(server_state, [Access.key(:users), owner_user_id, Access.key(:username)])
 
     # Legacy fallback path: only hit when the token is the old
     # room-only format AND the BG didn't provide a usable name.
@@ -521,8 +524,7 @@ defmodule ByobWeb.ExtensionChannel do
           open_owner_ids |> Enum.map(resolve) |> Enum.reject(&is_nil/1) |> Enum.uniq()
 
         ready_users =
-          ready_tabs |> Map.values() |> Enum.map(resolve)
-          |> Enum.reject(&is_nil/1) |> Enum.uniq()
+          ready_tabs |> Map.values() |> Enum.map(resolve) |> Enum.reject(&is_nil/1) |> Enum.uniq()
 
         has_tab = min(length(open_users), total)
         ready = min(length(ready_users), has_tab)
@@ -594,5 +596,4 @@ defmodule ByobWeb.ExtensionChannel do
       is_live: Map.get(item, :is_live, false)
     }
   end
-
 end

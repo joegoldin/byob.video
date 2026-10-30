@@ -36,6 +36,7 @@
     VIDEO_PLAY: "video:play",
     VIDEO_PAUSE: "video:pause",
     VIDEO_SEEK: "video:seek",
+    VIDEO_RATE: "video:rate",
     VIDEO_ENDED: "video:ended",
     VIDEO_READY: "video:ready",
     VIDEO_LIVE_STATUS: "video:live_status",
@@ -47,6 +48,7 @@
     // background.js → content.js (port message)
     COMMAND_PLAY: "command:play",
     COMMAND_PAUSE: "command:pause",
+    COMMAND_RATE: "command:rate",
     COMMAND_INITIAL_STATE: "command:initial-state",
     COMMAND_SYNCED: "command:synced",
     COMMAND_QUEUE_ENDED: "command:queue-ended",
@@ -100,6 +102,8 @@
   let commandGuard = null;         // suppress outgoing events after a server command
   let _guardStartedAt = 0;
   let expectedPlayState = null;    // State.PLAYING / State.PAUSED / null
+  let roomRate = 1;
+  let rateChangeTimer = null;
   let serverRef = null;            // { position, playState, serverTime }
   let lastSeekAt = 0;
   let _pendingPlayPause = null;    // debounced send
@@ -594,6 +598,7 @@
     video.addEventListener("play", onVideoPlay);
     video.addEventListener("pause", onVideoPause);
     video.addEventListener("seeked", onVideoSeeked);
+    video.addEventListener("ratechange", onVideoRateChange);
     video.addEventListener("waiting", onVideoWaiting);
     video.addEventListener("canplay", onVideoCanPlay);
 
@@ -665,6 +670,8 @@
     hookedVideo.removeEventListener("play", onVideoPlay);
     hookedVideo.removeEventListener("pause", onVideoPause);
     hookedVideo.removeEventListener("seeked", onVideoSeeked);
+    hookedVideo.removeEventListener("ratechange", onVideoRateChange);
+    clearTimeout(rateChangeTimer);
     hookedVideo.removeEventListener("waiting", onVideoWaiting);
     hookedVideo.removeEventListener("canplay", onVideoCanPlay);
     if (_nativePlayListener) {
@@ -781,6 +788,18 @@
   }
 
   let isBuffering = false;
+  function onVideoRateChange() {
+    clearTimeout(rateChangeTimer);
+    if (!hookedVideo || !synced || isLive || hookedVideo.playbackRate === roomRate) return;
+    rateChangeTimer = setTimeout(() => {
+      if (!hookedVideo || !synced || !port) return;
+      const rate = hookedVideo.playbackRate;
+      if (Number.isFinite(rate) && rate >= 0.25 && rate <= 2 && rate !== roomRate) {
+        port.postMessage({ type: EVT.VIDEO_RATE, rate });
+      }
+    }, 400);
+  }
+
   function onVideoWaiting() {
     if (!synced || commandGuard) return;
     isBuffering = true;
@@ -863,7 +882,7 @@
       const localPos = hookedVideo.currentTime;
       const serverNow = now + clockOffset;
       const elapsed = (serverNow - serverRef.serverTime) / 1000;
-      const expectedPos = serverRef.position + elapsed;
+      const expectedPos = serverRef.position + elapsed * serverRef.rate;
       const driftMs = (localPos - expectedPos) * 1000;
 
       // Jitter EMA: |Δdrift| per tick. Reject single-tick jumps over
@@ -898,7 +917,6 @@
 
   function stopReconcile() {
     if (reconcileInterval) { clearInterval(reconcileInterval); reconcileInterval = null; }
-    if (hookedVideo && hookedVideo.playbackRate !== 1.0) hookedVideo.playbackRate = 1.0;
   }
 
   // Detect whether the hooked <video> is live and tell the server
@@ -937,9 +955,21 @@
     port.postMessage({ type: EVT.VIDEO_LIVE_STATUS, is_live: detected });
   }
 
+  function applyPlaybackRate(rate, serverTime, position) {
+    if (!Number.isFinite(rate) || rate < 0.25 || rate > 2) return;
+    if (serverRef && typeof serverTime === "number") {
+      const elapsed = serverRef.playState === State.PLAYING ? (serverTime - serverRef.serverTime) / 1000 : 0;
+      updateServerRef(position ?? serverRef.position + elapsed * roomRate, serverRef.playState, serverTime);
+    }
+    roomRate = rate;
+    if (serverRef) serverRef.rate = rate;
+    if (hookedVideo) hookedVideo.playbackRate = isLive ? 1 : rate;
+  }
+
   function updateServerRef(position, playState, serverTime) {
     serverRef = {
       position,
+      rate: roomRate,
       playState,
       serverTime: serverTime ?? serverRef?.serverTime ?? 0,
     };
@@ -952,7 +982,9 @@
   // aren't fought by a 250ms-tick background loop.
   function applySyncedState(msg) {
     if (!hookedVideo) return;
-    const target = msg.current_time;
+    const elapsed = msg.play_state === "playing" && clockSynced && typeof msg.server_time === "number"
+      ? Math.max(0, Date.now() + clockOffset - msg.server_time) / 1000 : 0;
+    const target = msg.current_time == null ? null : msg.current_time + elapsed * roomRate;
     const wantPaused = expectedPlayState === State.PAUSED;
     if (target != null && Math.abs(hookedVideo.currentTime - target) > 2.0) {
       seekTo(target);
@@ -1088,6 +1120,7 @@
         currentItemId = msg.current_item_id;
         _loadedReported = false;
       }
+      applyPlaybackRate(msg.playback_rate ?? 1, msg.server_time, msg.current_time);
       tryAutoSync();
       return;
     }
@@ -1095,13 +1128,9 @@
     if (msg.type === EVT.COMMAND_LIVE_STATUS) {
       isLive = !!msg.is_live;
       _lastPushedLive = isLive;
-      // If we just switched out of live, the reconcile loop's next
-      // tick re-engages drift correction. If we just switched into
-      // live, ensure playbackRate is reset (reconcile may have been
-      // tweaking it).
-      if (hookedVideo && isLive && hookedVideo.playbackRate !== 1.0) {
-        hookedVideo.playbackRate = 1.0;
-      }
+      // Live playback stays at its live edge. Restore the canonical speed
+      // when the stream becomes a VOD and drift measurement resumes.
+      if (hookedVideo) hookedVideo.playbackRate = isLive ? 1 : roomRate;
       return;
     }
 
@@ -1125,6 +1154,7 @@
         _loadedReported = false;
       }
 
+      applyPlaybackRate(msg.playback_rate ?? 1, msg.server_time, msg.current_time);
       hideJoinToast();
       _log("synced! expected=", expectedPlayState, "hasVideo=", !!hookedVideo, "clockSynced=", clockSynced);
 
@@ -1151,6 +1181,7 @@
     }
 
     if (msg.type === EVT.COMMAND_VIDEO_CHANGE) {
+      roomRate = 1;
       // Capture whether this tab is acting as a player BEFORE updating
       // _syncedUrl. setSyncedUrl → checkUrlMismatch → unhookVideo when the
       // current location no longer matches the new room URL, which would
@@ -1252,6 +1283,10 @@
     }
 
     switch (msg.type) {
+      case EVT.COMMAND_RATE:
+        applyPlaybackRate(msg.rate, msg.server_time, msg.current_time);
+        break;
+
       case EVT.COMMAND_PLAY:
         _log("cmd:play pos=", msg.position, "server_time=", msg.server_time);
         // Genuine play command from server — any locally-pending pause is
@@ -1302,7 +1337,7 @@
         if (isLive) break;
         if (typeof msg.position !== "number") break;
         let _seekTarget = msg.position;
-        if (clockSynced && typeof msg.server_time === "number") {
+        if (expectedPlayState !== State.PAUSED && clockSynced && typeof msg.server_time === "number") {
           const _slopMs = Math.max(0, (Date.now() + clockOffset) - msg.server_time);
           _seekTarget += _slopMs / 1000;
         }

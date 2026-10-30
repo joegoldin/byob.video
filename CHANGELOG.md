@@ -3,6 +3,48 @@
 
 ---
 
+# v7.0.0 (unreleased)
+
+### Native Cloudflare Workers
+
+The server now runs on Workers with SQLite-backed room Durable Objects,
+hibernating WebSockets and a shared video pool. Playback uses timestamp-based
+positions rather than a stored ticking playhead. Idle cleanup is one-shot;
+unused rooms and the pool do not wake on recurring alarms.
+
+The native frontend retains the existing player modules, queue/history,
+comments, settings, voting and roulette. The REST API and extension channel
+protocol remain supported, including an HTTP fallback when browser WebSockets
+are unavailable. Temporary compatibility endpoints transition old LiveView pages
+and preserve signed legacy identities during the configured migration window.
+
+### Playback corrections
+
+- Scale seek-processing and message-transit compensation by the room rate.
+- Preserve programmatic seek ownership when an older completion arrives late.
+- Learn fast direct-video seek latency instead of retaining a500ms prior.
+- Advance remote resume targets through message transit; keep paused positions
+  stationary.
+- Let explicit playback controls supersede pending load-readiness deadlines.
+- Preserve queued successors on restart and reject stale readiness/ended events.
+
+### Migration and verification
+
+Read-only SQLite/ETF export and authenticated, resumable import preserve room
+IDs, API keys, queue/history and pool timestamps. Imports reject conflicting
+state instead of overwriting it. Private exports and temporary migration gateways
+are separate from the public application.
+
+Local browser/transport and delayed-message suites, actual Chromium extension
+injection, real YouTube playback, and isolated hosted preview/migration checks
+have passed. Vimeo is accepted on the explicitly approved basis of reusing the
+unchanged adapter and verified YouTube behavior, not a passing live Vimeo test.
+Production backup/import, hosted CI and cutover acceptance remain outstanding;
+the Fly deployment and volume remain available. See `docs/cloudflare-contracts.md`
+and `docs/cloudflare-data-migration.md` for evidence and remaining gates.
+
+---
+
 # v6.8.78
 
 ### Playback speed no longer storms the room

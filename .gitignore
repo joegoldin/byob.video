@@ -39,6 +39,10 @@ watch_party-*.tar
 # In case you use Node.js/npm, you want to ignore these.
 npm-debug.log
 /assets/node_modules/
+/workers/node_modules/
+/workers/.wrangler/
+/workers/.cache/
+/workers/dist/
 
 # nix flake result
 result/

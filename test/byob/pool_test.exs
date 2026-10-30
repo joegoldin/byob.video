@@ -4,10 +4,9 @@ defmodule Byob.PoolTest do
   alias Byob.Pool
   alias Byob.Persistence
 
-  # Use a unique source_detail per test run to isolate rows. We can't cheaply
-  # wipe video_pool between tests without ripping up the test schema, so we
-  # rely on `source_detail` tagging + filtering to keep tests from stepping
-  # on each other.
+  # The test database survives VM restarts, but unique_integer does not.
+  # Use cross-run identifiers so an insert cannot hit an earlier run's row.
+  defp unique_suffix, do: Base.encode16(:crypto.strong_rand_bytes(16), case: :lower)
 
   defp mk_entry(source_type, external_id, opts \\ []) do
     %{
@@ -27,7 +26,7 @@ defmodule Byob.PoolTest do
       before = Persistence.pool_count()
 
       entries = [
-        mk_entry(:trending, "pool_test_#{:erlang.unique_integer([:positive])}"),
+        mk_entry(:trending, "pool_test_#{unique_suffix()}"),
         # Missing :title — invalid, should be filtered by Pool.upsert/1
         %{source_type: :trending, external_id: "bogus"}
       ]
@@ -37,7 +36,7 @@ defmodule Byob.PoolTest do
     end
 
     test "updates last_seen_at on conflict, leaves first_seen_at intact" do
-      id = "pool_conflict_#{:erlang.unique_integer([:positive])}"
+      id = "pool_conflict_#{unique_suffix()}"
       {:ok, 1} = Pool.upsert([mk_entry(:trending, id, title: "first")])
 
       # Give the clock a tick so timestamps differ
@@ -57,7 +56,7 @@ defmodule Byob.PoolTest do
   describe "pick_pool_candidates/3 (via Pool.pick_candidates/1)" do
     test "returns up to 12 candidates and honors exclusions when pool has surplus" do
       # Seed enough rows that pick + exclusion still has surplus
-      uniq = :erlang.unique_integer([:positive])
+      uniq = unique_suffix()
 
       entries =
         for source <- [:trending, :subreddit, :curated],
@@ -78,7 +77,7 @@ defmodule Byob.PoolTest do
     end
 
     test "excluded ids are dropped from the pick" do
-      uniq = :erlang.unique_integer([:positive])
+      uniq = unique_suffix()
 
       # Seed plenty of rows across all sources so pick succeeds even after
       # some exclusions.
@@ -101,7 +100,7 @@ defmodule Byob.PoolTest do
 
   describe "mark_picked/1" do
     test "updates last_picked_at for all rows matching external_id" do
-      id = "picked_mark_#{:erlang.unique_integer([:positive])}"
+      id = "picked_mark_#{unique_suffix()}"
 
       {:ok, _} =
         Pool.upsert([

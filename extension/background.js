@@ -16,6 +16,7 @@ const EVT = Object.freeze({
   VIDEO_PLAY: "video:play",
   VIDEO_PAUSE: "video:pause",
   VIDEO_SEEK: "video:seek",
+  VIDEO_RATE: "video:rate",
   VIDEO_ENDED: "video:ended",
   VIDEO_READY: "video:ready",
   VIDEO_DRIFT: "video:drift",
@@ -27,6 +28,7 @@ const EVT = Object.freeze({
   // background.js → content.js
   COMMAND_PLAY: "command:play",
   COMMAND_PAUSE: "command:pause",
+  COMMAND_RATE: "command:rate",
   COMMAND_INITIAL_STATE: "command:initial-state",
   COMMAND_SYNCED: "command:synced",
   COMMAND_QUEUE_ENDED: "command:queue-ended",
@@ -41,6 +43,7 @@ const EVT = Object.freeze({
   CHAN_VIDEO_PLAY: "video:play",
   CHAN_VIDEO_PAUSE: "video:pause",
   CHAN_VIDEO_SEEK: "video:seek",
+  CHAN_VIDEO_RATE: "video:rate",
   CHAN_VIDEO_ENDED: "video:ended",
   CHAN_VIDEO_STATE: "video:state",
   CHAN_VIDEO_MEDIA_INFO: "video:media_info",
@@ -61,6 +64,7 @@ const EVT = Object.freeze({
   // Channel OUT (server → background.js subscribers)
   CHAN_SYNC_PLAY: "sync:play",
   CHAN_SYNC_PAUSE: "sync:pause",
+  CHAN_SYNC_RATE: "sync:rate",
   CHAN_SYNC_CORRECTION: "sync:correction",
   CHAN_SYNC_SEEK_COMMAND: "sync:seek_command",
   CHAN_AUTOPLAY_COUNTDOWN: "autoplay:countdown",
@@ -429,6 +433,7 @@ function handleContentMessage(msg, port, tabId) {
             type: EVT.COMMAND_INITIAL_STATE,
             play_state: resp.play_state,
             current_time: resp.current_time,
+            playback_rate: resp.playback_rate ?? 1,
             server_time: resp.server_time,
             current_url: resp.current_url,
             current_item_id: resp.current_item_id,
@@ -456,6 +461,7 @@ function handleContentMessage(msg, port, tabId) {
             type: EVT.COMMAND_SYNCED,
             play_state: resp.play_state,
             current_time: resp.current_time,
+            playback_rate: resp.playback_rate ?? 1,
             server_time: resp.server_time,
             current_url: resp.current_url,
             current_item_id: resp.current_item_id,
@@ -474,6 +480,10 @@ function handleContentMessage(msg, port, tabId) {
 
     case EVT.VIDEO_PAUSE:
       if (channel) channel.push(EVT.CHAN_VIDEO_PAUSE, { position: msg.position });
+      break;
+
+    case EVT.VIDEO_RATE:
+      if (channel) channel.push(EVT.CHAN_VIDEO_RATE, { rate: msg.rate });
       break;
 
     case EVT.VIDEO_SEEK:
@@ -733,6 +743,13 @@ function connectToRoom(roomId, serverUrl, token, username) {
   channel.on(EVT.CHAN_SYNC_PAUSE, (data) => broadcastToContentScripts({
     type: EVT.COMMAND_PAUSE,
     position: data.time,
+    server_time: data.server_time,
+  }));
+
+  channel.on(EVT.CHAN_SYNC_RATE, (data) => broadcastToContentScripts({
+    type: EVT.COMMAND_RATE,
+    rate: data.rate,
+    current_time: data.current_time,
     server_time: data.server_time,
   }));
 

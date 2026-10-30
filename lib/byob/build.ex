@@ -16,21 +16,19 @@ defmodule Byob.Build do
   carries a static string.
   """
 
-  @sha (
-          cond do
-            (env_sha = System.get_env("GIT_SHA")) && env_sha != "" ->
-              env_sha |> String.trim() |> String.slice(0, 7)
+  @sha (cond do
+          (env_sha = System.get_env("GIT_SHA")) && env_sha != "" ->
+            env_sha |> String.trim() |> String.slice(0, 7)
 
-            File.exists?(Path.join(File.cwd!(), ".git")) ->
-              case System.cmd("git", ["rev-parse", "--short", "HEAD"], stderr_to_stdout: true) do
-                {sha, 0} -> String.trim(sha)
-                _ -> nil
-              end
+          File.exists?(Path.join(File.cwd!(), ".git")) ->
+            case System.cmd("git", ["rev-parse", "--short", "HEAD"], stderr_to_stdout: true) do
+              {sha, 0} -> String.trim(sha)
+              _ -> nil
+            end
 
-            true ->
-              nil
-          end
-        )
+          true ->
+            nil
+        end)
 
   @repo_url "https://github.com/joegoldin/byob.video"
 
