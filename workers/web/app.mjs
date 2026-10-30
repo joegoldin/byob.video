@@ -54,6 +54,7 @@ function updateRoom(next) {
   }
   rounds.update(state.round, channel.session?.user_id);
   const item = state.current_index == null ? null : state.queue[state.current_index];
+  document.getElementById('paused-play-button').hidden = state.play_state !== 'paused' || !['youtube', 'vimeo', 'direct_url'].includes(item?.source_type);
   updateTitle();
   const video = item?.source_type === 'youtube' ? item.source_id : null;
   if (video !== commentsVideo) {
@@ -267,6 +268,13 @@ root.addEventListener('click', async event => {
     else if (action === 'reveal-api-key') { const input = document.getElementById('room-api-key'); input.type = input.type === 'password' ? 'text' : 'password'; }
     else if (action === 'copy-video-url') await navigator.clipboard.writeText(button.dataset.url);
     else if (action === 'queue-restart') await command('video:restart');
+    else if (action === 'paused-play') {
+      if (!player.hook.isReady) return;
+      const position = player.hook._getCurrentTime();
+      // Start inside the click gesture; waiting for the network loses autoplay permission.
+      player.hook._onSyncPlay({ time: position, server_time: player.hook.clockSync.serverNow(), user_id: null });
+      await command('video:play', { position });
+    }
     else if (action === 'queue-play') await command('queue:play_index', { index: Number(button.dataset.index) });
     else if (action === 'queue-remove') await command('queue:remove', { item_id: button.dataset.id });
     else if (action === 'queue-move') await command('queue:reorder', { from: Number(button.dataset.from), to: Number(button.dataset.to) });

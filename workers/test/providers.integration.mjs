@@ -89,11 +89,13 @@ try {
         await video.evaluate(video => { video.playbackRate = 1.5; });
       }
       await page.waitForFunction(() => document.getElementById('activity-panel').textContent.includes('changed speed: 1× → 1.5×'));
-      await control('play');
+      // The room control must work even when the provider stops rendering its UI.
+      await frame.addStyleTag({ content: 'button, [role="button"] { visibility: hidden !important; }' });
+      await page.getByRole('button', { name: 'Play video', exact: true }).click();
       await frame.waitForFunction(() => { const video = document.querySelector('video'); return video && !video.paused && video.playbackRate === 1.5; }, null, { timeout: 10000 });
       const start = await video.evaluate(video => video.currentTime);
       await frame.waitForFunction(start => document.querySelector('video').currentTime > start + 1, start, { timeout: 10000 });
-      console.log(`PASS: real ${provider.name} embed playback, room pause/resume and actual1.5x rate`);
+      console.log(`PASS: real ${provider.name} embed playback, room pause and centered resume with provider controls hidden, and actual1.5x rate`);
     } catch (error) {
       const messages = await Promise.all(page.frames().map(frame => frame.locator('body').innerText({ timeout: 1000 }).then(text => text.slice(0, 1200)).catch(() => 'Frame text unavailable')));
       const controls = await Promise.all(page.frames().filter(frame => frame.url().includes(provider.host)).map(frame => frame.locator('button,[role="button"]').evaluateAll(nodes => nodes.slice(0, 40).map(node => ({ label: node.getAttribute('aria-label'), title: node.getAttribute('title'), class: node.className }))).catch(() => [])));

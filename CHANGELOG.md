@@ -3,6 +3,13 @@
 
 ---
 
+# v7.0.1 (2026-10-30)
+
+- Show a centered Play button whenever an embedded video is paused, independent
+  of the provider's controls. Clicking it resumes playback for the room.
+
+---
+
 # v7.0.0 (2026-10-30)
 
 ### Native Cloudflare Workers

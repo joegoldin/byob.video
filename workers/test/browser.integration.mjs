@@ -220,7 +220,12 @@ try {
   for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.paused === true);
   await alice.locator('#player video').evaluate(video => { video.playbackRate = 1.5; });
   for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.playbackRate === 1.5);
-  await alice.locator('#player video').evaluate(video => video.play());
+  const resume = alice.getByRole('button', { name: 'Play video', exact: true });
+  await resume.waitFor();
+  const [control, playerBox] = await Promise.all([resume.boundingBox(), alice.locator('#player').boundingBox()]);
+  assert.ok(Math.abs(control.x + control.width / 2 - playerBox.x - playerBox.width / 2) < 2);
+  assert.ok(Math.abs(control.y + control.height / 2 - playerBox.y - playerBox.height / 2) < 2);
+  await resume.click();
   for (const page of [alice, bob]) {
     try { await page.waitForFunction(() => document.querySelector('#player video')?.paused === false); }
     catch (error) { throw new Error(`${error.message}; ${JSON.stringify({ traces: [...traces.values()], media: await Promise.all([alice, bob].map(page => page.evaluate(() => ({ trace: window.__mediaTrace, body: document.body.innerText })))) })}`); }
@@ -229,6 +234,8 @@ try {
     const activity = document.getElementById('activity-panel').textContent;
     return activity.includes('paused') && activity.includes('resumed') && activity.includes('changed speed: 1× → 1.5×');
   });
+  for (const page of [alice, bob]) assert.equal(await page.locator('#paused-play-button').isVisible(), false, 'Paused overlay must disappear when the room resumes');
+  console.log('PASS: centered paused-play control resumes both clients and disappears during playback');
   console.log('PASS: both clients render attributed pause, resume and rate activity');
   bob.once('dialog', dialog => dialog.accept('<img src=x onerror=alert(1)>'));
   await bob.locator('[data-action="rename"]').click();

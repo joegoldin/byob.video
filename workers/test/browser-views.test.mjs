@@ -97,3 +97,11 @@ test('queue and history expose original context-menu actions with escaped URLs',
   assert.ok(history.includes('Add to Queue') && history.includes('Copy URL'));
   assert.equal(history.includes('<script>'), false);
 });
+
+test('player has a persistent accessible centered paused-play control outside provider DOM', () => {
+  const shell = String(views.roomShell('abc123'));
+  assert.ok(shell.includes('id="paused-play-button"'));
+  assert.ok(shell.includes('aria-label="Play video"'));
+  assert.ok(shell.includes('data-action="paused-play"'));
+  assert.ok(shell.includes('left-1/2 top-1/2'));
+});
