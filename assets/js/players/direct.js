@@ -33,7 +33,17 @@ export function create(el, callbacks, opts) {
     callbacks.onStateChange("paused");
   });
 
+  let programmaticSeekStartedAt = null;
   video.addEventListener("seeked", () => {
+    // An older completion can arrive after another seek has started. Keep
+    // ownership until the current seek finishes, rather than echoing it.
+    if (video.seeking) return;
+    if (programmaticSeekStartedAt !== null) {
+      const elapsed = performance.now() - programmaticSeekStartedAt;
+      programmaticSeekStartedAt = null;
+      callbacks.onProgrammaticSeeked?.(elapsed);
+      return;
+    }
     callbacks.onSeeked(video.currentTime);
   });
 
@@ -41,10 +51,10 @@ export function create(el, callbacks, opts) {
     callbacks.onStateChange("ended");
   });
 
-  return _wrap(video);
+  return _wrap(video, () => { programmaticSeekStartedAt = performance.now(); });
 }
 
-function _wrap(video) {
+function _wrap(video, markSeek) {
   return {
     raw: video,
 
@@ -55,6 +65,9 @@ function _wrap(video) {
       video.pause();
     },
     seek(seconds) {
+      // Match the actual seek completion instead of suppressing unrelated
+      // native controls for a time window after play or pause.
+      markSeek();
       video.currentTime = seconds;
     },
     destroy() {

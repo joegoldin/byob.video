@@ -49,6 +49,7 @@ const VideoPlayer = {
     this._playerSettled = true;
     this.reconcile = new Reconcile({
       getCurrentTime: () => this._getCurrentTime(),
+      getPlaybackRate: () => this._roomRate ?? 1,
       // Reconcile-initiated seeks are *corrective* — they shouldn't echo
       // back to peers as new sync events, and on iOS the seek causes a
       // PAUSED → BUFFERING → PLAYING flicker that, unsuppressed, would
@@ -169,7 +170,7 @@ const VideoPlayer = {
       this.suppression.suppress("playing");
       this._seekIssuedAt = performance.now();
       this._showSyncingOverlay("Syncing…");
-      this.reconcile.executeSeek?.(data?.position || 0, data?.server_time);
+      this.reconcile.executeSeek?.(data?.position || 0, data?.server_time, this.expectedPlayState);
     });
     this.handleEvent(LV_EVT.SYNC_AUTOPLAY_COUNTDOWN, (data) => this._onAutoplayCountdown(data));
     this.handleEvent(LV_EVT.SYNC_AUTOPLAY_CANCELLED, () => this._hideAutoplayCountdown());
@@ -270,6 +271,10 @@ const VideoPlayer = {
     this.clockSync.start();
     this.clockSync.maintainSync();
 
+    // Workers retain the canonical playback state across restarts. Replaying
+    // local controls here could undo another viewer's pause while we were away.
+    if (this.serverAuthoritativeReconnect) return;
+
     if (this.player && this.isReady) {
       const localState = this.player.getState?.();
       const position = this.player.getCurrentTime?.();
@@ -350,7 +355,7 @@ const VideoPlayer = {
     if (state.play_state === "playing") {
       const elapsed =
         (this.clockSync.serverNow() - state.server_time) / 1000;
-      const position = state.current_time + elapsed;
+      const position = state.current_time + elapsed * this._roomRate;
       this.expectedPlayState = "playing";
       this.suppression.suppress("playing");
       // For live content, every player joins at its own live edge —
@@ -469,7 +474,7 @@ const VideoPlayer = {
       const elapsed = pending.play_state === "playing"
         ? (this.clockSync.serverNow() - pending.server_time) / 1000
         : 0;
-      startSeconds = Math.max(0, (pending.current_time || 0) + elapsed);
+      startSeconds = Math.max(0, (pending.current_time || 0) + elapsed * this._roomRate);
     }
 
     // Diagnostic — surface the computed start so we can see in the console
@@ -634,6 +639,7 @@ const VideoPlayer = {
         this._signalLoaded();
         this._applyPendingState();
         this._startSeekDetector();
+        this._applyRoomRate();
       },
       onStateChange: (stateName) => {
         if (stateName === "playing") {
@@ -659,8 +665,12 @@ const VideoPlayer = {
           }
         }
       },
+      onProgrammaticSeeked: (elapsed) => {
+        // Zero is the wire protocol's missing-observation sentinel. Preserve
+        // sub-millisecond completions as the smallest positive millisecond.
+        this._lastObservedL = Math.max(1, elapsed);
+      },
       onSeeked: (currentTime) => {
-        if (this.suppression.isActive()) return;
         this.pushEvent(LV_EVT.EV_VIDEO_SEEK, { position: currentTime });
         const serverTime = this.clockSync.serverNow();
         this.reconcile.setServerState(currentTime, serverTime, this.clockSync);
@@ -877,7 +887,12 @@ const VideoPlayer = {
     this.el.querySelector(".byob-join-ready")?.remove();
     if (data.user_id === this.userId) return;
     this.suppression.suppress("playing");
-    this._seekTo(data.time);
+    // The room has been advancing while the resume message was in transit.
+    const elapsed = this.clockSync.isReady() && typeof data.server_time === "number"
+      ? Math.max(0, this.clockSync.serverNow() - data.server_time) / 1000
+      : 0;
+    const position = data.time + elapsed * (this._roomRate ?? 1);
+    this._seekTo(position);
     this._play();
     this.reconcile.setServerState(
       data.time,
@@ -889,7 +904,7 @@ const VideoPlayer = {
     // (e.g. user just arrived and hasn't interacted yet), the _play()
     // call above silently fails and we get a black player with no way
     // to recover. Same retry-then-show-overlay dance as initial sync.
-    this._retryPlayOrShowOverlay(data.time);
+    this._retryPlayOrShowOverlay(position);
   },
 
   // Check every 500ms up to 3× whether playback actually started after
@@ -1427,7 +1442,9 @@ const VideoPlayer = {
       const jumpThreshold = isPaused ? 1 : 3;
       const jumped = Math.abs(pos - this.lastKnownPosition) > jumpThreshold;
       if (jumped) {
-        if (!this.suppression.isActive()) {
+        // Direct video reports native seeked events. Polling its initial
+        // restored position can mistake a late join for a new user seek.
+        if (this.sourceType !== "direct_url" && !this.suppression.isActive()) {
           this.pushEvent(LV_EVT.EV_VIDEO_SEEK, { position: pos });
           const serverTime = this.clockSync.serverNow();
           this.reconcile.setServerState(pos, serverTime, this.clockSync);
@@ -2196,6 +2213,11 @@ const VideoPlayer = {
   // toast when it originated from another user.
   _onSyncRate(data) {
     const rate = typeof data?.rate === "number" ? data.rate : 1.0;
+    if (typeof data.current_time === "number") {
+      this.reconcile.setServerState(data.current_time, data.server_time, this.clockSync, { rate });
+    } else {
+      this.reconcile.setPlaybackRate(rate, data.server_time);
+    }
     this._roomRate = rate;
     this._applyRoomRate();
     if (data?.user_id && data.user_id !== this.userId) {

@@ -1,0 +1,93 @@
+name: Workers acceptance
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workers-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MIX_ENV: test
+  CI: 'true'
+  WRANGLER_SEND_METRICS: 'false'
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Required project precommit
+        run: |
+          mix precommit
+          git diff --exit-code
+      - name: Unit, oracle, runtime and migration acceptance
+        working-directory: workers
+        run: |
+          corepack pnpm test
+          corepack pnpm test:runtime
+          corepack pnpm test:migration
+      - name: Deployment packaging without credentials or publication
+        working-directory: workers
+        run: |
+          corepack pnpm check:deploy
+          corepack pnpm check:migration
+
+  browsers:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+        transport: [websocket, http]
+    env:
+      BYOB_BROWSER: ${{ matrix.browser }}
+      BYOB_HTTP_ONLY: ${{ matrix.transport == 'http' && '1' || '0' }}
+      BYOB_LEGACY_LONGPOLL: ${{ matrix.transport == 'http' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Install locked Playwright browser and media fixture tooling
+        working-directory: workers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+          corepack pnpm exec playwright-core install --with-deps "$BYOB_BROWSER"
+          node --input-type=module -e 'import {chromium, firefox} from "playwright-core"; console.log("CHROMIUM_PATH=" + chromium.executablePath() + "\nFIREFOX_PATH=" + firefox.executablePath())' >> "$GITHUB_ENV"
+      - name: Rendered playback and legacy-page transition
+        working-directory: workers
+        run: |
+          corepack pnpm test:browser
+          corepack pnpm test:legacy-page
+      - name: Package and exercise the injected Chromium extension
+        if: matrix.browser == 'chromium' && matrix.transport == 'websocket'
+        working-directory: workers
+        run: |
+          sudo apt-get install --yes imagemagick
+          extension_dir="$RUNNER_TEMP/byob-extension"
+          mkdir -p "$extension_dir"
+          cp -R ../extension/. "$extension_dir/"
+          for size in 16 48 128; do
+            convert ../priv/static/images/favicon.svg -resize "${size}x${size}" "$extension_dir/icon-$size.png"
+          done
+          BYOB_EXTENSION_PATH="$extension_dir" corepack pnpm test:extension
+      - name: Playback under ordered delay and jitter
+        if: matrix.transport == 'websocket'
+        working-directory: workers
+        env:
+          BYOB_NETWORK_PROFILE: delayed
+        run: corepack pnpm test:browser

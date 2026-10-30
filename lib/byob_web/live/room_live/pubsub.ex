@@ -148,7 +148,8 @@ defmodule ByobWeb.RoomLive.PubSub do
         comments_total: nil
       )
 
-    {:noreply, push_event(socket, Events.video_change(), ByobWeb.RoomLive.serialize_media_item(data))}
+    {:noreply,
+     push_event(socket, Events.video_change(), ByobWeb.RoomLive.serialize_media_item(data))}
   end
 
   def handle_sb_settings_updated(sb_settings, socket) do
@@ -174,7 +175,8 @@ defmodule ByobWeb.RoomLive.PubSub do
         is_list(Map.get(data, :users_with_open_tabs)) and
         Enum.member?(data.users_with_open_tabs, user_id)
 
-    {:noreply, push_event(socket, Events.ready_count(), Map.put(data, :i_have_popup, i_have_popup))}
+    {:noreply,
+     push_event(socket, Events.ready_count(), Map.put(data, :i_have_popup, i_have_popup))}
   end
 
   def handle_extension_player_state(state, socket) do
@@ -187,7 +189,8 @@ defmodule ByobWeb.RoomLive.PubSub do
         state[:user_id] == current[:user_id]
 
     if should_update do
-      {:noreply, socket |> assign(ext_player: state) |> push_event(Events.ext_player_state(), state)}
+      {:noreply,
+       socket |> assign(ext_player: state) |> push_event(Events.ext_player_state(), state)}
     else
       {:noreply, socket}
     end
@@ -203,7 +206,12 @@ defmodule ByobWeb.RoomLive.PubSub do
     # drift-report row on every users_updated tick.
     stats = Map.get(socket.assigns, :sync_stats, %{})
     clients = Map.get(stats, :clients, %{})
-    connected_ids = users |> Enum.filter(fn {_, u} -> u.connected end) |> Enum.map(fn {id, _} -> id end) |> MapSet.new()
+
+    connected_ids =
+      users
+      |> Enum.filter(fn {_, u} -> u.connected end)
+      |> Enum.map(fn {id, _} -> id end)
+      |> MapSet.new()
 
     pruned =
       clients
