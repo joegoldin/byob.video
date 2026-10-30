@@ -22,7 +22,7 @@ export function legacyRoomState(record, now) {
   if (record?.schema_version !== 1 || !old || old.room_id !== record.room_id ||
       typeof old.api_key !== 'string' || !/^[A-Za-z0-9_-]{16,128}$/.test(old.api_key) ||
       !Array.isArray(old.queue) || old.queue.length > 200 || !Array.isArray(old.history) || old.history.length > 99 ||
-      !['playing', 'paused'].includes(old.play_state) || !Number.isFinite(old.current_time) || old.current_time < 0 ||
+      !['playing', 'paused', 'ended'].includes(old.play_state) || !Number.isFinite(old.current_time) || old.current_time < 0 ||
       !Number.isFinite(old.playback_rate ?? 1) || (old.playback_rate ?? 1) < 0.25 || (old.playback_rate ?? 1) > 2) invalid();
   if (old.current_index != null && (!Number.isInteger(old.current_index) || old.current_index < 0 || old.current_index >= old.queue.length)) invalid();
   const state = newRoom(record.room_id, now, old.api_key);

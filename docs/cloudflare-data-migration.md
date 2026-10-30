@@ -91,6 +91,39 @@ secret. Preserve the original backup and export for the agreed rollback period.
 These checks do not establish production backup completeness, traffic freeze,
 legacy cookie/token continuity, cutover success or rollback readiness.
 
+## Production-data preflight evidence
+
+A consistent read-only `VACUUM INTO` snapshot of Fly's live SQLite database,
+including committed WAL contents, passed `integrity_check`: 87 rooms and 14,760
+pool rows. It was retrieved into a private directory with mode0600 and its
+SHA256 matched the source. The final cutover still requires a fresh snapshot
+after freezing writes; this preflight is not that snapshot.
+
+The real export exposed two compatibility gaps. Transient references contained
+an old VM node atom unknown to the exporter. A bounded structural ETF traversal
+now selects durable fields before `binary_to_term(..., [:safe])`, without creating
+atoms from database contents. Regression tests cover foreign-node references,
+unknown retained atoms, truncation and nesting limits. The importer also now
+accepts the legitimate `ended` state used by both implementations, preserving it
+rather than restarting playback.
+
+Run `b15250376` imported all 87 rooms and 14,760 pool rows into private temporary
+local workerd storage. It verified room identities, original API keys,
+queue/history/playback, exact pool timestamps, API authentication after eviction,
+and idempotent retry. Temporary test storage was removed. No production data was
+sent to Cloudflare by this rehearsal. To repeat against a private export:
+
+```fish
+cd workers
+node test/migration-preflight.integration.mjs /private/backup/byob-export.json
+```
+
+`wrangler.production.jsonc` and `wrangler.migration-production.jsonc` isolate the
+production application and gateway from preview. Both pass packaging dry runs;
+the application has no production-domain routes configured yet. CI checks both
+production packages as well as preview. Neither production deployment nor import
+is established by these dry runs.
+
 ## Hosted preview evidence
 
 The isolated preview is `https://byob-video-preview.joe-eb3.workers.dev`.

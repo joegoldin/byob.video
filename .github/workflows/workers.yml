@@ -42,6 +42,7 @@ jobs:
         run: |
           corepack pnpm check:deploy
           corepack pnpm check:migration
+          corepack pnpm check:production
 
   browsers:
     needs: checks

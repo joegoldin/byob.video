@@ -1,0 +1,25 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "byob-migration",
+  "main": "scripts/migration-worker.mjs",
+  "compatibility_date": "2026-10-28",
+  "workers_dev": true,
+  "send_metrics": false,
+  "observability": {
+    "enabled": false
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ROOMS",
+        "class_name": "Room",
+        "script_name": "byob-video"
+      },
+      {
+        "name": "POOL",
+        "class_name": "VideoPool",
+        "script_name": "byob-video"
+      }
+    ]
+  }
+}

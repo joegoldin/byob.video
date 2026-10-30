@@ -19,6 +19,7 @@
     "test:legacy-page": "node test/legacy-page.integration.mjs",
     "migrate:import": "node scripts/import-legacy.mjs",
     "check:migration": "wrangler deploy --dry-run --config wrangler.migration.jsonc",
+    "check:production": "wrangler deploy --dry-run --config wrangler.production.jsonc && wrangler deploy --dry-run --config wrangler.migration-production.jsonc",
     "build:web": "node scripts/build-web.mjs",
     "dev": "node scripts/build-web.mjs && wrangler dev --local --port 18789",
     "check:deploy": "node scripts/build-web.mjs && wrangler deploy --dry-run"
