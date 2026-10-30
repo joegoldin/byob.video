@@ -25,15 +25,22 @@ export function create(el, callbacks, opts) {
     callbacks.onReady();
   });
 
-  video.addEventListener("play", () => {
-    callbacks.onStateChange("playing");
-  });
-
-  video.addEventListener("pause", () => {
-    callbacks.onStateChange("paused");
-  });
-
   let programmaticSeekStartedAt = null;
+  const pendingStates = [];
+  const markState = state => {
+    const marker = { state };
+    pendingStates.push(marker);
+    return () => { const index = pendingStates.indexOf(marker); if (index !== -1) pendingStates.splice(index, 1); };
+  };
+  const reportState = state => {
+    const index = pendingStates.findIndex(marker => marker.state === state);
+    const programmatic = index !== -1;
+    if (index !== -1) pendingStates.splice(index, 1);
+    callbacks.onStateChange(state, programmatic);
+  };
+  video.addEventListener("play", () => reportState("playing"));
+  video.addEventListener("pause", () => reportState("paused"));
+
   video.addEventListener("seeked", () => {
     // An older completion can arrive after another seek has started. Keep
     // ownership until the current seek finishes, rather than echoing it.
@@ -55,17 +62,19 @@ export function create(el, callbacks, opts) {
     callbacks.onStateChange("ended");
   });
 
-  return _wrap(video, () => { programmaticSeekStartedAt = performance.now(); });
+  return _wrap(video, () => { programmaticSeekStartedAt = performance.now(); }, markState);
 }
 
-function _wrap(video, markSeek) {
+function _wrap(video, markSeek, markState) {
   return {
     raw: video,
 
     play() {
-      video.play().catch(() => {});
+      const cancel = video.paused ? markState("playing") : null;
+      video.play().catch(() => cancel?.());
     },
     pause() {
+      if (!video.paused) markState("paused");
       video.pause();
     },
     seek(seconds) {
@@ -75,6 +84,7 @@ function _wrap(video, markSeek) {
       video.currentTime = seconds;
     },
     destroy() {
+      if (!video.paused) markState("paused");
       video.pause();
       video.removeAttribute("src");
       video.load();

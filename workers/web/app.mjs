@@ -1,4 +1,5 @@
 import { RoomChannel } from './channel.mjs';
+import { createCommentReplies } from './comment-replies.mjs';
 import { mountHook } from './hooks.mjs';
 import { html, render } from './html.mjs';
 import * as views from './views.mjs';
@@ -23,6 +24,7 @@ let showComments = read(localStorage, 'byob_show_comments', 'true') !== 'false';
 let collapsed = false, expanded = false, dragFrom = null;
 let nicknames;
 try { nicknames = JSON.parse(read(localStorage, 'byob_nicknames', '{}')); } catch { nicknames = {}; }
+const commentReplies = createCommentReplies({ request: payload => channel.request('comments:replies', payload), getVideo: () => commentsVideo, changed: updateComments });
 const stats = new Map();
 let notifications = 0;
 function updateTitle() {
@@ -35,10 +37,11 @@ function notify() { if (document.hidden) { notifications++; updateTitle(); } }
 function updateComments() {
   const panel = document.getElementById('comments-panel');
   panel.hidden = !showComments;
-  render(panel, views.commentsPanel(comments, { collapsed, expanded }));
+  render(panel, views.commentsPanel(comments, { collapsed, expanded, replies: commentReplies.entries }));
   document.getElementById('room-layout').classList.toggle('lg:h-[calc(100dvh-2.5rem)]', !expanded);
 }
 function updateRoom(next) {
+  closeContextMenu();
   state = next;
   render(document.getElementById('queue-panel'), sidebar === 'queue' ? views.queuePanel(state) : views.historyPanel(state.history));
   render(document.getElementById('users-panel'), views.usersPanel(state.users, channel.session?.user_id, nicknames));
@@ -54,7 +57,7 @@ function updateRoom(next) {
   updateTitle();
   const video = item?.source_type === 'youtube' ? item.source_id : null;
   if (video !== commentsVideo) {
-    commentsVideo = video; comments = null; updateComments();
+    commentsVideo = video; comments = null; commentReplies.reset(); updateComments();
     if (video && showComments) void loadComments();
   }
 }
@@ -77,6 +80,50 @@ async function command(event, payload = {}) {
   try { return await channel.request(event, payload); }
   catch (error) { message(error.message); throw error; }
 }
+let contextOwner = null;
+function closeContextMenu(restoreFocus = false) {
+  document.getElementById('queue-context-menu')?.remove();
+  if (restoreFocus && contextOwner?.isConnected) contextOwner.focus({ preventScroll: true });
+  contextOwner = null;
+}
+root.addEventListener('contextmenu', event => {
+  const row = event.target.closest('[data-context-kind]');
+  if (!row || !state) return;
+  event.preventDefault();
+  closeContextMenu();
+  const history = row.dataset.contextKind === 'history';
+  const index = Number(history ? row.dataset.historyIndex : row.dataset.queueIdx);
+  const item = history ? state.history[index]?.item : state.queue[index];
+  if (!item) return;
+  const container = document.createElement('div');
+  render(container, views.contextMenu(item, { history, index, current: !history && index === state.current_index }));
+  const menu = container.firstElementChild;
+  root.append(menu);
+  contextOwner = row;
+  const bounds = row.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(event.clientX || bounds.left, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, Math.min(event.clientY || bounds.bottom, innerHeight - menu.offsetHeight - 8))}px`;
+  menu.querySelector('button').focus({ preventScroll: true });
+});
+document.addEventListener('click', event => {
+  const menu = document.getElementById('queue-context-menu');
+  if (menu && !menu.contains(event.target)) closeContextMenu();
+});
+window.addEventListener('resize', () => closeContextMenu());
+window.addEventListener('scroll', () => closeContextMenu(), true);
+document.addEventListener('keydown', event => {
+  const menu = document.getElementById('queue-context-menu');
+  if (!menu) return;
+  if (event.key === 'Escape') { event.preventDefault(); closeContextMenu(true); }
+  else if (event.key === 'Tab') closeContextMenu();
+  else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+    event.preventDefault();
+    const buttons = [...menu.querySelectorAll('[role="menuitem"]')];
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 : (buttons.indexOf(document.activeElement) + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+    buttons[next].focus({ preventScroll: true });
+  }
+});
+
 function clearUrl() {
   previewEpoch++; clearTimeout(previewTimer); preview = null;
   document.getElementById('url-input').value = '';
@@ -183,6 +230,7 @@ root.addEventListener('click', async event => {
   const button = event.target.closest('[data-action]');
   if (!button) return;
   const action = button.dataset.action;
+  if (button.closest('#queue-context-menu')) closeContextMenu(true);
   try {
     if (action === 'create-room') {
       button.disabled = true;
@@ -206,6 +254,8 @@ root.addEventListener('click', async event => {
       document.getElementById('byob-autoplay-help').showModal();
     } else if (action === 'copy-api-key') { await navigator.clipboard.writeText(document.getElementById('room-api-key').value); message('API key copied.'); }
     else if (action === 'reveal-api-key') { const input = document.getElementById('room-api-key'); input.type = input.type === 'password' ? 'text' : 'password'; }
+    else if (action === 'copy-video-url') await navigator.clipboard.writeText(button.dataset.url);
+    else if (action === 'queue-restart') await command('video:restart');
     else if (action === 'queue-play') await command('queue:play_index', { index: Number(button.dataset.index) });
     else if (action === 'queue-remove') await command('queue:remove', { item_id: button.dataset.id });
     else if (action === 'queue-move') await command('queue:reorder', { from: Number(button.dataset.from), to: Number(button.dataset.to) });
@@ -229,6 +279,9 @@ root.addEventListener('click', async event => {
     else if (action === 'round-cancel') await command('round:cancel', { round_id: state.round.id });
     else if (action === 'comment-seek') await command('comments:seek', { seconds: Number(button.dataset.seconds) });
     else if (action === 'more-comments') await loadComments(true);
+    else if (action === 'comment-replies') await commentReplies.toggle(button.dataset.commentId);
+    else if (action === 'more-replies') await commentReplies.more(button.dataset.commentId);
+    else if (action === 'retry-replies') await commentReplies.retry(button.dataset.commentId);
     else if (action === 'collapse-comments') { collapsed = !collapsed; updateComments(); }
     else if (action === 'expand-comments') { expanded = !expanded; updateComments(); }
   } catch (error) { message(error.message); }

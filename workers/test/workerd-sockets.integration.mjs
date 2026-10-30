@@ -90,9 +90,14 @@ try {
         }
         if (upstream.pathname.endsWith('/playlistItems')) return Response.json({ items: ['dQw4w9WgXcQ', 'abcdefghijk'].map((id, position) => ({ snippet: { title: `Playlist ${position}`, position, thumbnails: { medium: { url: 'https://i.ytimg.com/fixture.jpg' } } }, contentDetails: { videoId: id } })) });
         if (upstream.pathname.endsWith('/playlists')) return Response.json({ items: [{ snippet: { title: 'Fixture playlist' }, contentDetails: { itemCount: 2 } }] });
+        if (upstream.pathname.endsWith('/comments')) {
+          assert.equal(upstream.searchParams.get('parentId'), 'parent123');
+          const more = upstream.searchParams.has('pageToken');
+          return Response.json({ items: [{ id: more ? 'reply2' : 'reply1', snippet: { authorDisplayName: 'Replier', textDisplay: more ? 'Later reply' : 'Private reply', likeCount: 1 } }], nextPageToken: more ? null : 'reply-page-2', pageInfo: { totalResults: 2 } });
+        }
         assert.ok(upstream.pathname.endsWith('/commentThreads'));
         const more = upstream.searchParams.has('pageToken');
-        return Response.json({ items: [{ snippet: { topLevelComment: { snippet: { authorDisplayName: 'Viewer', textDisplay: more ? 'Second page' : 'Watch at 1:23', likeCount: 2 } }, totalReplyCount: 1 } }], nextPageToken: more ? null : 'page2', pageInfo: { totalResults: 2 } });
+        return Response.json({ items: [{ snippet: { topLevelComment: { id: 'parent123', snippet: { authorDisplayName: 'Viewer', textDisplay: more ? 'Second page' : 'Watch at 1:23', likeCount: 2 } }, totalReplyCount: 1 } }], nextPageToken: more ? null : 'page2', pageInfo: { totalResults: 2 } });
       }
       if (new URL(request.url).hostname === 'sponsor.ajay.app') return Response.json([{ segment: [1, 2], category: 'sponsor', actionType: 'skip', UUID: 'fixture-segment', videoDuration: 300 }]);
       assert.equal(new URL(request.url).hostname, 'www.youtube.com');
@@ -166,6 +171,15 @@ try {
   const page = await alice.send('comments:load_more', { page_token: comments.next_page_token });
   assert.equal(page.response.comments[0].text, 'Second page');
   assert.equal(page.response.next_page_token, null);
+  const replies = await alice.send('comments:replies', { video_id: 'dQw4w9WgXcQ', parent_id: comments.comments[0].id });
+  assert.equal(replies.status, 'ok');
+  assert.equal(replies.response.comments[0].text, 'Private reply');
+  const moreReplies = await alice.send('comments:replies', { video_id: 'dQw4w9WgXcQ', parent_id: 'parent123', page_token: replies.response.next_page_token });
+  assert.equal(moreReplies.response.comments[0].text, 'Later reply');
+  assert.equal(moreReplies.response.next_page_token, null);
+  assert.equal((await extension.send('comments:replies', { video_id: 'dQw4w9WgXcQ', parent_id: 'parent123' })).status, 'error');
+  assert.equal((await alice.send('comments:replies', { video_id: 'old-video', parent_id: 'parent123' })).response.stale, true);
+  assert.equal(JSON.stringify(bob.frames).includes('Private reply'), false, 'reply pages stay private to the requesting viewer');
   assert.equal((await storage.exec('SELECT count FROM test_room_writes'))[0].count, 0, 'private comment pagination must not write room state');
   const directPreview = await alice.send('preview_url', { url: 'https://example.com/private-preview.mp4' });
   assert.equal(directPreview.response.preview.title, 'private-preview.mp4');

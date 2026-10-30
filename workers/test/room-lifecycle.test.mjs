@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { newRoom, nextDeadline } from '../src/room-state.mjs';
-import { idleTimeout, planIdle, touchIdle, expireIdle, reconcileConnections } from '../src/room-lifecycle.mjs';
+import { idleTimeout, planIdle, touchIdle, expireIdle, reconcileConnections, upgradeIdlePolicy } from '../src/room-lifecycle.mjs';
 import { joinPeer, finalizeLeaves } from '../src/peers.mjs';
 
 test('idle expiry is one-shot and retains queue, history, API key and learned device state', () => {
@@ -44,4 +44,20 @@ test('hard restart reconciles orphaned transports once, while hibernating live s
   assert.equal(finalizeLeaves(recovered, 7000).state.users.alice.connected, false);
   const rejoined = joinPeer(recovered, 'alice', 'Alice', false, 6000).state;
   assert.deepEqual(rejoined.pending_leaves, {});
+});
+
+test('empty rooms retain their capacity for exactly24 hours before one-shot retirement', () => {
+  assert.equal(idleTimeout, 24 * 60 * 60 * 1000);
+  const room = newRoom('retained', 1000);
+  assert.equal(expireIdle(room, 1000 + 24 * 60 * 60 * 1000 - 1), room);
+  assert.equal(expireIdle(room, 1000 + 24 * 60 * 60 * 1000).api_key, room.api_key);
+});
+
+test('existing eight-hour deadlines upgrade once without extending occupied or already-retired rooms', () => {
+  const old = { ...newRoom('legacy', 1000), idle_timeout_ms: undefined, empty_deadline: 1000 + 8 * 3600000 };
+  const upgraded = upgradeIdlePolicy(old);
+  assert.equal(upgraded.empty_deadline, 1000 + 24 * 3600000);
+  assert.equal(upgradeIdlePolicy(upgraded), upgraded);
+  assert.equal(upgradeIdlePolicy({ ...old, empty_deadline: null }).empty_deadline, null);
+  assert.equal(upgradeIdlePolicy(null), null);
 });

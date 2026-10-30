@@ -45,7 +45,14 @@ export class RoomChannel {
         method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tab_id: this.tabId }), signal: this.abort.signal,
       });
-      if (!response.ok) throw new Error(response.status === 429 ? 'Too many connection attempts. Retrying shortly.' : 'Could not establish your room session.');
+      if (!response.ok) {
+        if (response.status === 429) {
+          this.attempt = Math.max(this.attempt, 5);
+          const result = await response.json().catch(() => ({}));
+          throw new Error(typeof result.error === 'string' ? result.error : 'Too many connection attempts. Retrying shortly.');
+        }
+        throw new Error('Could not establish your room session.');
+      }
       const session = await response.json();
       if (this.stopped || generation !== this.generation) return;
       this.session = session;

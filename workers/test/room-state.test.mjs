@@ -14,7 +14,7 @@ test('public snapshots never include API keys or transport/internal decision sta
 
 test('only actual state-transition deadlines schedule alarms, not periodic sync ticks', () => {
   const state = newRoom('abc123', 1000);
-  assert.equal(nextDeadline(state), 1000 + 8 * 60 * 60 * 1000);
+  assert.equal(nextDeadline(state), 1000 + 24 * 60 * 60 * 1000);
   assert.equal(nextDeadline({ ...state, empty_deadline: null, idle_expired_at: 30000000 }), null);
   assert.equal(nextDeadline({ ...state, ready_deadline: 3500, advance_deadline: 6000 }), 3500);
   assert.equal(nextDeadline({ ...state, pending_leaves: { a: 2500 } }), 2500);

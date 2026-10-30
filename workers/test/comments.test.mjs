@@ -24,11 +24,11 @@ test('YouTube comment pagination retains legacy fields and plain text without ex
     assert.equal(params.get('pageToken'), 'next');
     assert.equal(params.get('textFormat'), 'plainText');
     assert.equal(params.get('maxResults'), '20');
-    return Response.json({ items: [{ snippet: { topLevelComment: { snippet: {
+    return Response.json({ items: [{ snippet: { topLevelComment: { id: 'parent123', snippet: {
       authorDisplayName: 'Viewer', authorProfileImageUrl: 'https://example.com/avatar.jpg', textDisplay: '<b>1:23</b>', likeCount: 5, publishedAt: '2026-10-29T00:00:00Z',
     } }, totalReplyCount: 2 } }], nextPageToken: 'more', pageInfo: { totalResults: 42 } });
   } });
-  assert.deepEqual(result, { video_id: 'video123', comments: [{ author: 'Viewer', author_avatar: 'https://example.com/avatar.jpg', text: '<b>1:23</b>', likes: 5, published_at: '2026-10-29T00:00:00Z', reply_count: 2 }], next_page_token: 'more', total_count: 42 });
+  assert.deepEqual(result, { video_id: 'video123', comments: [{ id: 'parent123', author: 'Viewer', author_avatar: 'https://example.com/avatar.jpg', text: '<b>1:23</b>', likes: 5, published_at: '2026-10-29T00:00:00Z', reply_count: 2 }], next_page_token: 'more', total_count: 42 });
   assert.equal(JSON.stringify(result).includes(env.YOUTUBE_API_KEY), false);
   const disabled = await fetchComments('disabled', null, env, { fetcher: async () => Response.json({ error: { errors: [{ reason: 'commentsDisabled' }] } }, { status: 403 }) });
   assert.deepEqual(disabled.comments, []);
@@ -88,5 +88,30 @@ test('a delayed stale cache miss cannot issue a duplicate concurrent provider re
     youtubeData('videos', { id: 'cache-race' }, env, options),
     youtubeData('videos', { id: 'cache-race' }, env, options),
   ]);
+  assert.equal(calls, 1);
+});
+
+test('reply pages use a validated parent ID, bounded plain text and pagination', async () => {
+  const { fetchCommentReplies } = await import('../src/comments.mjs');
+  let calls = 0;
+  const options = { fetcher: async url => {
+    calls++;
+    const parsed = new URL(url);
+    assert.equal(parsed.pathname, '/youtube/v3/comments');
+    assert.equal(parsed.searchParams.get('parentId'), 'parent123');
+    assert.equal(parsed.searchParams.get('pageToken'), 'next');
+    assert.equal(parsed.searchParams.get('textFormat'), 'plainText');
+    assert.equal(parsed.searchParams.get('maxResults'), '20');
+    return Response.json({ items: [{ id: 'reply123', snippet: { authorDisplayName: 'Reply author', textDisplay: '<script>unsafe</script>', likeCount: 2 } }], nextPageToken: 'more', pageInfo: { totalResults: 21 } });
+  } };
+  const result = await fetchCommentReplies('video123', 'parent123', 'next', env, options);
+  assert.equal(result.parent_id, 'parent123');
+  assert.equal(result.video_id, 'video123');
+  assert.equal(result.comments[0].id, 'reply123');
+  assert.equal(result.comments[0].text, '<script>unsafe</script>');
+  assert.equal(result.next_page_token, 'more');
+  assert.equal(JSON.stringify(result).includes(env.YOUTUBE_API_KEY), false);
+  assert.equal((await fetchCommentReplies('video123', 'https://evil.test', null, env, options)).error, 'invalid_comments_request');
+  assert.equal((await fetchCommentReplies('video123', 'parent123', 'x'.repeat(2049), env, options)).error, 'invalid_comments_request');
   assert.equal(calls, 1);
 });

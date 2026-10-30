@@ -16,7 +16,7 @@ import { finalizeLeaves } from './peers.mjs';
 import { RoomMetadata } from './room-metadata.mjs';
 import { advanceRound } from './room-rounds.mjs';
 import { PoolPicks, enqueuePick } from './pool-picks.mjs';
-import { planIdle, touchIdle, expireIdle, reconcileConnections } from './room-lifecycle.mjs';
+import { planIdle, touchIdle, expireIdle, reconcileConnections, hasViewers, upgradeIdlePolicy } from './room-lifecycle.mjs';
 export { VideoPool } from './pool-object.mjs';
 
 const missingKey = 'Missing API key. Provide Authorization: Bearer <token> header or api_key query param.';
@@ -25,13 +25,15 @@ export class Room extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.store = new RoomStore(ctx.storage);
-    this.room = this.store.load();
+    const stored = this.store.load();
+    this.room = upgradeIdlePolicy(stored);
+    this.admission = null;
     this.sockets = new RoomSockets(this);
     this.metadata = new RoomMetadata(this);
     this.poolPicks = new PoolPicks(this);
     const liveIds = new Set(ctx.getWebSockets().filter(socket => socket.readyState === 1).map(socket => socket.deserializeAttachment()).filter(peer => peer?.joined).map(peer => peer.userId));
     const recovered = reconcileConnections(this.room, liveIds, Date.now());
-    if (recovered !== this.room) ctx.blockConcurrencyWhile(() => this.persist(recovered));
+    if (recovered !== stored) ctx.blockConcurrencyWhile(() => this.persist(recovered));
   }
 
   async importLegacy(record) {
@@ -44,7 +46,22 @@ export class Room extends DurableObject {
     return result;
   }
 
-  webSocketMessage(socket, message) { return this.sockets.message(socket, message); }
+  async ensureAdmission() {
+    if (this.admission) return true;
+    return this.ctx.blockConcurrencyWhile(async () => {
+      if (this.admission) return true;
+      const admission = await this.env.POOL.getByName('global').admitRoom(this.room.room_id);
+      if (!admission) return false;
+      this.admission = admission;
+      if (!hasViewers(this.room) && (this.room.empty_deadline == null || this.room.empty_deadline <= Date.now())) await this.persist(touchIdle(this.room, Date.now()));
+      return true;
+    });
+  }
+
+  async webSocketMessage(socket, message) {
+    if (!await this.ensureAdmission()) { socket.close(1013, 'Server is at its 100-room capacity. Try again later.'); return; }
+    return this.sockets.message(socket, message);
+  }
   webSocketClose(socket) { return this.sockets.close(socket); }
   webSocketError(socket) { return this.sockets.close(socket); }
 
@@ -66,6 +83,7 @@ export class Room extends DurableObject {
     const url = new URL(request.url);
     try {
       if (url.pathname === '/__socket' && request.headers.get('Upgrade')?.toLowerCase() === 'websocket') {
+        if (this.room && !await this.ensureAdmission()) return json({ error: 'Server is at its 100-room capacity. Try again later.' }, 429);
         return this.sockets.upgrade(url.searchParams.get('owner'), url.searchParams.get('role'), url.searchParams.get('site_host'), url.searchParams.get('connection'));
       }
       if (request.method === 'POST' && url.pathname === '/__http_message') {
@@ -74,21 +92,32 @@ export class Room extends DurableObject {
           return socket.readyState === 1 && peer?.role === 'browser' && peer.ownerId === url.searchParams.get('owner');
         });
         if (!socket) return json({ error: 'Connection closed.' }, 409);
+        if (!await this.ensureAdmission()) { socket.close(1013, 'Server is at capacity.'); return json({ error: 'Server is at its 100-room capacity. Try again later.' }, 429); }
         const body = await readJson(request, 70000);
         if (typeof body.frame !== 'string') return json({ error: 'Invalid frame.' }, 400);
         await this.sockets.message(socket, body.frame);
         return json({ accepted: true });
       }
-      if (request.method === 'GET' && url.pathname === '/__exists') return json({ exists: this.room !== null });
+      if (request.method === 'GET' && url.pathname === '/__exists') {
+        if (this.room && !await this.ensureAdmission()) return json({ error: 'Server is at its 100-room capacity. Try again later.' }, 429);
+        return json({ exists: this.room !== null });
+      }
       if (request.method === 'POST' && url.pathname === '/__create') {
-        if (this.room) return json({ error: 'Room already exists.' }, 409);
-        const state = newRoom(url.searchParams.get('id'), Date.now());
-        await this.persist(state);
-        return json({ room_id: state.room_id, api_key: state.api_key }, 201);
+        return this.ctx.blockConcurrencyWhile(async () => {
+          if (this.room) return json({ error: 'Room already exists.' }, 409);
+          const id = url.searchParams.get('id');
+          const admission = await this.env.POOL.getByName('global').admitRoom(id);
+          if (!admission) return json({ error: 'Server is at its 100-room capacity. Try again later.' }, 429);
+          this.admission = admission;
+          const state = newRoom(id, Date.now());
+          await this.persist(state);
+          return json({ room_id: state.room_id, api_key: state.api_key }, 201);
+        });
       }
       const token = apiToken(request);
       if (!token) return json({ error: missingKey }, 401);
       if (!this.room || !await matchesKey(this.room.api_key, token)) return json({ error: 'Invalid API key for this room.' }, 401);
+      if (!await this.ensureAdmission()) return json({ error: 'Server is at its 100-room capacity. Try again later.' }, 429);
       const limiter = request.method === 'GET' ? this.env.API_READ_LIMITER : this.env.API_MUTATE_LIMITER;
       if (!(await limiter.limit({ key: token })).success) return json({ error: 'Rate limited. Slow down.' }, 429);
       const params = ['POST', 'PUT'].includes(request.method) ? await readJson(request) : {};
@@ -104,24 +133,31 @@ export class Room extends DurableObject {
   }
 
   async alarm() {
-    if (!this.room) return;
-    const now = Date.now();
-    let result = expireReady(this.room, this.room.ready_item_id, now);
-    const events = [...result.events];
-    result = expireAdvance(result.state, now);
-    events.push(...result.events);
-    result = finalizeLeaves(result.state, now);
-    events.push(...result.events);
-    result.state = expireIdle(result.state, now);
-    result = advanceRound(result.state, now);
-    events.push(...result.events);
-    result.state = this.metadata.enqueue(result.state, result.metadata_item, now);
-    if (result.picked_external_id) result.state = enqueuePick(result.state, result.picked_external_id, now);
-    const metadata = this.metadata.prepare(result.state, now);
-    await this.persist(metadata.state);
-    this.sockets.broadcast(events, events.length > 0);
-    if (metadata.jobs.length) this.ctx.waitUntil(this.metadata.finish(metadata.jobs));
-    if (this.room.pool_pick_deadline != null) this.ctx.waitUntil(this.poolPicks.flush());
+    return this.ctx.blockConcurrencyWhile(async () => {
+      if (!this.room) return;
+      const now = Date.now();
+      let result = expireReady(this.room, this.room.ready_item_id, now);
+      const events = [...result.events];
+      result = expireAdvance(result.state, now);
+      events.push(...result.events);
+      result = finalizeLeaves(result.state, now);
+      events.push(...result.events);
+      result.state = expireIdle(result.state, now);
+      result = advanceRound(result.state, now);
+      events.push(...result.events);
+      result.state = this.metadata.enqueue(result.state, result.metadata_item, now);
+      if (result.picked_external_id) result.state = enqueuePick(result.state, result.picked_external_id, now);
+      const metadata = this.metadata.prepare(result.state, now);
+      await this.persist(metadata.state);
+      if (this.room.idle_expired_at != null && !hasViewers(this.room)) {
+        await this.env.POOL.getByName('global').releaseRoom(this.room.room_id);
+        this.admission = null;
+        for (const socket of this.ctx.getWebSockets()) socket.close(1000, 'Empty room retired; saved data retained.');
+      }
+      this.sockets.broadcast(events, events.length > 0);
+      if (metadata.jobs.length) this.ctx.waitUntil(this.metadata.finish(metadata.jobs));
+      if (this.room.pool_pick_deadline != null) this.ctx.waitUntil(this.poolPicks.flush());
+    });
   }
 }
 
@@ -159,7 +195,9 @@ export default {
         const id = sessionRoute[1];
         const ticket = await roomTicket(env.TOKEN_SECRET, request, id, params.tab_id, Date.now(), env);
         const stub = env.ROOMS.get(env.ROOMS.idFromName(id));
-        const { exists } = await (await stub.fetch('https://room.internal/__exists')).json();
+        const existence = await stub.fetch('https://room.internal/__exists');
+        if (!existence.ok) return existence;
+        const { exists } = await existence.json();
         if (!exists) {
           if (!(await env.CREATE_LIMITER.limit({ key: ip })).success) return json({ error: 'Rate limited. Slow down.' }, 429);
           const created = await stub.fetch(`https://room.internal/__create?id=${id}`, { method: 'POST' });
@@ -176,8 +214,15 @@ export default {
       for (let attempt = 0; attempt < 3; attempt++) {
         const bytes = crypto.getRandomValues(new Uint8Array(8));
         const id = Array.from(bytes, byte => '0123456789abcdefghijklmnopqrstuvwxyz'[byte % 36]).join('');
+        const registry = env.POOL.getByName('global');
+        const reservation = await registry.reserveRoom(id);
+        if (!reservation) return json({ error: 'Server is at its 100-room capacity. Try again later.' }, 429);
+        if (reservation.collision) continue;
         const stub = env.ROOMS.get(env.ROOMS.idFromName(id));
+        // An interrupted response may follow a successful admission. Keep its
+        // slot; unconfirmed reservations expire without freeing a live room.
         const created = await stub.fetch(`https://room.internal/__create?id=${id}`, { method: 'POST' });
+        if (created.status !== 201) await registry.releaseRoom(id, reservation.token);
         if (created.status === 409) continue;
         if (created.status !== 201) return created;
         const data = await created.json();

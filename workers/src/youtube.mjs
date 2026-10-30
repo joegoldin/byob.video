@@ -16,7 +16,7 @@ async function write(cache, key, value, ttl) {
 
 export async function youtubeData(resource, params, env, { fetcher = fetch, cache = globalThis.caches?.default, ttl = 900, now = Date.now() } = {}) {
   if (!env.YOUTUBE_API_KEY) return { error: 'not_configured' };
-  if (!['videos', 'commentThreads', 'playlistItems', 'playlists'].includes(resource)) throw new Error('invalid_youtube_resource');
+  if (!['videos', 'commentThreads', 'comments', 'playlistItems', 'playlists'].includes(resource)) throw new Error('invalid_youtube_resource');
   const url = new URL(`https://www.googleapis.com/youtube/v3/${resource}`);
   url.search = new URLSearchParams({ ...params, key: env.YOUTUBE_API_KEY });
   // Register before hashing/cache awaits so even fast responses coalesce.

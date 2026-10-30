@@ -119,7 +119,7 @@ INSERT/UPDATE triggers observe zero room writes during ordinary drift reports;
 a visibility mutation is the positive control for that instrumentation. This
 is separate from rendered-browser/player quality, which remains a release gate.
 
-Idle retirement uses one eight-hour deadline after creation, the last real
+Idle retirement uses one24-hour deadline after creation, the last real
 viewer leaves, or a headless API mutation. API actors are not live transports.
 Retirement clears transient presence, not the room ID/API key, queue, history,
 learned device state or pending durable work. It does not rearm itself. Native
@@ -128,7 +128,24 @@ retirement must not delete the persisted room. The old persistence service also
 prunes 30-day snapshots. Native retirement deliberately retains durable room
 data instead of replaying that startup deletion: migration does not discard
 rooms based on age. Any future durable-data deletion needs a separate explicit
-retention policy; the eight-hour transient cleanup is not that policy.
+retention policy; the24-hour transient cleanup is not that policy. You explicitly
+chose to retain saved queues/history/API keys when releasing an empty-room slot.
+Existing eight-hour deadlines upgrade once while preserving the start of the
+empty period.
+
+The shared pool Durable Object also owns a SQLite admission registry, with atomic
+transactions limiting active rooms to100 globally. Creating or reactivating a
+room requires admission; named browser bootstrap, REST and hibernated socket
+messages cannot bypass it. Reservations for interrupted creates expire after
+one minute unless confirmed; confirmed active slots do not expire merely because
+they are old. Only the room's one-shot empty alarm releases its active slot.
+A cached admission avoids registry RPC on every ordinary drift message.
+
+Each room accepts at most32 sockets, including browser and extension sockets.
+Exceeding60 messages in a one-second per-socket window closes that socket with
+code1008. Existing per-IP create/join, API and provider limits remain in place.
+These bounds reduce fan-out and abuse exposure; they are not a Cloudflare billing
+budget or guarantee of a fixed maximum bill.
 
 A hard-kill Wrangler test now joins a real browser channel, kills the whole
 runtime process group without a close handshake, restarts with the same SQLite

@@ -16,7 +16,7 @@ export function newRoom(roomId, now, apiKey = newApiKey()) {
     sb_settings: { ...defaultSponsorSettings }, last_seek_at: {}, activity_log: [],
     drift_samples: {}, user_sync_states: {}, last_user_seek_at_global: 0,
     media_loaded_for: {}, ready_deadline: null, ready_item_id: null,
-    advance_deadline: null, pending_leaves: {}, empty_deadline: now + idleTimeout, idle_expired_at: null,
+    advance_deadline: null, pending_leaves: {}, empty_deadline: now + idleTimeout, idle_expired_at: null, idle_timeout_ms: idleTimeout,
     open_tabs: {}, ready_tabs: {}, round: null, event_counts: {},
     pending_metadata: [], metadata_deadline: null,
     pending_pool_picks: [], pool_pick_deadline: null,

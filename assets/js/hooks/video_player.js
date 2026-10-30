@@ -641,9 +641,11 @@ const VideoPlayer = {
         this._startSeekDetector();
         this._applyRoomRate();
       },
-      onStateChange: (stateName) => {
+      onStateChange: (stateName, programmatic = false) => {
+        // Direct controls have exact event ownership; a time window also
+        // swallows a real resume immediately after a remote pause.
+        if (programmatic) { this.suppression.shouldSuppress?.(stateName); return; }
         if (stateName === "playing") {
-          if (this.suppression.shouldSuppress("playing")) return;
           this.expectedPlayState = "playing";
           const position = this.player.getCurrentTime();
           this.pushEvent(LV_EVT.EV_VIDEO_PLAY, { position });
@@ -652,7 +654,6 @@ const VideoPlayer = {
           this.reconcile.pauseFor(1000);
           this.reconcile.start();
         } else if (stateName === "paused") {
-          if (this.suppression.shouldSuppress("paused")) return;
           this.expectedPlayState = "paused";
           const position = this.player.getCurrentTime();
           this.pushEvent(LV_EVT.EV_VIDEO_PAUSE, { position });
@@ -919,7 +920,7 @@ const VideoPlayer = {
   _retryPlayOrShowOverlay(position) {
     const checkAndRetry = (attempt) => {
       setTimeout(() => {
-        if (this._embedBlocked || this._playerSettled) return;
+        if (this._embedBlocked || this._playerSettled || this.expectedPlayState !== "playing") return;
         let isPlaying = false;
         if (this.sourceType === "youtube") {
           isPlaying = this.player?.getState?.() === "playing" ||

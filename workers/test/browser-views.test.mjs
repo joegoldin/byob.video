@@ -76,3 +76,24 @@ test('optional preview and comment failures have local context and preserve vide
   const comments = String(views.commentsPanel({ comments: [], error: 'comments_disabled' }));
   assert.ok(comments.includes('Comments unavailable: comments disabled'));
 });
+
+test('preview actions share the title row and align on the right', () => {
+  const preview = String(views.previewPanel({ preview: { title: 'Video', source_type: 'youtube' } }));
+  assert.ok(preview.includes('data-preview-row'));
+  assert.ok(preview.includes('ml-auto shrink-0'));
+  assert.equal(preview.includes('px-3 pb-3'), false);
+});
+
+test('queue and history expose original context-menu actions with escaped URLs', () => {
+  const item = { id: 'a', url: 'https://video.test/<script>', title: 'Video' };
+  assert.ok(String(views.queuePanel({ queue: [item], current_index: 0 })).includes('data-context-kind="queue"'));
+  assert.ok(String(views.historyPanel([{ item }])).includes('data-context-kind="history"'));
+  const current = String(views.contextMenu(item, { current: true, index: 0 }));
+  assert.ok(current.includes('Restart'));
+  assert.equal(current.includes('Remove from Queue'), false);
+  const queued = String(views.contextMenu(item, { index: 1 }));
+  assert.ok(queued.includes('Play Now') && queued.includes('Remove from Queue'));
+  const history = String(views.contextMenu(item, { history: true }));
+  assert.ok(history.includes('Add to Queue') && history.includes('Copy URL'));
+  assert.equal(history.includes('<script>'), false);
+});

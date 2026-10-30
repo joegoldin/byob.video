@@ -1,4 +1,11 @@
-export const idleTimeout = 8 * 60 * 60 * 1000;
+export const idleTimeout = 24 * 60 * 60 * 1000;
+
+export function upgradeIdlePolicy(state) {
+  if (!state || state.idle_timeout_ms === idleTimeout) return state;
+  // Existing v7 snapshots used eight hours; preserve when the empty period began.
+  return { ...state, idle_timeout_ms: idleTimeout,
+    empty_deadline: state.empty_deadline == null ? null : state.empty_deadline + idleTimeout - 8 * 3600000 };
+}
 
 export function hasViewers(state) {
   return !!state && Object.entries(state.users).some(([id, user]) => !id.startsWith('api:') && user.connected);

@@ -1,11 +1,13 @@
 import { DurableObject } from 'cloudflare:workers';
 import { PoolStore } from './pool-store.mjs';
+import { RoomCapacity } from './room-capacity.mjs';
 import { fetchPoolPage, validateCandidates, subreddits, curatedPlaylists } from './pool-sources.mjs';
 
 export class VideoPool extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.store = new PoolStore(ctx.storage);
+    this.capacity = new RoomCapacity(ctx.storage);
     ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS pool_refresh (id INTEGER PRIMARY KEY CHECK(id = 1), state_json TEXT NOT NULL)');
     const row = ctx.storage.sql.exec('SELECT state_json FROM pool_refresh WHERE id = 1').toArray()[0];
     this.refresh = row ? JSON.parse(row.state_json) : { hourly_at: 0, daily_at: 0, jobs: [], lease_until: null };
@@ -13,6 +15,10 @@ export class VideoPool extends DurableObject {
   }
 
   importLegacy(entries) { return this.store.importLegacy(entries); }
+
+  reserveRoom(roomId) { return this.capacity.acquire(roomId, Date.now(), true); }
+  admitRoom(roomId) { return this.capacity.acquire(roomId, Date.now()); }
+  releaseRoom(roomId, token = null) { this.capacity.release(roomId, token); }
 
   async saveRefresh() {
     this.ctx.storage.sql.exec('INSERT INTO pool_refresh(id, state_json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET state_json = excluded.state_json', JSON.stringify(this.refresh));
