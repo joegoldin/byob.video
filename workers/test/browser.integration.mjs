@@ -556,6 +556,22 @@ try {
   await commentPage.screenshot({ path: join(screenshots, 'description-mobile.png'), fullPage: true });
   console.log('PASS: description metadata, safe channel link, chapter timestamps and mobile layout');
 
+  await alice.locator('#url-input').fill(`http://localhost:${media.address().port}/fixture.webm?next=paused-removal`);
+  await alice.locator('#url-preview button[value="queue"]').click();
+  for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelectorAll('[data-queue-idx]').length === 2);
+  await alice.locator('#player video').evaluate(video => video.pause());
+  for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.paused);
+  assert.equal((await roomState()).play_state, 'paused');
+  await bob.locator('[data-queue-idx="0"] [data-action="queue-remove"]').click();
+  for (const page of [alice, bob]) {
+    await page.waitForFunction(() => {
+      const video = document.querySelector('#player video');
+      return document.querySelectorAll('[data-queue-idx]').length === 1 && video?.currentSrc.includes('next=paused-removal') && !video.paused && video.currentTime > 0;
+    }, null, { timeout: 10000 });
+  }
+  assert.equal((await roomState()).play_state, 'playing');
+  console.log('PASS: removing the paused current item starts its successor on both real players');
+
   }
   assert.deepEqual(errors, []);
   console.log(process.env.BYOB_THEATER_ONLY === '1' ? 'PASS: desktop/mobile theater layout, compact toolbar and wheel detent' : 'PASS: rendered home/create/join, two real direct-video players, play/pause/rate propagation, private settings and desktop/mobile layout');

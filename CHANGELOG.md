@@ -3,6 +3,15 @@
 
 ---
 
+# v7.2.2 (2026-11-03)
+
+- Removing the current video now advances to the next queued item and starts it
+  through the normal player-readiness handshake, including when paused.
+- End playback cleanly when the final current item is removed; leave noncurrent
+  removals alone and cancel stale autoplay/readiness deadlines.
+
+---
+
 # v7.2.1 (2026-11-03)
 
 - Restore the settings attribution footer below Stats for nerds and autoplay help,

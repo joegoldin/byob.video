@@ -284,6 +284,22 @@ try {
   assert.equal(idleState.deadline, null);
   assert.equal(idleState.alarm, null, 'idle retirement is one-shot, not a recurring room timer');
   assert.equal((await request(`/api/rooms/${idle.room_id}`, { key: idle.api_key })).data.room_id, idle.room_id, 'idle expiry must preserve the durable room and API key');
+  const removalRoom = (await request('/api/rooms', { method: 'POST' })).data;
+  const removalPath = `/api/rooms/${removalRoom.room_id}`;
+  const removalKey = removalRoom.api_key;
+  const removalTicket = await request(`/session/${removalRoom.room_id}`, { method: 'POST', body: { tab_id: 'removal' } });
+  const remover = await connect(removalTicket, 'browser', 'Removal regression');
+  for (const id of ['abcdefghijk', 'lmnopqrstuv']) await request(`${removalPath}/queue`, { method: 'POST', key: removalKey, body: { url: `https://youtu.be/${id}` } });
+  const removalQueue = (await request(`${removalPath}/queue`, { key: removalKey })).data.queue;
+  assert.equal((await remover.send('video:pause', { position: 12 })).status, 'ok');
+  assert.equal((await request(removalPath, { key: removalKey })).data.play_state, 'paused');
+  assert.equal((await remover.send('queue:remove', { item_id: removalQueue[0].id })).status, 'ok');
+  await remover.wait(frame => frame[3] === 'video:change' && frame[4].media_item.id === removalQueue[1].id);
+  assert.equal((await remover.send('video:loaded', { item_id: removalQueue[1].id })).status, 'ok');
+  assert.equal((await request(removalPath, { key: removalKey })).data.play_state, 'playing');
+  await request(`${removalPath}/queue/${removalQueue[1].id}`, { method: 'DELETE', key: removalKey });
+  assert.equal((await request(removalPath, { key: removalKey })).data.play_state, 'ended');
+  console.log('PASS: paused-current removal advances through WebSocket readiness; REST removal of the final current item ends cleanly');
   console.log('PASS: real channels, media services, shared pool and rounds, hibernation, idle retirement and zero recurring idle alarms');
 } finally {
   for (const socket of connections) if (socket.readyState === 1) socket.close(1000, 'Test complete');

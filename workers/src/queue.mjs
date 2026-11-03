@@ -41,14 +41,18 @@ export function playIndex(state, index, now) {
   return startFirst({ ...state, queue: [item, ...remaining] }, now);
 }
 
-export function removeItem(state, id) {
+export function removeItem(state, id, now) {
   const index = state.queue.findIndex(item => item.id === id);
   if (index < 0) return { state, events: [] };
-  let current_index = state.current_index;
-  if (current_index !== null) {
-    if (index === current_index) current_index = null;
-    else if (index < current_index) current_index--;
+  if (index === state.current_index) {
+    // Removal is a skip, including while paused; load the successor through
+    // the normal readiness handshake instead of leaving no selected player.
+    const result = advanceQueue(state, now);
+    if (state.advance_deadline !== null) result.events.unshift(['autoplay_countdown_cancelled', {}]);
+    return result;
   }
+  let current_index = state.current_index;
+  if (current_index !== null && index < current_index) current_index--;
   const next = { ...state, queue: state.queue.filter(item => item.id !== id), current_index };
   // A removed item must not later resume via its old ready-check deadline.
   if (current_index === null) {

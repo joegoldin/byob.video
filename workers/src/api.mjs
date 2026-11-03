@@ -43,7 +43,7 @@ export function executeRoomApi(state, method, path, params, now, selfHosts = [])
     const mode = params.play_now !== false && params.play_now != null ? 'now' : 'queue';
     return { ...result(enqueue(state, [item], mode, now), 'Added to queue.'), metadata_item: item };
   }
-  if (method === 'DELETE' && path.startsWith('/queue/')) return result(removeItem(state, decodeURIComponent(path.slice(7))), 'Removed from queue.');
+  if (method === 'DELETE' && path.startsWith('/queue/')) return result(removeItem(state, decodeURIComponent(path.slice(7)), now), 'Removed from queue.');
   if (method === 'PUT' && path === '/queue/reorder') return result(reorderQueue(state, params.from, params.to), 'Queue reordered.');
   if (method === 'POST' && path === '/skip') {
     const advanced = advanceQueue(state, now);

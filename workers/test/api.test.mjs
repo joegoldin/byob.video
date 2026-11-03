@@ -27,6 +27,21 @@ test('REST queue, playback and user operations retain response envelopes and fie
   assert.equal(deleted.body.data.message, 'Removed from queue.');
 });
 
+test('REST deletion of the paused current item selects the successor with a fresh readiness deadline', () => {
+  let state = newRoom('abc123', 1000);
+  for (const id of ['abcdefghijk', 'lmnopqrstuv']) state = executeRoomApi(state, 'POST', '/queue', { url: `https://youtu.be/${id}` }, 2000).state;
+  state = executeRoomApi(state, 'POST', '/pause', { position: 42 }, 3000).state;
+  const nextId = state.queue[1].id;
+  const removed = executeRoomApi(state, 'DELETE', `/queue/${state.queue[0].id}`, {}, 5000);
+  assert.equal(removed.status, 200);
+  assert.equal(removed.state.current_index, 0);
+  assert.equal(removed.state.queue[0].id, nextId);
+  assert.equal(removed.state.ready_item_id, nextId);
+  assert.equal(removed.state.ready_deadline, 7500);
+  assert.equal(removed.state.current_time, 0);
+  assert.ok(removed.events.some(([event]) => event === 'video_changed'));
+});
+
 test('REST read responses never contain the room API key', () => {
   const state = newRoom('abc123', 1000);
   for (const path of ['', '/queue', '/users']) assert.equal(JSON.stringify(executeRoomApi(state, 'GET', path, {}, 2000).body).includes(state.api_key), false);

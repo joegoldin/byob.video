@@ -42,7 +42,7 @@ export function roomCommand(state, peer, event, payload, now) {
       result.events.unshift(['autoplay_countdown_cancelled', {}]);
       return activity(result, 'skipped', null, null, now);
     }
-    case 'queue:remove': return removeItem(state, payload.item_id);
+    case 'queue:remove': return removeItem(state, payload.item_id, now);
     case 'queue:play_index': {
       const selected = index(payload.index);
       const result = playIndex(state, selected, now);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { enqueue, playIndex, removeItem, reorderQueue, videoEnded, advanceQueue, expireAdvance } from '../src/queue.mjs';
-import { transitionPlayback, expireReady } from '../src/playback.mjs';
+import { transitionPlayback, expireReady, mediaLoaded } from '../src/playback.mjs';
 
 function room(queue = []) {
   return {
@@ -40,11 +40,56 @@ test('reorder/removal tracks the playing item rather than a stale index', () => 
   const reordered = reorderQueue(room([a, b, c]), 0, 2).state;
   assert.deepEqual(reordered.queue, [b, c, a]);
   assert.equal(reordered.current_index, 2);
-  const removed = removeItem(reordered, 'b').state;
+  const removed = removeItem(reordered, 'b', 2000).state;
   assert.equal(removed.current_index, 1);
   assert.equal(removed.queue[removed.current_index].id, 'a');
-  assert.equal(removeItem(removed, 'a').state.current_index, null);
+  const next = removeItem(removed, 'a', 3000).state;
+  assert.equal(next.current_index, 0);
+  assert.equal(next.queue[next.current_index].id, 'c');
   assert.deepEqual(reorderQueue(removed, -1, 0).events, []);
+});
+
+test('removing the paused current item loads its successor and resumes after readiness', () => {
+  const paused = { ...room([a, b]), users: { viewer: { connected: true, hidden: false } },
+    play_state: 'paused', current_time: 42, playback_rate: 2, media_loaded_for: { viewer: 'a' } };
+  const removed = removeItem(paused, 'a', 2000);
+  assert.deepEqual(removed.state.queue, [b]);
+  assert.equal(removed.state.current_index, 0);
+  assert.equal(removed.state.ready_item_id, 'b');
+  assert.equal(removed.state.ready_deadline, 4500);
+  assert.equal(removed.state.current_time, 0);
+  assert.equal(removed.state.history[0].item.id, 'b');
+  assert.deepEqual(removed.state.media_loaded_for, {});
+  assert.ok(removed.events.some(([event, data]) => event === 'video_changed' && data.media_item.id === 'b'));
+  const ready = mediaLoaded(removed.state, 'viewer', 'b', 2100);
+  assert.equal(ready.state.play_state, 'playing');
+  assert.ok(ready.events.some(([event]) => event === 'sync_play'));
+});
+
+test('current removal cancels countdowns, ignores stale readiness and uses fallback autoplay', () => {
+  const original = { ...room([a, b]), advance_deadline: 6000, ready_item_id: 'a', ready_deadline: 3500 };
+  const removed = removeItem(original, 'a', 2000);
+  assert.equal(removed.state.advance_deadline, null);
+  assert.equal(removed.events[0][0], 'autoplay_countdown_cancelled');
+  assert.deepEqual(expireAdvance(removed.state, 6000).events, []);
+  assert.deepEqual(expireReady(removed.state, 'a', 4500).events, []);
+  assert.equal(expireReady(removed.state, 'b', 4500).state.play_state, 'playing');
+});
+
+test('removing another item preserves pause and readiness, while removing the final current item ends cleanly', () => {
+  const paused = { ...room([a, b]), play_state: 'paused', ready_item_id: 'a', ready_deadline: 3500 };
+  const remaining = removeItem(paused, 'b', 2000);
+  assert.equal(remaining.state.play_state, 'paused');
+  assert.equal(remaining.state.current_index, 0);
+  assert.equal(remaining.state.ready_deadline, 3500);
+  assert.deepEqual(remaining.events.map(([event]) => event), ['queue_updated']);
+  const ended = removeItem(remaining.state, 'a', 2100);
+  assert.deepEqual(ended.state.queue, []);
+  assert.equal(ended.state.play_state, 'ended');
+  assert.equal(ended.state.current_index, null);
+  assert.equal(ended.state.ready_deadline, null);
+  assert.ok(ended.events.some(([event]) => event === 'queue_ended'));
+  assert.equal(removeItem(paused, 'missing', 2000).state, paused);
 });
 
 test('manual selection cancels autoplay and cannot drop a different item when restarting current', () => {
@@ -74,7 +119,7 @@ test('replay cancels pending autoplay and removal cannot resurrect media through
   const replay = transitionPlayback(ended, 'play', 'user', 0, 102000).state;
   assert.deepEqual(expireAdvance(replay, 106000).events, []);
   const started = enqueue(room(), [a], 'now', 2000).state;
-  const removed = removeItem(started, 'a').state;
+  const removed = removeItem(started, 'a', 3000).state;
   assert.deepEqual(expireReady(removed, 'a', 4500).events, []);
 });
 
