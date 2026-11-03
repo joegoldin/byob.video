@@ -3,6 +3,15 @@
 
 ---
 
+# v7.1.3 (2026-11-03)
+
+- Restore the visible Theater mode label on the slim toolbar button and place it
+  left of the roulette, voting, settings and theme icons.
+- Give the URL input its own full-width row on small screens so the labeled
+  button does not crowd video URL entry.
+
+---
+
 # v7.1.2 (2026-11-03)
 
 - Replace unreliable native scroll snapping with an explicit desktop wheel/trackpad

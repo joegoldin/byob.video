@@ -194,6 +194,14 @@ try {
     try { await page.waitForFunction(() => document.getElementById('connection-status')?.textContent === ''); }
     catch (error) { throw new Error(`${error.message}; ${JSON.stringify({ errors, page: await page.locator('body').innerText() })}`); }
     assert.ok((await page.locator('#url-input').boundingBox()).width >= 160, 'URL input must remain usable on mobile');
+    assert.equal(await page.locator('#theater-label').innerText(), 'Theater mode');
+    const label = await page.locator('#theater-label').boundingBox();
+    assert.ok(label && label.width > 40 && label.height > 0, 'Theater mode label must remain visibly rendered');
+    const toggle = await page.locator('#theater-toggle').boundingBox();
+    for (const action of ['round-roulette', 'round-voting', 'settings', 'theme']) {
+      const icon = await page.locator(`#room-nav [data-action="${action}"]`).boundingBox();
+      assert.ok(toggle.x + toggle.width <= icon.x, `Theater mode must be left of ${action}`);
+    }
     assert.equal(await page.locator('[data-action="pause"]').count(), 0, 'No duplicate controls below the player');
     assert.equal(await page.locator('#video-tabs').isVisible(), false);
     assert.equal(await page.locator('#video-toolbar').isVisible(), false);

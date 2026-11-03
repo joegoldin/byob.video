@@ -125,7 +125,7 @@ html[data-byob-extension] .byob-no-ext { display: none !important; }
 .theater-mode #comments-panel, .theater-mode #description-panel { margin: 0.5rem 1rem; }
 
 .theater-toggle {
-  display: inline-flex; align-items: center; gap: 0.5rem; margin-left: auto;
+  display: inline-flex; align-items: center; gap: 0.35rem; white-space: nowrap;
   padding: 0.2rem 0.4rem; height: 1.5rem; border-radius: 0.4rem; font-size: 0.75rem; font-weight: 600;
   color: var(--color-base-content); background: var(--color-base-200);
   border: 1px solid color-mix(in oklch, var(--color-base-content) 18%, transparent);
