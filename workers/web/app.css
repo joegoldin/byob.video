@@ -140,7 +140,11 @@ html[data-byob-extension] .byob-no-ext { display: none !important; }
 .theater-toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) { .theater-toggle { transition: none; } }
 
+.empty-toolbar-below { display: none; }
+
 @media (max-width: 1023px) {
+  .theater-mode .empty-toolbar-above { display: none; }
+  .theater-mode .empty-toolbar-below { display: inline; }
   .theater-mode #player-sizer { order: -2; }
   .theater-mode #room-nav { order: -1; }
 }

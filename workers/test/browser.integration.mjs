@@ -207,6 +207,7 @@ try {
     assert.equal(await page.locator('#video-toolbar').isVisible(), false);
     assert.equal(await page.locator('#comments-panel').isVisible(), false);
     assert.equal(await page.locator('#description-panel').isVisible(), false);
+    assert.equal(await page.locator('#player').innerText(), 'Paste a URL above to start watching');
     const originalPlayer = await page.locator('#player').boundingBox();
     await page.evaluate(() => { window.__originalPlayer = document.getElementById('player'); });
     await page.locator('#theater-toggle').click();
@@ -215,6 +216,7 @@ try {
     assert.equal(theaterPlayer.width, page.viewportSize().width);
     assert.equal(theaterPlayer.height, page.viewportSize().height);
     assert.equal(theaterPlayer.y, 0);
+    assert.equal(await page.locator('#player').innerText(), `Paste a URL ${page === alice ? 'above' : 'below'} to start watching`);
     if (page === alice) {
       assert.ok((await page.locator('#room-nav').boundingBox()).y < 0, 'Desktop titlebar stays just above the viewport');
       await page.evaluate(() => window.scrollTo(0, 0));
@@ -264,6 +266,7 @@ try {
     await page.evaluate(() => Promise.all(document.getAnimations().map(animation => animation.finished)));
     assert.equal(await page.evaluate(() => window.__originalPlayer === document.getElementById('player')), true);
     assert.equal((await page.locator('#player').boundingBox()).width, originalPlayer.width);
+    assert.equal(await page.locator('#player').innerText(), 'Paste a URL above to start watching');
     await page.evaluate(() => window.scrollTo(0, 0));
 
     assert.ok(await page.locator('#users-panel .bg-success').count(), 'Connected users have a green status dot');

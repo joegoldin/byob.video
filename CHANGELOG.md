@@ -3,6 +3,13 @@
 
 ---
 
+# v7.1.4 (2026-11-03)
+
+- Make the empty-player prompt point above or below to match the toolbar position,
+  including mobile theater mode.
+
+---
+
 # v7.1.3 (2026-11-03)
 
 - Restore the visible Theater mode label on the slim toolbar button and place it
