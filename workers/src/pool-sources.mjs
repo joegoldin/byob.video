@@ -2,6 +2,9 @@ import { youtubeData } from './youtube.mjs';
 import { upstreamJson } from './upstream.mjs';
 import { durationSeconds } from './metadata.mjs';
 import { parseMediaUrl } from './media.mjs';
+import hackerTube from './data/hackertube.json' with { type: 'json' };
+
+export const hackerTubeSnapshot = Object.freeze({ ...hackerTube, ids: Object.freeze(hackerTube.ids) });
 
 export const subreddits = Object.freeze(['videos', 'mealtimevideos', 'deepintoyoutube', 'listentothis']);
 export const curatedPlaylists = Object.freeze([
@@ -21,6 +24,21 @@ function videoFields(video) {
 }
 
 export async function fetchPoolPage(job, env, options = {}) {
+  if (job.kind === 'hackertube' && job.detail === hackerTubeSnapshot.exported_at) {
+    const offset = job.token == null ? 0 : Number(job.token);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset % 50 !== 0 || offset >= hackerTubeSnapshot.ids.length ||
+        (job.token != null && String(offset) !== job.token)) throw new Error('invalid_hackertube_page');
+    const ids = hackerTubeSnapshot.ids.slice(offset, offset + 50);
+    const result = await youtubeData('videos', { part: 'snippet,contentDetails,status', id: ids.join(',') }, env, { ...options, ttl: 86400 });
+    if (result.error || !Array.isArray(result.data?.items)) return { entries: [] };
+    const requested = new Set(ids);
+    const entries = result.data.items.slice(0, 50).flatMap(video => {
+      if (!requested.has(video?.id) || video.status?.embeddable !== true || typeof video.snippet?.title !== 'string' || !video.snippet.title.trim()) return [];
+      return [{ ...videoFields(video), source_type: 'curated', source_detail: `hackertube:${hackerTubeSnapshot.exported_at}`,
+        external_id: video.id, thumbnail_url: `https://i.ytimg.com/vi/${video.id}/hqdefault.jpg`, score: null }];
+    });
+    return { entries, next_page_token: offset + 50 < hackerTubeSnapshot.ids.length ? String(offset + 50) : null };
+  }
   if (job.kind === 'trending') {
     const result = await youtubeData('videos', { part: 'snippet,contentDetails,status', chart: 'mostPopular', regionCode: 'US', maxResults: '50' }, env, { ...options, ttl: 3600 });
     return { entries: (result.data?.items ?? []).slice(0, 50).map((video, score) => ({ ...videoFields(video), source_type: 'trending', source_detail: 'US', external_id: video.id, score })) };

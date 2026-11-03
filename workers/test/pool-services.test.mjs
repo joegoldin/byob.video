@@ -22,6 +22,28 @@ test('pool source pages preserve source identity, duration and resumable curated
   assert.equal(curated.entries[0].channel, 'Owner');
 });
 
+test('HackerTube pages request only reviewed IDs and admit current embeddable YouTube metadata', async () => {
+  const page = await fetchPoolPage({ kind: 'hackertube', detail: '2026-10-31' }, env, { cache: null, fetcher: async url => {
+    const parsed = new URL(url);
+    assert.equal(parsed.origin, 'https://www.googleapis.com');
+    const ids = parsed.searchParams.get('id').split(',');
+    assert.equal(ids.length, 50);
+    assert.equal(ids[0], 'fNk_zzaMoSs');
+    return Response.json({ items: [
+      { id: ids[0], snippet: { title: 'Current title', channelTitle: 'Current channel' }, status: { embeddable: true }, contentDetails: { duration: 'PT8M' } },
+      { id: ids[1], status: { embeddable: false } },
+      { id: 'unlisted000', snippet: { title: 'Not requested' }, status: { embeddable: true } },
+    ] });
+  } });
+  assert.equal(page.entries.length, 1);
+  assert.equal(page.entries[0].source_type, 'curated');
+  assert.equal(page.entries[0].source_detail, 'hackertube:2026-10-31');
+  assert.equal(page.entries[0].title, 'Current title');
+  assert.equal(page.entries[0].duration_s, 480);
+  assert.equal(page.entries[0].thumbnail_url, 'https://i.ytimg.com/vi/fNk_zzaMoSs/hqdefault.jpg');
+  assert.equal(page.next_page_token, '50');
+});
+
 test('subreddit parsing admits YouTube links only, and candidate validation rejects known missing or unembeddable videos', async () => {
   const source = await fetchPoolPage({ kind: 'subreddit', detail: 'videos' }, {}, { fetcher: async (_url, options) => {
     assert.equal(options.headers.get('User-Agent'), 'byob.video/1.0 (+https://byob.video)');

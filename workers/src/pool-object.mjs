@@ -1,7 +1,7 @@
 import { DurableObject } from 'cloudflare:workers';
 import { PoolStore } from './pool-store.mjs';
 import { RoomCapacity } from './room-capacity.mjs';
-import { fetchPoolPage, validateCandidates, subreddits, curatedPlaylists } from './pool-sources.mjs';
+import { fetchPoolPage, validateCandidates, subreddits, curatedPlaylists, hackerTubeSnapshot } from './pool-sources.mjs';
 
 export class VideoPool extends DurableObject {
   constructor(ctx, env) {
@@ -33,6 +33,7 @@ export class VideoPool extends DurableObject {
       this.refresh.hourly_at = now + 3600000;
     }
     if (now >= this.refresh.daily_at) {
+      jobs.unshift({ kind: 'hackertube', detail: hackerTubeSnapshot.exported_at });
       jobs.push(...curatedPlaylists.map(detail => ({ kind: 'curated', detail })));
       this.refresh.daily_at = now + 86400000;
     }

@@ -3,6 +3,17 @@
 
 ---
 
+# v7.2.0 (2026-11-03)
+
+- Add 4,654 positively recommended, non-news HackerTube video IDs to the curated
+  random-video pool, with bounded YouTube metadata/embed validation and pagination.
+- Bundle only an offline, hash-reviewed ID snapshot; do not import upstream code,
+  free-form text, comments, arbitrary URLs or embeddings.
+- Credit HackerTube and open-index/hacker-news under ODC-By 1.0 in settings and
+  repository docs, with provenance, filtering, security limits and refresh guidance.
+
+---
+
 # v7.1.5 (2026-11-03)
 
 - Redesign the mobile room toolbar with safe-area/top padding, a full-width 48px

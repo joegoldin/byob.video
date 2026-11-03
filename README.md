@@ -27,6 +27,21 @@ playback speed stay synchronized across participants. No account required.
 - REST API for bots and integrations
 - HTTP fallback when WebSockets are unavailable
 
+## Random-video data and attribution
+
+Roulette and voting draw from a shared pool of trending videos, Reddit links and
+curated sources. Curated sources include **[HackerTube](https://hackertube.org)**
+recommendations, derived from **[open-index/hacker-news](https://huggingface.co/datasets/open-index/hacker-news)**
+and used under **[ODC-By 1.0](https://opendatacommons.org/licenses/by/1-0/)**.
+These projects are independent of BYOB.
+
+We bundle 4,654 reviewed video IDs, not upstream scripts, comments or model-written
+summaries. Current video metadata and embed permission come from the YouTube Data
+API. The application code license does not replace the dataset license.
+See the [data notice and security review](workers/src/data/README.md) for the
+snapshot hash, filtering, attribution, request budget and reproducible importer.
+Credits are also shown in room settings.
+
 ## How it works
 
 Cloudflare Workers serves the app. SQLite-backed Durable Objects manage room

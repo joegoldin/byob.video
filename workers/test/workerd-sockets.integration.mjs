@@ -249,6 +249,7 @@ try {
   await alice.wait(frame => frame[3] === 'round:finalized');
   assert.equal((await request(`${path}/queue`, { key })).data.queue.length, 3);
   const poolStorage = await mf.unsafeGetDurableObjectStorage('byob-test', 'VideoPool', { name: 'global' });
+  assert.ok((await poolStorage.exec("SELECT count(*) AS count FROM video_pool WHERE source_detail = 'hackertube:2026-10-31'"))[0].count > 0, 'the real refresh scheduler populates HackerTube in the shared curated pool');
   let picked;
   for (let attempt = 0; attempt < 40; attempt++) {
     picked = (await poolStorage.exec('SELECT last_picked_at FROM video_pool WHERE external_id = ?', winner))[0]?.last_picked_at;

@@ -295,13 +295,15 @@ try {
 
     assert.ok(await page.locator('#users-panel .bg-success').count(), 'Connected users have a green status dot');
     await page.screenshot({ path: join(screenshots, page === alice ? 'empty-desktop.png' : 'empty-mobile.png'), fullPage: true });
-    if (page === alice) {
-      await page.locator('[data-action="settings"]').click();
-      await page.waitForFunction(() => document.getElementById('room-api-key')?.value.length > 20);
-      assert.ok((await page.locator('#settings-modal .modal-box').boundingBox()).width <= 448);
-      await page.screenshot({ path: join(screenshots, 'settings.png'), fullPage: true, animations: 'disabled' });
-      await page.locator('[aria-label="Close settings"]').click();
+    await page.locator('[data-action="settings"]').click();
+    if (page === alice) await page.waitForFunction(() => document.getElementById('room-api-key')?.value.length > 20);
+    assert.ok((await page.locator('#settings-modal .modal-box').boundingBox()).width <= 448);
+    for (const [id, href] of [['hackertube-attribution', 'https://hackertube.org'], ['hacker-news-attribution', 'https://huggingface.co/datasets/open-index/hacker-news'], ['hackertube-license', 'https://opendatacommons.org/licenses/by/1-0/']]) {
+      assert.equal(await page.locator(`#${id}`).getAttribute('href'), href);
+      assert.match(await page.locator(`#${id}`).getAttribute('rel'), /noopener/);
     }
+    await page.screenshot({ path: join(screenshots, page === alice ? 'settings.png' : 'settings-mobile.png'), fullPage: true, animations: 'disabled' });
+    await page.locator('[aria-label="Close settings"]').click();
     await page.locator('[data-action="theme"]').click();
   }
   if (process.env.BYOB_THEATER_ONLY !== '1') {
