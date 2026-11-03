@@ -3,6 +3,14 @@
 
 ---
 
+# v7.1.1 (2026-11-02)
+
+- Add a desktop theater-mode scroll detent at the top of the player while keeping
+  the titlebar accessible by scrolling up. Normal scrolling remains available.
+- Place the title/menu bar below the theater player on mobile.
+
+---
+
 # v7.1.0 (2026-11-02)
 
 - Add a Description tab beside Comments with YouTube channel, description, views,

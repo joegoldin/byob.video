@@ -159,3 +159,13 @@ html[data-byob-extension] .byob-no-ext { display: none !important; }
 }
 .theater-toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) { .theater-toggle { transition: none; } }
+
+/* Proximity snapping gives desktop wheels/trackpads a resting point, not a scroll trap. */
+@media (min-width: 1024px) {
+  html.theater-scrolling { scroll-snap-type: y proximity; }
+  .theater-mode #room-nav, .theater-mode #player-sizer { scroll-snap-align: start; }
+}
+@media (max-width: 1023px) {
+  .theater-mode #player-sizer { order: -2; }
+  .theater-mode #room-nav { order: -1; }
+}

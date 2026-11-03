@@ -57,6 +57,7 @@ function selectVideoTab(tab) {
 function toggleTheater() {
   theater = !theater;
   document.getElementById('app').classList.toggle('theater-mode', theater);
+  document.documentElement.classList.toggle('theater-scrolling', theater);
   const button = document.getElementById('theater-toggle');
   button.setAttribute('aria-pressed', String(theater));
   document.getElementById('theater-label').textContent = theater ? 'Exit theater' : 'Theater mode';

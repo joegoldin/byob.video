@@ -206,10 +206,23 @@ try {
     assert.equal(theaterPlayer.width, page.viewportSize().width);
     assert.equal(theaterPlayer.height, page.viewportSize().height);
     assert.equal(theaterPlayer.y, 0);
-    assert.ok((await page.locator('#room-nav').boundingBox()).y < 0, 'Titlebar stays just above the viewport');
-    await page.evaluate(() => window.scrollTo(0, 0));
-    assert.equal((await page.locator('#room-nav').boundingBox()).y, 0, 'Scroll up reveals the titlebar');
-    await page.locator('#player-sizer').evaluate(element => element.scrollIntoView());
+    if (page === alice) {
+      assert.ok((await page.locator('#room-nav').boundingBox()).y < 0, 'Desktop titlebar stays just above the viewport');
+      await page.evaluate(() => window.scrollTo(0, 0));
+      assert.equal((await page.locator('#room-nav').boundingBox()).y, 0, 'Scroll up reveals the desktop titlebar');
+      await page.locator('#player-sizer').evaluate(element => element.scrollIntoView());
+      await page.mouse.move(500, 400);
+      await page.evaluate(() => { window.__detentSettled = new Promise(resolve => document.addEventListener('scrollend', () => resolve(), { once: true })); });
+      await page.mouse.wheel(0, 90);
+      await page.evaluate(() => window.__detentSettled);
+      assert.ok(Math.abs((await page.locator('#player-sizer').boundingBox()).y) < 1, 'A small wheel scroll settles back at the player detent');
+      await page.mouse.wheel(0, 700);
+      await page.waitForFunction(() => document.getElementById('player-sizer').getBoundingClientRect().top < -300);
+      await page.locator('#player-sizer').evaluate(element => element.scrollIntoView());
+    } else {
+      assert.equal((await page.locator('#room-nav').boundingBox()).y, theaterPlayer.height, 'Mobile titlebar follows the player');
+      assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).scrollSnapType), 'none');
+    }
     for (const selector of ['#video-toolbar', '#room-sidebar']) {
       assert.ok((await page.locator(selector).boundingBox()).y >= theaterPlayer.height, `${selector} must be below the theater player`);
     }
