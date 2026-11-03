@@ -3,6 +3,14 @@
 
 ---
 
+# v7.2.1 (2026-11-03)
+
+- Restore the settings attribution footer below Stats for nerds and autoplay help,
+  including SponsorBlock/Ajay, current technology credits and the MIT license.
+- Move HackerTube, open-index/hacker-news and ODC-By attribution into that footer.
+
+---
+
 # v7.2.0 (2026-11-03)
 
 - Add 4,654 positively recommended, non-news HackerTube video IDs to the curated

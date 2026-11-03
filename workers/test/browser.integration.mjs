@@ -298,11 +298,17 @@ try {
     await page.locator('[data-action="settings"]').click();
     if (page === alice) await page.waitForFunction(() => document.getElementById('room-api-key')?.value.length > 20);
     assert.ok((await page.locator('#settings-modal .modal-box').boundingBox()).width <= 448);
-    for (const [id, href] of [['hackertube-attribution', 'https://hackertube.org'], ['hacker-news-attribution', 'https://huggingface.co/datasets/open-index/hacker-news'], ['hackertube-license', 'https://opendatacommons.org/licenses/by/1-0/']]) {
+    assert.equal(await page.locator('#settings-attribution').count(), 1, 'Settings must restore a consolidated attribution footer');
+    assert.equal(await page.locator('#settings-attribution #random-video-attribution').count(), 1, 'HackerTube credit belongs in the footer');
+    assert.equal(await page.locator('#random-video-attribution').count(), 1, 'Do not duplicate the dataset credit');
+    assert.equal(await page.evaluate(() => !!(document.getElementById('stats-for-nerds').compareDocumentPosition(document.getElementById('settings-attribution')) & Node.DOCUMENT_POSITION_FOLLOWING)), true);
+    for (const [id, href] of [['sponsorblock-attribution', 'https://sponsor.ajay.app'], ['sponsorblock-author', 'https://ajay.app'], ['byob-license', 'https://github.com/joegoldin/byob.video/blob/main/LICENSE'], ['hackertube-attribution', 'https://hackertube.org'], ['hacker-news-attribution', 'https://huggingface.co/datasets/open-index/hacker-news'], ['hackertube-license', 'https://opendatacommons.org/licenses/by/1-0/']]) {
       assert.equal(await page.locator(`#${id}`).getAttribute('href'), href);
       assert.match(await page.locator(`#${id}`).getAttribute('rel'), /noopener/);
     }
     await page.screenshot({ path: join(screenshots, page === alice ? 'settings.png' : 'settings-mobile.png'), fullPage: true, animations: 'disabled' });
+    await page.locator('#settings-attribution').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(screenshots, page === alice ? 'settings-credits.png' : 'settings-credits-mobile.png'), fullPage: true, animations: 'disabled' });
     await page.locator('[aria-label="Close settings"]').click();
     await page.locator('[data-action="theme"]').click();
   }
