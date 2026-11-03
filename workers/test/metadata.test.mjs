@@ -47,10 +47,16 @@ test('OpenGraph extraction supports attribute order/quoting, entity decoding and
 test('YouTube metadata uses the API when configured and falls back to oEmbed on failure', async () => {
   const full = await fetchMetadata(video, { YOUTUBE_API_KEY: 'test-only' }, { fetcher: async url => {
     assert.equal(new URL(url).hostname, 'www.googleapis.com');
-    return Response.json({ items: [{ snippet: { title: 'Title', channelTitle: 'Channel', publishedAt: '2026-10-01T00:00:00Z', thumbnails: { high: { url: 'https://i.ytimg.com/cover.jpg' } } }, contentDetails: { duration: 'PT3M20S' }, status: { embeddable: true } }] });
+    assert.ok(new URL(url).searchParams.get('part').includes('statistics'));
+    return Response.json({ items: [{ snippet: { title: 'Title', channelTitle: 'Channel', channelId: 'UC123', description: 'Full description\n1:23 chapter', publishedAt: '2026-10-01T00:00:00Z', thumbnails: { high: { url: 'https://i.ytimg.com/cover.jpg' } } }, contentDetails: { duration: 'PT3M20S' }, statistics: { viewCount: '12345', likeCount: '0', commentCount: '20' }, status: { embeddable: true } }] });
   } });
   assert.equal(full.duration, 200);
   assert.equal(full.title, 'Title');
+  assert.equal(full.description, 'Full description\n1:23 chapter');
+  assert.equal(full.channel_id, 'UC123');
+  assert.equal(full.view_count, 12345);
+  assert.equal(full.like_count, 0);
+  assert.equal(full.comment_count, 20);
   let calls = 0;
   const fallback = await fetchMetadata(video, { YOUTUBE_API_KEY: 'test-only' }, { fetcher: async () => ++calls === 1 ? new Response('quota', { status: 403 }) : Response.json({ title: 'Fallback', thumbnail_url: 'https://i.ytimg.com/cover.jpg' }) });
   assert.equal(calls, 2);

@@ -133,3 +133,29 @@ html[data-byob-extension] .byob-no-ext { display: none !important; }
 }
 
 /* This file is for your main application CSS */
+
+/* Theater mode keeps the live player mounted while moving every other panel below it. */
+#app.theater-mode { display: flex; flex-direction: column; }
+.theater-mode #room-layout { display: contents; }
+.theater-mode #watch-main { display: contents; }
+.theater-mode #player-sizer { width: 100%; margin: 0; background: #000; }
+.theater-mode #player { border-radius: 0; }
+.theater-mode #room-sidebar { width: auto; height: auto; min-height: 20rem; margin: 0.5rem 1rem; }
+.theater-mode #video-toolbar, .theater-mode #round-panel,
+.theater-mode #comments-panel, .theater-mode #description-panel { margin: 0.5rem 1rem; }
+
+.theater-toggle {
+  display: inline-flex; align-items: center; gap: 0.5rem; margin-left: auto;
+  padding: 0.55rem 0.8rem; border-radius: 0.65rem; font-size: 0.75rem; font-weight: 600;
+  color: var(--color-base-content); background: var(--color-base-200);
+  border: 1px solid color-mix(in oklch, var(--color-base-content) 18%, transparent);
+  box-shadow: 0 2px 6px #00000012;
+  transition: background 160ms, border-color 160ms, box-shadow 160ms;
+}
+.theater-toggle svg { width: 1.1rem; height: 1.1rem; }
+.theater-toggle:hover, .theater-toggle[aria-pressed="true"] {
+  color: var(--color-primary); background: color-mix(in oklch, var(--color-primary) 12%, var(--color-base-200));
+  border-color: color-mix(in oklch, var(--color-primary) 45%, transparent);
+}
+.theater-toggle:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .theater-toggle { transition: none; } }

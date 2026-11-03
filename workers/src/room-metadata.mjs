@@ -7,7 +7,7 @@ export function applyMetadata(state, job, meta) {
   const update = item => {
     if (item.id !== job.id || item.url !== job.url) return item;
     const next = { ...item };
-    for (const key of ['title', 'thumbnail_url', 'duration', 'published_at']) if (meta[key] != null) next[key] = meta[key];
+    for (const key of ['title', 'thumbnail_url', 'duration', 'published_at', 'author_name', 'channel_id', 'description', 'view_count', 'like_count', 'comment_count']) if (meta[key] != null) next[key] = meta[key];
     return next;
   };
   const queue = state.queue.map(update);
@@ -32,6 +32,7 @@ export class RoomMetadata {
     if (current?.id === old?.id && current?.url === old?.url && !reloading) return state;
     let next = { ...state, sponsor_segments: [] };
     if (current?.source_type !== 'youtube') return next;
+    next = this.enqueue(next, current, now);
     next = this.enqueue(next, current, now, 'sponsor');
     next = this.enqueue(next, current, now, 'comments');
     const forCurrent = job => job.id === current.id && job.url === current.url;

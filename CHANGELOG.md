@@ -3,6 +3,19 @@
 
 ---
 
+# v7.1.0 (2026-11-02)
+
+- Add a Description tab beside Comments with YouTube channel, description, views,
+  likes, comment count, publish date and clickable chapter timestamps. Comments
+  remain selected by default.
+- Add theater mode: expand the player to the viewport and move video information
+  and room panels below it without interrupting playback. Keep the titlebar above
+  the player and scroll it just out of view on entry.
+- Add a styled theater toggle and short fade/move transitions that respect reduced
+  motion preferences. Hide Comments and Description when no video is selected.
+
+---
+
 # v7.0.1 (2026-10-30)
 
 - Show a centered Play button whenever an embedded video is paused, independent

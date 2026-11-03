@@ -21,7 +21,7 @@ const browserId = read(localStorage, 'byob_browser_id', crypto.randomUUID());
 save(localStorage, 'byob_browser_id', browserId);
 let username = read(localStorage, 'watchparty_username', `Guest ${crypto.randomUUID().slice(0, 4)}`);
 let showComments = read(localStorage, 'byob_show_comments', 'true') !== 'false';
-let collapsed = false, expanded = false, dragFrom = null;
+let collapsed = false, expanded = false, dragFrom = null, videoTab = 'comments', theater = false;
 let nicknames;
 try { nicknames = JSON.parse(read(localStorage, 'byob_nicknames', '{}')); } catch { nicknames = {}; }
 const commentReplies = createCommentReplies({ request: payload => channel.request('comments:replies', payload), getVideo: () => commentsVideo, changed: updateComments });
@@ -36,9 +36,43 @@ function notify() { if (document.hidden) { notifications++; updateTitle(); } }
 
 function updateComments() {
   const panel = document.getElementById('comments-panel');
-  panel.hidden = !showComments;
+  const hasVideo = state?.current_index != null && !!state.queue[state.current_index];
+  document.getElementById('video-tabs').hidden = !hasVideo;
+  panel.hidden = !hasVideo || !showComments || videoTab !== 'comments';
+  document.getElementById('description-panel').hidden = !hasVideo || videoTab !== 'description';
+  document.getElementById('comments-tab').hidden = !showComments;
   render(panel, views.commentsPanel(comments, { collapsed, expanded, replies: commentReplies.entries }));
-  document.getElementById('room-layout').classList.toggle('lg:h-[calc(100dvh-2.5rem)]', !expanded);
+  document.getElementById('room-layout').classList.toggle('lg:h-[calc(100dvh-2.5rem)]', !expanded && !theater);
+}
+function selectVideoTab(tab) {
+  videoTab = tab;
+  for (const name of ['comments', 'description']) {
+    const button = document.getElementById(`${name}-tab`);
+    button.setAttribute('aria-selected', String(name === tab));
+    button.classList.toggle('bg-primary/15', name === tab);
+    button.classList.toggle('text-primary', name === tab);
+  }
+  updateComments();
+}
+function toggleTheater() {
+  theater = !theater;
+  document.getElementById('app').classList.toggle('theater-mode', theater);
+  const button = document.getElementById('theater-toggle');
+  button.setAttribute('aria-pressed', String(theater));
+  document.getElementById('theater-label').textContent = theater ? 'Exit theater' : 'Theater mode';
+  button.title = theater ? 'Return to standard layout' : 'Expand player to theater mode';
+  updateComments();
+  player.hook._sizePlayer();
+  if (theater) document.getElementById('player-sizer').scrollIntoView({ block: 'start', behavior: 'instant' });
+  else window.scrollTo({ top: 0, behavior: 'instant' });
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    for (const id of ['player-sizer', 'video-toolbar', 'comments-panel', 'description-panel', 'room-sidebar']) {
+      const element = document.getElementById(id);
+      for (const animation of element.getAnimations()) animation.cancel();
+      element.animate([{ opacity: 0.35, transform: 'translateY(10px)' }, { opacity: 1, transform: 'translateY(0)' }],
+        { duration: 240, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' });
+    }
+  }
 }
 function updateRoom(next) {
   closeContextMenu();
@@ -55,6 +89,8 @@ function updateRoom(next) {
   rounds.update(state.round, channel.session?.user_id);
   const item = state.current_index == null ? null : state.queue[state.current_index];
   document.getElementById('paused-play-button').hidden = state.play_state !== 'paused' || !['youtube', 'vimeo', 'direct_url'].includes(item?.source_type);
+  render(document.getElementById('description-panel'), views.descriptionPanel(item));
+  updateComments();
   updateTitle();
   const video = item?.source_type === 'youtube' ? item.source_id : null;
   if (video !== commentsVideo) {
@@ -148,6 +184,7 @@ async function playlist(scope, mode, videoId) {
 
 if (roomId) {
   render(root, views.roomShell(roomId));
+  if (!showComments) selectVideoTab('description');
   const tabId = read(sessionStorage, 'byob_tab_id', crypto.randomUUID());
   save(sessionStorage, 'byob_tab_id', tabId);
   let extensionReported = false;
@@ -228,7 +265,7 @@ if (roomId) {
   root.addEventListener('change', event => {
     const input = event.target;
     if (input.dataset.sponsorCategory) void command('sb:update', { category: input.dataset.sponsorCategory, action: input.value }).catch(() => {});
-    if (input.id === 'show-comments') { showComments = input.checked; save(localStorage, 'byob_show_comments', String(showComments)); updateComments(); if (showComments) void loadComments(); }
+    if (input.id === 'show-comments') { showComments = input.checked; if (!showComments) selectVideoTab('description'); save(localStorage, 'byob_show_comments', String(showComments)); updateComments(); if (showComments) void loadComments(); }
   });
   document.getElementById('byob-autoplay-help').addEventListener('close', () => {
     if (document.getElementById('byob-autoplay-help-dont-show').checked) save(localStorage, 'byob_autoplay_help_dismissed', '1');
@@ -255,7 +292,9 @@ root.addEventListener('click', async event => {
     if (action === 'theme') { theme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'); return; }
     if (action === 'copy-room') { await navigator.clipboard.writeText(location.href); message('Room link copied.'); return; }
     if (!state) return;
-    if (action === 'settings') {
+    if (action === 'theater') toggleTheater();
+    else if (action === 'comments-tab' || action === 'description-tab') selectVideoTab(action.split('-')[0]);
+    else if (action === 'settings') {
       render(document.getElementById('settings-content'), views.settingsPanel(state, showComments));
       document.getElementById('settings-modal').showModal();
       const result = await command('room:credentials');

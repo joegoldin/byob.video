@@ -105,3 +105,16 @@ test('player has a persistent accessible centered paused-play control outside pr
   assert.ok(shell.includes('data-action="paused-play"'));
   assert.ok(shell.includes('left-1/2 top-1/2'));
 });
+
+
+test('description displays escaped metadata, channel, counts and chapter timestamps', () => {
+  const markup = String(views.descriptionPanel({ source_type: 'youtube', title: '<script>bad</script>', author_name: 'Creator', channel_id: 'UC123', description: 'Chapter 1:23\n<script>bad</script>', view_count: 12345, like_count: 0, comment_count: 20, published_at: '2026-11-02T00:00:00Z', url: 'https://youtu.be/abc' }));
+  assert.ok(markup.includes('12,345 views'));
+  assert.ok(markup.includes('0 likes'));
+  assert.ok(markup.includes('20 comments'));
+  assert.ok(markup.includes('https://www.youtube.com/channel/UC123'));
+  assert.ok(markup.includes('data-seconds="83"'));
+  assert.ok(!markup.includes('<script>'));
+  assert.ok(String(views.descriptionPanel({ title: 'Private counts' })).includes('Description unavailable'));
+  assert.ok(!String(views.descriptionPanel({})).includes('0 views'));
+});

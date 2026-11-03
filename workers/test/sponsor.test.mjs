@@ -43,6 +43,6 @@ test('media transitions and restarting the current item request SponsorBlock ahe
   assert.equal(worker.enqueueCurrent(state, state, 1100), state);
   const playing = { ...state, pending_metadata: [], metadata_deadline: null, ready_deadline: null, sponsor_segments: [{ segment: [10, 20] }] };
   const restarted = worker.enqueueCurrent({ ...playing, ready_deadline: 4500 }, playing, 2000);
-  assert.deepEqual(restarted.pending_metadata.map(job => job.kind), ['comments', 'sponsor']);
+  assert.deepEqual(restarted.pending_metadata.map(job => job.kind), ['comments', 'sponsor', 'metadata']);
   assert.deepEqual(restarted.sponsor_segments, []);
 });

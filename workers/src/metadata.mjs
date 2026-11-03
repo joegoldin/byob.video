@@ -2,6 +2,10 @@ import { boundedFetch, upstreamJson, externalUrl } from './upstream.mjs';
 import { youtubeData } from './youtube.mjs';
 
 function text(value, limit = 500) { return typeof value === 'string' ? value.slice(0, limit) : null; }
+function statistic(value) {
+  const number = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : NaN;
+  return Number.isSafeInteger(number) && number >= 0 ? number : null;
+}
 function imageUrl(value, base) {
   if (typeof value !== 'string' || value.length > 4096) return null;
   try { return externalUrl(new URL(value, base).href).href; } catch { return null; }
@@ -41,11 +45,15 @@ async function loadMetadata(item, env, fetcher, cache) {
   if (item.source_type === 'direct_url') return null;
   if (item.source_type === 'youtube' && env.YOUTUBE_API_KEY && item.source_id) {
     try {
-      const result = await youtubeData('videos', { part: 'snippet,contentDetails,status', id: item.source_id }, env, { fetcher, cache, ttl: 86400 });
+      const result = await youtubeData('videos', { part: 'snippet,contentDetails,status,statistics', id: item.source_id }, env, { fetcher, cache, ttl: 86400 });
       const video = result.data?.items?.[0];
       if (video?.snippet) {
         const thumbs = video.snippet.thumbnails ?? {};
         return { title: text(video.snippet.title), author_name: text(video.snippet.channelTitle),
+          channel_id: /^[\w-]{1,128}$/.test(video.snippet.channelId ?? '') ? video.snippet.channelId : null,
+          description: text(video.snippet.description, 10000),
+          view_count: statistic(video.statistics?.viewCount), like_count: statistic(video.statistics?.likeCount),
+          comment_count: statistic(video.statistics?.commentCount),
           thumbnail_url: imageUrl((thumbs.maxres ?? thumbs.high ?? thumbs.medium ?? thumbs.default)?.url, item.url),
           duration: durationSeconds(video.contentDetails?.duration), published_at: text(video.snippet.publishedAt, 40),
           embeddable: video.status?.embeddable !== false, source_type: 'youtube' };
@@ -67,7 +75,7 @@ async function loadMetadata(item, env, fetcher, cache) {
 }
 
 export async function fetchMetadata(item, env, { fetcher = fetch, cache = globalThis.caches?.default } = {}) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${item.source_type}:${env.YOUTUBE_API_KEY ? 'api' : 'public'}:${item.url}`));
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`v2:${item.source_type}:${env.YOUTUBE_API_KEY ? 'api' : 'public'}:${item.url}`));
   const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
   const key = `https://metadata.byob.invalid/${hash}`;
   const cached = cache ? await cache.match(key) : null;

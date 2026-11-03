@@ -31,8 +31,11 @@ test('metadata enriches queue/history/logs but a stale URL cannot overwrite repl
   const initial = room();
   initial.activity_log = [{ action: 'added', detail: initial.queue[0].url, user: 'Alice', at: '2026-01-01T00:00:00Z' }];
   const job = initial.queue[0];
-  const updated = applyMetadata(initial, job, { title: 'Video title', duration: 100 }).state;
+  const updated = applyMetadata(initial, job, { title: 'Video title', duration: 100, description: 'Details', author_name: 'Creator', view_count: 123 }).state;
   assert.equal(updated.queue[0].title, 'Video title');
+  assert.equal(updated.queue[0].description, 'Details');
+  assert.equal(updated.history[0].item.author_name, 'Creator');
+  assert.equal(updated.queue[0].view_count, 123);
   assert.equal(updated.history[0].item.duration, 100);
   assert.equal(updated.activity_log[0].detail, 'Video title');
   const replacement = { ...initial, queue: [{ ...job, url: 'https://youtu.be/replacement', title: 'New video' }] };

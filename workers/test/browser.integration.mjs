@@ -195,6 +195,31 @@ try {
     catch (error) { throw new Error(`${error.message}; ${JSON.stringify({ errors, page: await page.locator('body').innerText() })}`); }
     assert.ok((await page.locator('#url-input').boundingBox()).width >= 160, 'URL input must remain usable on mobile');
     assert.equal(await page.locator('[data-action="pause"]').count(), 0, 'No duplicate controls below the player');
+    assert.equal(await page.locator('#video-tabs').isVisible(), false);
+    assert.equal(await page.locator('#comments-panel').isVisible(), false);
+    assert.equal(await page.locator('#description-panel').isVisible(), false);
+    const originalPlayer = await page.locator('#player').boundingBox();
+    await page.evaluate(() => { window.__originalPlayer = document.getElementById('player'); });
+    await page.locator('#theater-toggle').click();
+    await page.evaluate(() => Promise.all(document.getAnimations().map(animation => animation.finished)));
+    const theaterPlayer = await page.locator('#player').boundingBox();
+    assert.equal(theaterPlayer.width, page.viewportSize().width);
+    assert.equal(theaterPlayer.height, page.viewportSize().height);
+    assert.equal(theaterPlayer.y, 0);
+    assert.ok((await page.locator('#room-nav').boundingBox()).y < 0, 'Titlebar stays just above the viewport');
+    await page.evaluate(() => window.scrollTo(0, 0));
+    assert.equal((await page.locator('#room-nav').boundingBox()).y, 0, 'Scroll up reveals the titlebar');
+    await page.locator('#player-sizer').evaluate(element => element.scrollIntoView());
+    for (const selector of ['#video-toolbar', '#room-sidebar']) {
+      assert.ok((await page.locator(selector).boundingBox()).y >= theaterPlayer.height, `${selector} must be below the theater player`);
+    }
+    await page.screenshot({ path: join(screenshots, page === alice ? 'theater-desktop.png' : 'theater-mobile.png'), fullPage: true });
+    await page.locator('#theater-toggle').click();
+    await page.evaluate(() => Promise.all(document.getAnimations().map(animation => animation.finished)));
+    assert.equal(await page.evaluate(() => window.__originalPlayer === document.getElementById('player')), true);
+    assert.equal((await page.locator('#player').boundingBox()).width, originalPlayer.width);
+    await page.evaluate(() => window.scrollTo(0, 0));
+
     assert.ok(await page.locator('#users-panel .bg-success').count(), 'Connected users have a green status dot');
     await page.screenshot({ path: join(screenshots, page === alice ? 'empty-desktop.png' : 'empty-mobile.png'), fullPage: true });
     if (page === alice) {
@@ -216,6 +241,14 @@ try {
     try { await page.waitForFunction(() => { const video = document.querySelector('#player video'); return video && !video.paused && video.currentTime > 0.3; }, null, { timeout: 15000 }); }
     catch (error) { throw new Error(`${error.message}; ${JSON.stringify(await page.evaluate(() => { const video = document.querySelector('#player video'); return { body: document.body.innerText, media: video && { source: video.currentSrc, error: video.error?.message, network: video.networkState, ready: video.readyState, paused: video.paused, time: video.currentTime, duration: video.duration }, activated: navigator.userActivation.hasBeenActive }; }))}`); }
   }
+  for (const page of [alice, bob]) {
+    assert.equal(await page.locator('#comments-tab').getAttribute('aria-selected'), 'true');
+    assert.equal(await page.locator('#video-tabs').isVisible(), true);
+    await page.locator('#description-tab').click();
+    assert.equal(await page.locator('#description-panel').isVisible(), true);
+    assert.equal(await page.locator('#comments-panel').isVisible(), false);
+    await page.locator('#comments-tab').click();
+  }
   await alice.locator('#player video').evaluate(video => video.pause());
   for (const page of [alice, bob]) await page.waitForFunction(() => document.querySelector('#player video')?.paused === true);
   await alice.locator('#player video').evaluate(video => { video.playbackRate = 1.5; });
@@ -236,6 +269,13 @@ try {
   });
   for (const page of [alice, bob]) assert.equal(await page.locator('#paused-play-button').isVisible(), false, 'Paused overlay must disappear when the room resumes');
   console.log('PASS: centered paused-play control resumes both clients and disappears during playback');
+  await alice.evaluate(() => { window.__playingMedia = document.querySelector('#player video'); });
+  await alice.locator('#theater-toggle').click();
+  assert.equal(await alice.evaluate(() => window.__playingMedia === document.querySelector('#player video') && !window.__playingMedia.paused), true);
+  await alice.locator('#theater-toggle').click();
+  assert.equal(await alice.evaluate(() => window.__playingMedia === document.querySelector('#player video') && !window.__playingMedia.paused), true);
+  await alice.evaluate(() => window.scrollTo(0, 0));
+
   console.log('PASS: both clients render attributed pause, resume and rate activity');
   bob.once('dialog', dialog => dialog.accept('<img src=x onerror=alert(1)>'));
   await bob.locator('[data-action="rename"]').click();
@@ -377,7 +417,7 @@ try {
   const commentPage = await contexts[1].newPage();
   commentPage.on('pageerror', error => errors.push(error.message));
   await commentPage.setContent(`<link rel="stylesheet" href="${origin}/assets/app.css"><div id="comments-fixture"></div>`);
-  const commentFixture = await build({ stdin: { contents: 'export { createCommentReplies } from "./comment-replies.mjs"; export { commentsPanel } from "./views.mjs"; export { render } from "./html.mjs";', resolveDir: join(root, 'web'), loader: 'js' }, bundle: true, format: 'iife', globalName: 'CommentFixture', write: false });
+  const commentFixture = await build({ stdin: { contents: 'export { createCommentReplies } from "./comment-replies.mjs"; export { commentsPanel, descriptionPanel } from "./views.mjs"; export { render } from "./html.mjs";', resolveDir: join(root, 'web'), loader: 'js' }, bundle: true, format: 'iife', globalName: 'CommentFixture', write: false });
   await commentPage.addScriptTag({ content: commentFixture.outputFiles[0].text });
   await commentPage.evaluate(() => {
     const target = document.getElementById('comments-fixture');
@@ -418,6 +458,21 @@ try {
   await commentPage.setViewportSize({ width: 1280, height: 800 });
   await commentPage.screenshot({ path: join(screenshots, 'comments-desktop.png'), fullPage: true });
   console.log('PASS: lazy reply clicks, loading/collapse/cache, pagination retry and escaped threaded comments');
+  await commentPage.evaluate(() => CommentFixture.render(document.getElementById('comments-fixture'), CommentFixture.descriptionPanel({
+    source_type: 'youtube', title: 'An evening in the mountains', author_name: 'Trail Notes', channel_id: 'UC123',
+    description: 'A quiet walk through the valley.\n\n0:00 Setting out\n1:23 The overlook\n\n<img src=x onerror=alert(1)>',
+    view_count: 12345, like_count: 456, comment_count: 78, published_at: '2026-11-02T00:00:00Z', url: 'https://youtu.be/fixture',
+  })));
+  await commentPage.getByRole('heading', { name: 'An evening in the mountains' }).waitFor();
+  assert.equal(await commentPage.getByRole('link', { name: 'Trail Notes' }).getAttribute('href'), 'https://www.youtube.com/channel/UC123');
+  assert.equal(await commentPage.getByRole('button', { name: '1:23', exact: true }).getAttribute('data-seconds'), '83');
+  assert.equal(await commentPage.locator('img[src="x"]').count(), 0);
+  await commentPage.screenshot({ path: join(screenshots, 'description-desktop.png'), fullPage: true });
+  await commentPage.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await commentPage.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await commentPage.screenshot({ path: join(screenshots, 'description-mobile.png'), fullPage: true });
+  console.log('PASS: description metadata, safe channel link, chapter timestamps and mobile layout');
+
   assert.deepEqual(errors, []);
   console.log('PASS: rendered home/create/join, two real direct-video players, play/pause/rate propagation, private settings and desktop/mobile layout');
 } finally {

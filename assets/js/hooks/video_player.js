@@ -2325,6 +2325,11 @@ const VideoPlayer = {
     const isDesktop = window.innerWidth >= 1024; // lg breakpoint
     let w = availW;
     let h = w * 9 / 16;
+    if (this.el.closest(".theater-mode")) {
+      this.el.style.width = availW + "px";
+      this.el.style.height = window.innerHeight + "px";
+      return;
+    }
     if (isDesktop) {
       const availH = window.innerHeight - 80; // nav + padding
       if (h > availH && availH >= 300) {
