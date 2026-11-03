@@ -3,6 +3,15 @@
 
 ---
 
+# v7.1.5 (2026-11-03)
+
+- Redesign the mobile room toolbar with safe-area/top padding, a full-width 48px
+  URL field, readable input text and larger icons with 44px touch targets.
+- Separate utility controls from room actions without changing the desktop bar.
+- Cover narrow layouts, URL clearing and theater mode in Chromium and Firefox.
+
+---
+
 # v7.1.4 (2026-11-03)
 
 - Make the empty-player prompt point above or below to match the toolbar position,

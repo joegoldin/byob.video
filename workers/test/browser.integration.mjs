@@ -194,6 +194,30 @@ try {
     try { await page.waitForFunction(() => document.getElementById('connection-status')?.textContent === ''); }
     catch (error) { throw new Error(`${error.message}; ${JSON.stringify({ errors, page: await page.locator('body').innerText() })}`); }
     assert.ok((await page.locator('#url-input').boundingBox()).width >= 160, 'URL input must remain usable on mobile');
+    if (page === bob) {
+      const input = await page.locator('#url-input').boundingBox();
+      assert.ok(input.height >= 48, 'Mobile URL entry must have a comfortable touch height');
+      assert.ok(await page.locator('#url-input').evaluate(element => parseFloat(getComputedStyle(element).fontSize) >= 16), 'Mobile URL text must be readable without focus zoom');
+      assert.ok(await page.locator('#room-nav').evaluate(element => parseFloat(getComputedStyle(element).paddingTop) >= 12), 'Mobile toolbar needs top breathing room');
+      for (const width of [320, 390, 480]) {
+        await page.setViewportSize({ width, height: 844 });
+        await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth);
+        assert.ok((await page.locator('#url-input').boundingBox()).width >= width - 32, 'Mobile URL entry must use the available width');
+        for (const button of await page.locator('#room-nav button:visible').all()) {
+          const target = await button.boundingBox();
+          // Firefox can report a 44px DOMRect as 43.999996px.
+          assert.ok(Math.round(target.width * 1000) >= 44000 && Math.round(target.height * 1000) >= 44000, `Mobile ${await button.getAttribute('data-action')} needs a 44px target at ${width}px: ${JSON.stringify(target)}`);
+        }
+        await page.screenshot({ path: join(screenshots, `toolbar-mobile-${width}.png`), fullPage: true });
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth);
+      await page.locator('#url-input').fill('https://example.invalid/video');
+      const clear = await page.locator('#url-clear-btn').boundingBox();
+      assert.ok(clear.width >= 44 && clear.height >= 44, 'Clear URL must also have a comfortable touch target');
+      await page.locator('#url-clear-btn').click();
+      assert.equal(await page.locator('#url-input').inputValue(), '');
+    }
     assert.equal(await page.locator('#theater-label').innerText(), 'Theater mode');
     const label = await page.locator('#theater-label').boundingBox();
     assert.ok(label && label.width > 40 && label.height > 0, 'Theater mode label must remain visibly rendered');
