@@ -1,10 +1,10 @@
 {
   "name": "byob-workers",
-  "version": "7.1.1",
+  "version": "7.1.2",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=24.12.0"
   },
   "packageManager": "pnpm@12.16.1",
   "scripts": {
@@ -16,18 +16,23 @@
     "test:hosted": "node test/hosted.integration.mjs",
     "test:hosted-migration": "node test/hosted-migration.integration.mjs",
     "test:migration": "node test/migration.integration.mjs",
-    "test:legacy-page": "node test/legacy-page.integration.mjs",
     "migrate:import": "node scripts/import-legacy.mjs",
     "check:migration": "wrangler deploy --dry-run --config wrangler.migration.jsonc",
     "check:production": "wrangler deploy --dry-run --config wrangler.production.jsonc && wrangler deploy --dry-run --config wrangler.migration-production.jsonc",
     "build:web": "node scripts/build-web.mjs",
     "dev": "node scripts/build-web.mjs && wrangler dev --local --port 18789",
-    "check:deploy": "node scripts/build-web.mjs && wrangler deploy --dry-run"
+    "check:deploy": "node scripts/build-web.mjs && wrangler deploy --dry-run",
+    "check:source": "node scripts/check-source.mjs",
+    "precommit": "node scripts/check-source.mjs && cd .. && node --test workers/test/*.test.mjs test/extension/background.test.mjs"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "4.3.3",
+    "daisyui": "5.7.50",
     "esbuild": "0.28.2",
-    "miniflare": "5.20261023.1-beta",
-    "playwright-core": "1.60.0",
-    "wrangler": "4.154.0"
+    "miniflare": "5.20261101.0-beta",
+    "phoenix": "1.8.16",
+    "playwright-core": "1.64.1",
+    "tailwindcss": "4.3.3",
+    "wrangler": "4.156.1"
   }
 }

@@ -1,19 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 import { parseMediaUrl, extractUrl, youtubePlaylist } from '../src/media.mjs';
 import { newSyncState, evaluateSync, resetSync, cooldownRemaining } from '../src/sync-decision.mjs';
 import { newRound, castVote, tallies, resolveRound, landingSlice } from '../src/round.mjs';
 
 const fixture = JSON.parse(await readFile(new URL('./fixtures/legacy.json', import.meta.url), 'utf8'));
-
-test('parity fixtures match the original source files', async () => {
-  for (const [path, hash] of Object.entries(fixture.sources)) {
-    const source = await readFile(new URL(`../../${path}`, import.meta.url));
-    assert.equal(createHash('sha256').update(source).digest('hex'), hash, path);
-  }
-});
 
 for (const { input, expected } of fixture.media) {
   test(`legacy media parsing: ${input}`, () => {

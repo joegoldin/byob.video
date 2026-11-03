@@ -142,7 +142,7 @@
   const SYNC_BAR_RETRY_MS = 500;
   const URL_POLL_MS = 1000;
   // Drift thresholds + rate correction live on the server now (see
-  // lib/byob/sync_decision.ex). Extension is dumb: report drift, execute
+  // workers/src/sync-decision.mjs). Extension is dumb: report drift, execute
   // seek commands.
   const VIDEO_ENDED_TAIL_S = 3;
   const MIN_ENDED_DURATION_S = 60;

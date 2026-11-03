@@ -14,7 +14,6 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
-  MIX_ENV: test
   CI: 'true'
   WRANGLER_SEND_METRICS: 'false'
 
@@ -29,12 +28,13 @@ jobs:
       - uses: ./.github/actions/setup
       - name: Required project precommit
         run: |
-          mix precommit
+          cd workers
+          corepack pnpm precommit
+          cd ..
           git diff --exit-code
-      - name: Unit, oracle, runtime and migration acceptance
+      - name: Runtime and migration acceptance
         working-directory: workers
         run: |
-          corepack pnpm test
           corepack pnpm test:runtime
           corepack pnpm test:migration
       - name: Deployment packaging without credentials or publication
@@ -43,6 +43,24 @@ jobs:
           corepack pnpm check:deploy
           corepack pnpm check:migration
           corepack pnpm check:production
+
+      - name: Audit locked dependencies
+        working-directory: workers
+        run: corepack pnpm audit --audit-level=low
+      - name: Install browser regression tools
+        working-directory: workers
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+          corepack pnpm exec playwright-core install --with-deps chromium firefox
+          node --input-type=module -e 'import {chromium, firefox} from "playwright-core"; console.log("CHROMIUM_PATH=" + chromium.executablePath() + "\nFIREFOX_PATH=" + firefox.executablePath())' >> "$GITHUB_ENV"
+      - name: Theater detent in Chromium and Firefox
+        working-directory: workers
+        env:
+          BYOB_THEATER_ONLY: '1'
+        run: |
+          corepack pnpm test:browser
+          BYOB_BROWSER=firefox corepack pnpm test:browser
 
   deploy:
     name: Deploy byob.video

@@ -2,7 +2,7 @@
 //
 // Reconcile is now passive: it measures drift and jitter every tick and
 // reports them via `getReport()`. The decision of when (and where) to
-// seek lives on the server (`Byob.SyncDecision` in lib/byob/), which
+// seek lives on the server (`workers/src/sync-decision.mjs`), which
 // pushes `sync:seek_command` events the player executes via
 // `executeSeek(target, server_time)`.
 //

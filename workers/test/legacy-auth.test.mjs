@@ -1,16 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { legacyAuth as fixture, legacyExtensionTicket } from './support/compatibility.mjs';
 import { legacySession, legacyExtension } from '../src/legacy-auth.mjs';
 import { roomTicket } from '../src/session.mjs';
 
-const root = fileURLToPath(new URL('../../', import.meta.url));
-const fixture = JSON.parse(execFileSync('mix', ['run', '--no-start', 'workers/scripts/legacy-auth-fixtures.exs'], { cwd: root, env: { ...process.env, MIX_ENV: 'test' }, encoding: 'utf8' }).trim().split('\n').at(-1));
 const now = 1700000000001;
 const env = { LEGACY_SECRET_KEY_BASE: fixture.secret, LEGACY_AUTH_UNTIL: String(now + 3 * 86400000) };
 
 test('real Plug cookie and Phoenix extension signatures retain the legacy owner with isolated purposes', async () => {
+  assert.equal(legacyExtensionTicket(1700000000000), fixture.extension);
   assert.deepEqual(await legacySession(env, fixture.cookie, now), { id: fixture.owner });
   assert.equal((await legacyExtension(env, fixture.extension, now)).owner, `${fixture.owner}:tab1`);
   assert.match((await legacyExtension(env, fixture.old_extension, now)).owner, /^legacy:/);

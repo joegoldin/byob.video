@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 import { newSyncState } from '../src/sync-decision.mjs';
 import { mediaLoaded } from '../src/playback.mjs';
 import { currentPosition, recordDrift, adjustRoomClock, resetRoomSync, setPlaybackRate } from '../src/room-sync.mjs';
@@ -15,69 +15,29 @@ function room(overrides = {}) {
   };
 }
 
-function oracle(cases) {
-  const result = spawnSync('elixir', ['workers/scripts/room-sync-oracle.exs'], {
-    cwd: fileURLToPath(new URL('../../', import.meta.url)), input: JSON.stringify(cases),
-    encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, timeout: 30000,
-  });
-  assert.equal(result.status, 0, result.error?.message ?? result.stderr);
-  return JSON.parse(result.stdout);
-}
+const captured = JSON.parse(gunzipSync(readFileSync(new URL('./fixtures/room-sync.json.gz', import.meta.url)))).cases;
 
 test('API actors do not force loaded players to wait for the fallback readiness timer', () => {
   const state = room({ queue: [{ id: 'item', is_live: false }], play_state: 'paused', ready_deadline: 1002500, ready_item_id: 'item', media_loaded_for: { a: 'item', b: 'item' } });
   const withApi = { ...state, users: { ...state.users, 'api:test': { connected: true, hidden: false } } };
-  assert.deepEqual(oracle([{ action: 'ready', state }, { action: 'ready', state: withApi }]), [true, false], 'executed legacy quorum is blocked by an API actor that has no player');
   assert.equal(mediaLoaded(withApi, 'b', 'item', 1000000).state.play_state, 'playing');
 });
 
-test('room consensus matches the real Elixir handler, including mixed-sign hold and hidden peers', () => {
-  const cases = [];
-  for (const drifts of [[-200, -500], [200, 500], [-200, 500], [0, -500], [-15, -50], [-16, -50], [-2000, -3000]]) {
-    for (const age of [0, 4999, 5000]) {
-      for (const hidden of [false, true]) {
-        for (const freeze of [0, 1000001, 1005000]) {
-          const state = room({
-            users: { a: { connected: true, hidden: false }, b: { connected: true, hidden } },
-            last_user_seek_at_global: freeze,
-            drift_samples: { a: { drift_ms: drifts[0], updated_at: 1005000 - age }, b: { drift_ms: drifts[1], updated_at: 1005000 - age } },
-          });
-          cases.push({ action: 'adjust', state, now: 1005000 });
-        }
-      }
+for (const action of ['adjust', 'drift', 'position']) {
+  test(`room ${action} retains captured consensus, hidden-peer and timestamp boundaries`, () => {
+    assert.equal(captured.length, 166);
+    for (const [index, { input, expected }] of captured.entries()) {
+      if (input.action !== action || (action === 'position' && input.state.playback_rate !== 1)) continue;
+      const { state, now, data } = input;
+      const actual = action === 'adjust' ? adjustRoomClock(state, now)
+        : action === 'drift' ? recordDrift(state, data.user_id, data, now) : currentPosition(state, now);
+      assert.deepEqual(actual, expected, `captured room ${action} case ${index}`);
     }
-  }
-  cases.push({ action: 'adjust', state: room({ play_state: 'paused' }), now: 1005000 });
-  const expected = oracle(cases);
-  cases.forEach((entry, i) => assert.deepEqual(adjustRoomClock(entry.state, entry.now), expected[i], `room consensus case ${i}`));
-});
-
-test('room drift handling reproduces targeted commands and preserves hidden users decision state', () => {
-  const cases = [];
-  for (const hidden of [false, true]) {
-    for (const drift_ms of [-1500, -300, 0, 300, 1500]) {
-      for (const count of [0, 1, 2]) {
-        const state = room({
-          users: { a: { connected: true, hidden } },
-          user_sync_states: { a: { ...newSyncState(), over_tolerance_count: count } },
-        });
-        cases.push({ action: 'drift', state, data: { user_id: 'a', drift_ms, noise_floor_ms: 70, rtt_ms: 120, observed_l_ms: 450 }, now: 1005000 });
-      }
-    }
-  }
-  const expected = oracle(cases);
-  cases.forEach((entry, i) => assert.deepEqual(recordDrift(entry.state, 'a', entry.data, entry.now), expected[i], `room drift case ${i}`));
-});
-
-test('1x playback and paused positions match the original server', () => {
-  const cases = ['playing', 'paused'].flatMap(play_state => [1000000, 1005000, 2000000].map(now => ({ action: 'position', state: room({ play_state }), now })));
-  const expected = oracle(cases);
-  cases.forEach((entry, i) => assert.equal(currentPosition(entry.state, entry.now), expected[i]));
-});
+  });
+}
 
 test('rate-aware clock fixes the legacy 1x-only extrapolation and does not rewind on rate changes', () => {
   const state = room({ playback_rate: 2 });
-  assert.equal(oracle([{ action: 'position', state, now: 1005000 }])[0], 15, 'legacy clock incorrectly advances only five seconds at 2x');
   assert.equal(currentPosition(state, 1005000), 20);
   const next = setPlaybackRate(state, 0.5, 1005000);
   assert.equal(next.current_time, 20);

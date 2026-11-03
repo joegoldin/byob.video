@@ -196,6 +196,7 @@ try {
     assert.ok((await page.locator('#url-input').boundingBox()).width >= 160, 'URL input must remain usable on mobile');
     assert.equal(await page.locator('[data-action="pause"]').count(), 0, 'No duplicate controls below the player');
     assert.equal(await page.locator('#video-tabs').isVisible(), false);
+    assert.equal(await page.locator('#video-toolbar').isVisible(), false);
     assert.equal(await page.locator('#comments-panel').isVisible(), false);
     assert.equal(await page.locator('#description-panel').isVisible(), false);
     const originalPlayer = await page.locator('#player').boundingBox();
@@ -212,18 +213,42 @@ try {
       assert.equal((await page.locator('#room-nav').boundingBox()).y, 0, 'Scroll up reveals the desktop titlebar');
       await page.locator('#player-sizer').evaluate(element => element.scrollIntoView());
       await page.mouse.move(500, 400);
-      await page.evaluate(() => { window.__detentSettled = new Promise(resolve => document.addEventListener('scrollend', () => resolve(), { once: true })); });
-      await page.mouse.wheel(0, 90);
-      await page.evaluate(() => window.__detentSettled);
-      assert.ok(Math.abs((await page.locator('#player-sizer').boundingBox()).y) < 1, 'A small wheel scroll settles back at the player detent');
+      await page.evaluate(() => window.scrollBy(0, 180));
+      await page.mouse.wheel(0, -110);
+      await page.waitForFunction(() => document.getElementById('app').dataset.theaterDetent === 'held');
+      assert.ok(Math.abs((await page.locator('#player-sizer').boundingBox()).y) < 1, 'A small wheel return settles at the player detent');
+      await page.waitForFunction(() => document.getElementById('app').dataset.theaterDetent === 'ready');
       await page.mouse.wheel(0, 700);
       await page.waitForFunction(() => document.getElementById('player-sizer').getBoundingClientRect().top < -300);
+      await page.mouse.wheel(0, -1200);
+      await page.waitForFunction(() => document.getElementById('app').dataset.theaterDetent === 'held');
+      assert.ok(Math.abs((await page.locator('#player-sizer').boundingBox()).y) < 1, 'A large return gesture must stop at the player, not reveal the titlebar');
+      await page.waitForFunction(() => document.getElementById('app').dataset.theaterDetent === 'ready');
+      await page.mouse.wheel(0, -100);
+      await page.waitForFunction(() => document.getElementById('room-nav').getBoundingClientRect().top === 0);
+      await page.locator('#player-sizer').evaluate(element => {
+        const iframe = document.createElement('iframe');
+        iframe.id = 'theater-provider-fixture'; iframe.sandbox = '';
+        iframe.srcdoc = '<body style="margin:0;overflow:hidden;background:#111;color:white">Provider iframe</body>';
+        iframe.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;z-index:40';
+        element.append(iframe);
+        window.scrollTo(0, element.getBoundingClientRect().top + window.scrollY + 300);
+      });
+      await page.mouse.move(500, 200);
+      await page.mouse.wheel(0, -1200);
+      await page.waitForFunction(() => document.getElementById('app').dataset.theaterDetent === 'held');
+      assert.ok(Math.abs((await page.locator('#player-sizer').boundingBox()).y) < 1, 'Scroll from an isolated provider iframe must also hit the detent');
+      await page.waitForFunction(() => document.getElementById('app').dataset.theaterDetent === 'ready');
+      await page.locator('#theater-provider-fixture').evaluate(element => element.remove());
+      await page.evaluate(() => window.scrollTo(0, 0));
+      assert.equal(await page.locator('#room-nav #theater-toggle').count(), 1);
+      assert.ok((await page.locator('#theater-toggle').boundingBox()).height <= 26);
       await page.locator('#player-sizer').evaluate(element => element.scrollIntoView());
     } else {
       assert.equal((await page.locator('#room-nav').boundingBox()).y, theaterPlayer.height, 'Mobile titlebar follows the player');
       assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).scrollSnapType), 'none');
     }
-    for (const selector of ['#video-toolbar', '#room-sidebar']) {
+    for (const selector of ['#room-sidebar']) {
       assert.ok((await page.locator(selector).boundingBox()).y >= theaterPlayer.height, `${selector} must be below the theater player`);
     }
     await page.screenshot({ path: join(screenshots, page === alice ? 'theater-desktop.png' : 'theater-mobile.png'), fullPage: true });
@@ -244,6 +269,7 @@ try {
     }
     await page.locator('[data-action="theme"]').click();
   }
+  if (process.env.BYOB_THEATER_ONLY !== '1') {
   await alice.locator('#url-input').fill('not a video URL');
   await alice.waitForFunction(() => document.getElementById('url-preview').textContent.includes('Preview unavailable:'));
   assert.equal(await alice.locator('#notice').isVisible(), false, 'Optional preview failures must not report a rejected room action');
@@ -257,6 +283,7 @@ try {
   for (const page of [alice, bob]) {
     assert.equal(await page.locator('#comments-tab').getAttribute('aria-selected'), 'true');
     assert.equal(await page.locator('#video-tabs').isVisible(), true);
+    assert.equal(await page.locator('#video-toolbar').isVisible(), true);
     await page.locator('#description-tab').click();
     assert.equal(await page.locator('#description-panel').isVisible(), true);
     assert.equal(await page.locator('#comments-panel').isVisible(), false);
@@ -486,8 +513,9 @@ try {
   await commentPage.screenshot({ path: join(screenshots, 'description-mobile.png'), fullPage: true });
   console.log('PASS: description metadata, safe channel link, chapter timestamps and mobile layout');
 
+  }
   assert.deepEqual(errors, []);
-  console.log('PASS: rendered home/create/join, two real direct-video players, play/pause/rate propagation, private settings and desktop/mobile layout');
+  console.log(process.env.BYOB_THEATER_ONLY === '1' ? 'PASS: desktop/mobile theater layout, compact toolbar and wheel detent' : 'PASS: rendered home/create/join, two real direct-video players, play/pause/rate propagation, private settings and desktop/mobile layout');
 } finally {
   await browser?.close();
   if (worker && worker.exitCode === null && worker.signalCode === null) await new Promise(resolve => {

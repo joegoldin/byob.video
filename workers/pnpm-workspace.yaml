@@ -3,3 +3,4 @@ minimumReleaseAgeStrict: true
 allowBuilds:
   esbuild: true
   workerd: true
+  "@parcel/watcher": true

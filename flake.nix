@@ -8,9 +8,9 @@
 
   outputs =
     {
-      self,
       nixpkgs,
       flake-utils,
+      ...
     }:
     flake-utils.lib.eachDefaultSystem (
       system:
@@ -20,7 +20,7 @@
         # Extension packaging
         version = builtins.replaceStrings [ "\n" ] [ "" ] (builtins.readFile ./VERSION);
         extensionSrc = ./extension;
-        iconSvg = ./priv/static/images/favicon.svg;
+        iconSvg = ./assets/static/images/favicon.svg;
 
         chromeExtension = pkgs.stdenv.mkDerivation {
           pname = "byob-chrome-extension";
@@ -64,7 +64,10 @@
           pname = "byob-firefox-extension";
           inherit version;
           src = extensionSrc;
-          nativeBuildInputs = [ pkgs.zip pkgs.imagemagick ];
+          nativeBuildInputs = [
+            pkgs.zip
+            pkgs.imagemagick
+          ];
           phases = [
             "unpackPhase"
             "buildPhase"
@@ -85,41 +88,18 @@
           '';
         };
 
-        # Docker image via Nix
-        dockerImage = pkgs.dockerTools.buildLayeredImage {
-          name = "byob";
-          tag = "latest";
-          contents = with pkgs; [
-            coreutils
-            bash
-            cacert
-            openssl
-          ];
-          config = {
-            Cmd = [
-              "${pkgs.bash}/bin/bash"
-              "-c"
-              "echo 'Use the Dockerfile for the server image'"
-            ];
-            ExposedPorts = {
-              "4000/tcp" = { };
-            };
-          };
-        };
-
       in
       {
         packages = {
           chrome-extension = chromeExtension;
           firefox-extension = firefoxExtension;
-          docker = dockerImage;
           default = chromeExtension;
         };
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            elixir_1_18
-            nodejs_22
+            nodejs_26
+            corepack
             inotify-tools
           ];
         };

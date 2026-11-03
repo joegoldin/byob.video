@@ -3,6 +3,20 @@
 
 ---
 
+# v7.1.2 (2026-11-03)
+
+- Replace unreliable native scroll snapping with an explicit desktop wheel/trackpad
+  detent, tested in Chromium and Firefox. Preserve normal exits, mobile scrolling
+  and scrolling inside nested panels.
+- Move the theater toggle into the title/menu toolbar as a compact icon button.
+- Retire the old Elixir/Phoenix server, Hex dependencies, Fly/Docker deployment and
+  BEAM tooling. Preserve native sync, authentication and import coverage using
+  captured reference fixtures; keep the Worker migration and data compatibility.
+- Update the Node, Worker, browser, Tailwind, daisyUI and extension channel tooling.
+  Keep locked dependencies, release-age protection and explicit build approvals.
+
+---
+
 # v7.1.1 (2026-11-02)
 
 - Add a desktop theater-mode scroll detent at the top of the player while keeping

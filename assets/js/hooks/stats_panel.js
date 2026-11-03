@@ -28,7 +28,7 @@ const COLOR_DRIFT = "#fbbf24";  // amber (local user)
 
 // Display-only fallback before the first real `tolerance_ms` arrives
 // from the server (within 1 s of the panel opening). Match the floor
-// in lib/byob/sync_decision.ex (`@min_tolerance_ms`) so the diagram
+// in workers/src/sync-decision.mjs (`@min_tolerance_ms`) so the diagram
 // doesn't snap from one number to a different one once data lands.
 const FALLBACK_TOLERANCE_MS = 300;
 

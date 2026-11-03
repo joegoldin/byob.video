@@ -1,7 +1,8 @@
+import { legacyAuth, legacyExtensionTicket, legacyExport } from './support/compatibility.mjs';
 import assert from 'node:assert/strict';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,13 +18,10 @@ const token = randomBytes(32).toString('base64url');
 let mf;
 const connections = [];
 try {
-  const legacy = JSON.parse(execFileSync('mix', ['run', '--no-start', 'workers/scripts/legacy-auth-fixtures.exs', String(Math.floor(Date.now() / 1000))], { cwd: join(root, '..'), env: { ...process.env, MIX_ENV: 'test' }, encoding: 'utf8' }).trim().split('\n').at(-1));
-  execFileSync('mix', ['run', '--no-start', 'workers/test/legacy-fixture.exs', temp], { cwd: join(root, '..'), env: { ...process.env, MIX_ENV: 'test' }, stdio: 'pipe' });
-  const exportLog = execFileSync('mix', ['run', '--no-start', 'workers/scripts/export-legacy.exs', join(temp, 'legacy.db'), join(temp, 'cli-export.json')], { cwd: join(root, '..'), env: { ...process.env, MIX_ENV: 'test' }, encoding: 'utf8' });
-  assert.match(exportLog, /Exported 1 rooms and 1 pool rows; SHA256 [a-f0-9]{64}/);
-  assert.equal(exportLog.includes('fixture-migration-room-key'), false);
-  const bytes = await readFile(join(temp, 'cli-export.json'));
-  const exported = JSON.parse(bytes.toString('utf8'));
+  const legacy = { ...legacyAuth, extension: legacyExtensionTicket(Date.now()) };
+  const exported = legacyExport();
+  const bytes = Buffer.from(JSON.stringify(exported));
+  await writeFile(join(temp, 'cli-export.json'), bytes, { mode: 0o600, flag: 'wx' });
   assert.equal(exported.format, 'byob-legacy-export-v1');
   const [record] = exported.rooms;
   const config = JSON.parse(await readFile(join(root, 'wrangler.jsonc'), 'utf8'));
@@ -124,7 +122,7 @@ try {
   http.close();
   console.log('PASS: HTTP stream joins through the existing room protocol; cross-owner sends, cross-origin mutations and duplicate stream takeover are rejected');
   console.log('PASS: real Plug cookie bootstrap and Phoenix extension reconnect preserve the migrated owner; extension credentials cannot open browser sockets');
-  console.log('PASS: legacy SQLite/ETF export → authenticated cross-worker RPC import → SQLite eviction/reload, preserved keys/history/pool timestamps, idempotency and dormant alarms');
+  console.log('PASS: captured legacy export → authenticated cross-worker RPC import → SQLite eviction/reload, preserved keys/history/pool timestamps, idempotency and dormant alarms');
 } finally {
   for (const socket of connections) socket.close(1000);
   await mf?.dispose();

@@ -61,15 +61,14 @@ such as comments. Keep credentials out of source control.
 From the repository root, inside the development shell:
 
 ```fish
-mix precommit
 cd workers
-corepack pnpm test
+corepack pnpm precommit
 corepack pnpm test:runtime
 corepack pnpm test:migration
 corepack pnpm check:deploy
 ```
 
-Browser tests are opt-in and require `ffmpeg` plus compatible Chromium or Firefox
+The full browser suite is opt-in and requires `ffmpeg` plus compatible Chromium or Firefox
 executables. On a supported Playwright host:
 
 ```fish
@@ -85,7 +84,7 @@ env BYOB_NETWORK_PROFILE=delayed corepack pnpm test:browser
 
 On NixOS, point `CHROMIUM_PATH` and `FIREFOX_PATH` at compatible Nix-packaged
 browsers instead. The **Workers browser acceptance (manual)** GitHub workflow
-runs the browser and transport matrix on demand, not on every push.
+runs the browser and transport matrix on demand, while a focused Chromium/Firefox theater regression runs on every push.
 
 `corepack pnpm test:providers` contacts real video providers. Their availability,
 embed policies, and network restrictions can affect the result.
@@ -122,9 +121,9 @@ your own before deploying. The deployment verification script also targets
 
 ### Automatic deployment
 
-Pushes to `main` run precommit, unit/oracle, runtime, migration, and packaging
-checks before deploying. Deployment then verifies health and exact frontend
-build hashes on both public domains. Browser tests remain opt-in.
+Pushes to `main` run native precommit, runtime, migration, packaging, dependency
+audit, and Chromium/Firefox theater checks before deploying. Deployment then verifies health and exact frontend
+build hashes on both public domains. The full playback/transport browser matrix remains opt-in.
 
 Configure these GitHub Actions settings for your installation:
 

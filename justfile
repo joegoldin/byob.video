@@ -1,7 +1,7 @@
 # byob - bring your own binge
 
 # Build all packages
-build: sync-version chrome firefox docker
+build: sync-version chrome firefox
 
 # Build Chrome extension (.crx + unpacked)
 chrome: sync-version
@@ -22,24 +22,19 @@ firefox: sync-version
     @echo "Firefox extension: result-firefox/byob-firefox.xpi"
     @echo "Install via about:addons"
 
-# Build Docker server image
-docker:
-    docker build -t byob .
-    @echo "Run: docker run -p 4000:4000 -e SECRET_KEY_BASE=\$(mix phx.gen.secret) -e PHX_HOST=byob.video byob"
-
-# Dev server
+# Native Worker development server
 dev:
-    mix phx.server
+    cd workers && corepack pnpm dev
 
-# Run tests
+# Syntax, version consistency and native regression tests
 test:
-    mix test
+    cd workers && corepack pnpm precommit
 
 # Sync VERSION file into extension manifests
 sync-version:
     #!/usr/bin/env bash
     V=$(cat VERSION | tr -d '\n')
-    for f in extension/manifest.json extension/manifest.firefox.json; do
+    for f in extension/manifest.json extension/manifest.firefox.json workers/package.json; do
       sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$V\"/" "$f"
     done
     echo "Synced version $V to manifests"
@@ -49,12 +44,11 @@ bump NEW_VERSION:
     echo "{{NEW_VERSION}}" > VERSION
     just sync-version
 
-# Deploy to fly. Passes the current short HEAD as GIT_SHA so the
-# settings modal's commit hash links to the right github commit.
+# Build and deploy the native Worker after all release checks pass.
 deploy:
-    fly deploy --app byob-video --build-arg GIT_SHA=$(git rev-parse --short HEAD)
+    cd workers && corepack pnpm build:web && corepack pnpm exec wrangler deploy --config wrangler.production.jsonc && node scripts/verify-deployment.mjs
 
 # Clean build artifacts
 clean:
     rm -f result-chrome result-firefox
-    rm -rf _build
+    rm -rf workers/dist

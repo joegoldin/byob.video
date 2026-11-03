@@ -1,3 +1,4 @@
+import { mountTheaterScroll } from './theater-scroll.mjs';
 import { RoomChannel } from './channel.mjs';
 import { createCommentReplies } from './comment-replies.mjs';
 import { mountHook } from './hooks.mjs';
@@ -37,6 +38,7 @@ function notify() { if (document.hidden) { notifications++; updateTitle(); } }
 function updateComments() {
   const panel = document.getElementById('comments-panel');
   const hasVideo = state?.current_index != null && !!state.queue[state.current_index];
+  document.getElementById('video-toolbar').hidden = !hasVideo;
   document.getElementById('video-tabs').hidden = !hasVideo;
   panel.hidden = !hasVideo || !showComments || videoTab !== 'comments';
   document.getElementById('description-panel').hidden = !hasVideo || videoTab !== 'description';
@@ -57,7 +59,6 @@ function selectVideoTab(tab) {
 function toggleTheater() {
   theater = !theater;
   document.getElementById('app').classList.toggle('theater-mode', theater);
-  document.documentElement.classList.toggle('theater-scrolling', theater);
   const button = document.getElementById('theater-toggle');
   button.setAttribute('aria-pressed', String(theater));
   document.getElementById('theater-label').textContent = theater ? 'Exit theater' : 'Theater mode';
@@ -186,6 +187,7 @@ async function playlist(scope, mode, videoId) {
 if (roomId) {
   render(root, views.roomShell(roomId));
   if (!showComments) selectVideoTab('description');
+  const stopTheaterScroll = mountTheaterScroll(root, document.getElementById('player-sizer'));
   const tabId = read(sessionStorage, 'byob_tab_id', crypto.randomUUID());
   save(sessionStorage, 'byob_tab_id', tabId);
   let extensionReported = false;
@@ -272,7 +274,7 @@ if (roomId) {
     if (document.getElementById('byob-autoplay-help-dont-show').checked) save(localStorage, 'byob_autoplay_help_dismissed', '1');
   });
   void channel.start();
-  window.addEventListener('pagehide', event => { if (!event.persisted) { rounds.destroy(); statsHook.destroy(); player.destroy(); channel.stop(); } });
+  window.addEventListener('pagehide', event => { if (!event.persisted) { stopTheaterScroll(); rounds.destroy(); statsHook.destroy(); player.destroy(); channel.stop(); } });
 } else if (location.pathname === '/') render(root, views.home());
 else render(root, html`<section class="p-8"><h1>Room not found</h1><a href="/" class="link">Create a room</a></section>`);
 

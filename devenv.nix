@@ -1,16 +1,13 @@
 { pkgs, ... }:
 
 {
-  languages.elixir = {
-    enable = true;
-    package = pkgs.elixir_1_19;
-  };
   languages.javascript = {
     enable = true;
-    package = pkgs.nodejs_22;
+    package = pkgs.nodejs_26;
   };
 
   packages = [
+    pkgs.corepack
     pkgs.inotify-tools
   ];
 }

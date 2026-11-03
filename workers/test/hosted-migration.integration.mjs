@@ -1,6 +1,7 @@
+import { legacyExport } from './support/compatibility.mjs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { randomBytes, createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,10 +20,11 @@ try {
   execFileSync(process.execPath, ['node_modules/wrangler/bin/wrangler.js', 'secret', 'put', 'MIGRATION_TOKEN', '--config', 'wrangler.migration.jsonc'], {
     cwd: root, input: `${token}\n`, stdio: ['pipe', 'pipe', 'pipe'],
   });
-  execFileSync('mix', ['run', '--no-start', 'workers/test/legacy-fixture.exs', temp], {
-    cwd: join(root, '..'), stdio: 'pipe', env: { ...process.env, MIX_ENV: 'test', BYOB_FIXTURE_ROOM_ID: roomId, BYOB_FIXTURE_API_KEY: key },
-  });
+  const exported = legacyExport();
+  exported.rooms[0].room_id = roomId;
+  Object.assign(exported.rooms[0].state, { room_id: roomId, api_key: key });
   const file = join(temp, 'export.json');
+  await writeFile(file, JSON.stringify(exported), { mode: 0o600, flag: 'wx' });
   const bytes = await readFile(file);
   const source = JSON.parse(bytes);
   const record = source.rooms[0];
@@ -50,7 +52,7 @@ try {
   assert.equal(queue[0].id, record.state.queue[0].id);
   assert.equal(queue[0].title, record.state.queue[0].title);
   assert.equal(queue[0].url, record.state.queue[0].url);
-  console.log('PASS: hosted preview legacy SQLite/ETF export→CLI→cross-Worker DO import, original key and paused position/queue preservation, retry idempotency, conflict refusal and Origin/auth boundaries; synthetic data only');
+  console.log('PASS: hosted preview captured legacy export→CLI→cross-Worker DO import, original key and paused position/queue preservation, retry idempotency, conflict refusal and Origin/auth boundaries; synthetic data only');
 } finally {
   await rm(temp, { recursive: true, force: true });
 }
