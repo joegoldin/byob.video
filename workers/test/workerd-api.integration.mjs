@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { RoomChannel } from '../web/channel.mjs';
+import { assertReadRateLimit } from './support/rate-limit.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const persist = await mkdtemp(join(tmpdir(), 'byob-workerd-'));
@@ -136,11 +137,8 @@ try {
   assert.equal(rateAnchor.current_time, 42);
   assert.equal(rateAnchor.rate, 2);
   assert.equal(typeof rateAnchor.server_time, 'number');
-  let limited = false;
-  for (let i = 0; i < 65; i++) {
-    if ((await request(path, { key })).status === 429) { limited = true; break; }
-  }
-  assert.ok(limited, 'authenticated reads enforce the configured rate limit');
+  const config = JSON.parse(await readFile(join(root, 'wrangler.jsonc'), 'utf8'));
+  await assertReadRateLimit(() => request(path, { key }), config.ratelimits.find(binding => binding.name === 'API_READ_LIMITER').simple);
   console.log('PASS: workerd signed session/bootstrap, API auth/isolation, bounded bodies, queue responses, real alarm, SQLite restart and rate limiting');
 } finally {
   browser?.stop();
