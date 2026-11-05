@@ -429,11 +429,46 @@ try {
     }
   }
   assert.ok(Math.abs((await roomState()).current_time - 20) < 0.1, 'native video seeking must update the room');
-  await bob.reload();
+  const guestBefore = await bob.evaluate(() => ({
+    user: document.getElementById('player').dataset.userId,
+    tab: sessionStorage.getItem('byob_tab_id'), browser: localStorage.getItem('byob_browser_id'),
+    username: localStorage.getItem('watchparty_username'),
+  }));
+  const manifest = await fetch(`${origin}/build.json`);
+  assert.equal(manifest.status, 200);
+  assert.match(manifest.headers.get('cache-control'), /no-store/);
+  assert.match((await manifest.json()).build, /^[a-f0-9]{64}$/);
+  await bob.evaluate(() => {
+    window._byobPlayerWindow = { close() { sessionStorage.setItem('test-popup-closed', '1'); } };
+  });
+  await bob.route('**/build.json', route => route.fulfill({ json: { build: 'f'.repeat(64) } }));
+  await Promise.all([
+    bob.waitForEvent('framenavigated', frame => frame === bob.mainFrame()),
+    bob.evaluate(() => window.dispatchEvent(new Event('online'))),
+  ]);
   await bob.waitForFunction(() => {
     const video = document.querySelector('#player video');
     return document.getElementById('connection-status')?.textContent === '' && video?.paused && video.playbackRate === 2 && Math.abs(video.currentTime - 20) < 0.1;
   });
+  assert.deepEqual(await bob.evaluate(() => ({
+    user: document.getElementById('player').dataset.userId,
+    tab: sessionStorage.getItem('byob_tab_id'), browser: localStorage.getItem('byob_browser_id'),
+    username: localStorage.getItem('watchparty_username'),
+  })), guestBefore, 'automatic deploy refresh must retain the same guest identity');
+  assert.equal(await bob.evaluate(() => sessionStorage.getItem('test-popup-closed')), null, 'deploy reload must not close extension playback');
+  const loadedAt = await bob.evaluate(() => performance.timeOrigin);
+  await Promise.all([
+    bob.waitForResponse(response => new URL(response.url()).pathname === '/build.json'),
+    bob.evaluate(() => window.dispatchEvent(new Event('online'))),
+  ]);
+  assert.equal(await bob.evaluate(() => performance.timeOrigin), loadedAt, 'stale assets after refresh must not cause a reload loop');
+  await bob.unroute('**/build.json');
+  await bob.evaluate(() => {
+    window._byobPlayerWindow = { close() { sessionStorage.setItem('test-popup-closed', '1'); } };
+  });
+  await bob.reload();
+  await bob.waitForFunction(() => document.getElementById('connection-status')?.textContent === '' && document.querySelector('#player video')?.paused);
+  assert.equal(await bob.evaluate(() => sessionStorage.getItem('test-popup-closed')), '1', 'ordinary user reloads must retain external-window cleanup');
   assert.equal((await roomState()).play_state, 'paused', 'rejoining must not resume a paused room');
   assert.equal((await roomState()).user_count, 2, 'reload must retain the same tab identity');
   await bob.locator('[data-action="theme"]').click();
@@ -441,7 +476,7 @@ try {
   await alice.locator('#player video').evaluate(video => video.play());
   for (const page of [alice, bob]) await page.waitForFunction(() => { const video = document.querySelector('#player video'); return !video.paused && video.currentTime > 23 && video.playbackRate === 1.5; });
   await measureDrift(1.5);
-  console.log('PASS: native paused seek, retained tab identity and paused-room reload/resume');
+  console.log('PASS: deployment-triggered reload preserves guest identity, membership, paused position and rate without reload loops');
   const roundPage = await contexts[1].newPage();
   roundPage.on('pageerror', error => errors.push(error.message));
   await roundPage.setContent(`<link rel="stylesheet" href="${origin}/assets/app.css"><div id="round-panel" style="max-width:360px"></div>`);

@@ -3,6 +3,18 @@
 
 ---
 
+# v7.2.5 (2026-11-05)
+
+- Refresh room clients when a deployed frontend build changes, checking every
+  30 seconds and on reconnect, network recovery or return to a visible tab.
+- Preserve guest session/tab identity and restore canonical room playback after
+  refresh; guard against reload loops, invalid responses and network failures.
+- Retain generated guest names and keep extension player windows open during
+  automatic deploy refreshes while preserving ordinary unload cleanup.
+- Publish an uncached build fingerprint and verify it with production assets.
+
+---
+
 # v7.2.4 (2026-11-05)
 
 - Keep programmatic playback corrections from being reported as user seeks after

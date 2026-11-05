@@ -111,6 +111,9 @@ const VideoPlayer = {
     // Close external player window on page unload/refresh. Same COOP
     // caveat as _onVideoChange — don't gate on .closed.
     this._unloadHandler = () => {
+      // A deploy refresh keeps the extension's external playback alive; the
+      // reloaded room will reconnect with the same guest and tab identity.
+      if (this._deploymentReload) return;
       if (window._byobPlayerWindow) {
         try { window._byobPlayerWindow.close(); } catch (_) {}
       }

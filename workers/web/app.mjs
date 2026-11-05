@@ -1,5 +1,6 @@
 import { mountTheaterScroll } from './theater-scroll.mjs';
 import { RoomChannel } from './channel.mjs';
+import { watchDeployment } from './deployment.mjs';
 import { createCommentReplies } from './comment-replies.mjs';
 import { mountHook } from './hooks.mjs';
 import { html, render } from './html.mjs';
@@ -21,6 +22,7 @@ let channel, player, rounds, statsHook, state, preview, previewTimer, previewEpo
 const browserId = read(localStorage, 'byob_browser_id', crypto.randomUUID());
 save(localStorage, 'byob_browser_id', browserId);
 let username = read(localStorage, 'watchparty_username', `Guest ${crypto.randomUUID().slice(0, 4)}`);
+save(localStorage, 'watchparty_username', username);
 let showComments = read(localStorage, 'byob_show_comments', 'true') !== 'false';
 let collapsed = false, expanded = false, dragFrom = null, videoTab = 'comments', theater = false;
 let nicknames;
@@ -191,6 +193,10 @@ if (roomId) {
   const tabId = read(sessionStorage, 'byob_tab_id', crypto.randomUUID());
   save(sessionStorage, 'byob_tab_id', tabId);
   let extensionReported = false;
+  const deployment = watchDeployment({ build: __BYOB_BUILD_ID__, reload() {
+    player.hook._deploymentReload = true;
+    location.reload();
+  } });
   channel = new RoomChannel({ origin: location.origin, roomId, tabId, browserId, username: () => username,
     hasExtension: () => (extensionReported = document.documentElement.hasAttribute('data-byob-extension')) });
   const reportExtension = () => {
@@ -212,7 +218,7 @@ if (roomId) {
   channel.on('room:presence', event => { if (event.username !== username) notify(); });
   channel.on('activity:entry', entry => { if (entry.action === 'added') notify(); });
   channel.on('status', status => {
-    if (status.state === 'connected') reportExtension();
+    if (status.state === 'connected') { reportExtension(); void deployment.check(); }
     const statusPanel = document.getElementById('connection-status');
     statusPanel.hidden = status.state === 'connected';
     statusPanel.textContent = status.state === 'connected' ? '' : status.state === 'connecting' ? 'Connecting…' : 'Connection lost. Reconnecting…';
@@ -274,7 +280,7 @@ if (roomId) {
     if (document.getElementById('byob-autoplay-help-dont-show').checked) save(localStorage, 'byob_autoplay_help_dismissed', '1');
   });
   void channel.start();
-  window.addEventListener('pagehide', event => { if (!event.persisted) { stopTheaterScroll(); rounds.destroy(); statsHook.destroy(); player.destroy(); channel.stop(); } });
+  window.addEventListener('pagehide', event => { if (!event.persisted) { deployment.stop(); stopTheaterScroll(); rounds.destroy(); statsHook.destroy(); player.destroy(); channel.stop(); } });
 } else if (location.pathname === '/') render(root, views.home());
 else render(root, html`<section class="p-8"><h1>Room not found</h1><a href="/" class="link">Create a room</a></section>`);
 

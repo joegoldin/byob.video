@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { setTimeout } from 'node:timers/promises';
 
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const files = new Map(await Promise.all(['index.html', 'assets/app.js', 'assets/app.css'].map(async path => [path, digest(await readFile(new URL(`../dist/${path}`, import.meta.url)))])));
+const files = new Map(await Promise.all(['index.html', 'assets/app.js', 'assets/app.css', 'build.json'].map(async path => [path, digest(await readFile(new URL(`../dist/${path}`, import.meta.url)))])));
 for (const origin of ['https://byob.video', 'https://www.byob.video']) {
   let verified = false;
   for (let attempt = 0; attempt < 6; attempt++) {
@@ -26,5 +26,5 @@ for (const origin of ['https://byob.video', 'https://www.byob.video']) {
     }
   }
   assert.ok(verified);
-  console.log(`PASS: ${origin} health and exact HTML/JavaScript/CSS build hashes`);
+  console.log(`PASS: ${origin} health and exact HTML/JavaScript/CSS/manifest build hashes`);
 }
