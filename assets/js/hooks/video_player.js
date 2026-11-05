@@ -428,6 +428,7 @@ const VideoPlayer = {
 
   async _loadVideo(sourceType, sourceId, url, mediaItem) {
     this._playerSettled = false;
+    this._programmaticSeek = null;
     this._endedFired = false;
     this._endedAt = null;
     this.sourceType = sourceType;
@@ -1480,6 +1481,22 @@ const VideoPlayer = {
       }
       const pos = this._getCurrentTime();
       const playerState = this.player.getState?.();
+      // Buffering can expose a transient reset position, not user intent.
+      // Keep the last stable sample so a real scrub is detected when it lands.
+      if (playerState === "buffering") return;
+      const pendingSeek = this._programmaticSeek;
+      if (pendingSeek) {
+        const elapsed = Math.max(0, performance.now() - pendingSeek.issuedAt);
+        const target = pendingSeek.position + (playerState === "playing" ? elapsed / 1000 * (this._roomRate ?? 1) : 0);
+        // Event suppression can settle between 500ms polls. Own the position
+        // change separately until the correction lands (or fails), rebasing
+        // even when its intermediate position is far from the target.
+        this.lastKnownPosition = pos;
+        if (!this.suppression.isActive() && (Math.abs(pos - target) <= 3 || elapsed >= 3000)) {
+          this._programmaticSeek = null;
+        }
+        return;
+      }
       const isPaused = playerState === "paused";
       // Detect seeks: large position jumps (>3s while playing, >1s while paused)
       const jumpThreshold = isPaused ? 1 : 3;
@@ -1821,6 +1838,7 @@ const VideoPlayer = {
   },
 
   _seekTo(seconds) {
+    this._programmaticSeek = { position: seconds, issuedAt: performance.now() };
     this.player?.seek?.(seconds);
   },
 

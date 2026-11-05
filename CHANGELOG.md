@@ -3,6 +3,15 @@
 
 ---
 
+# v7.2.4 (2026-11-05)
+
+- Keep programmatic playback corrections from being reported as user seeks after
+  player-event suppression settles, including transient near-zero positions.
+- Ignore buffering samples in seek detection while preserving intentional seeks
+  once playback stabilizes.
+
+---
+
 # v7.2.3 (2026-11-05)
 
 - Stop YouTube Shorts at detected completion and block delayed automatic replay

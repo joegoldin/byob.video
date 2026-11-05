@@ -212,3 +212,79 @@ test('YouTube completion holds playback through delayed looping without broadcas
     await rm(temp, { recursive: true, force: true });
   }
 });
+
+test('YouTube correction ownership outlives event suppression and buffering samples', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'byob-seek-ownership-'));
+  const previousDocument = globalThis.document;
+  const previousInterval = globalThis.setInterval;
+  globalThis.document = new EventTarget();
+  try {
+    const output = join(temp, 'player.mjs');
+    await build({ entryPoints: [fileURLToPath(new URL('../../assets/js/hooks/video_player.js', import.meta.url))], bundle: true, format: 'esm', outfile: output, logLevel: 'silent' });
+    const { default: player } = await import(pathToFileURL(output));
+    const ticks = [], reports = [];
+    let position = 649.2, state = 'playing', suppressed = false;
+    globalThis.setInterval = callback => { ticks.push(callback); return 0; };
+    const hook = Object.assign(Object.create(player), {
+      sourceType: 'youtube', lastKnownPosition: position,
+      player: { getCurrentTime: () => position, getState: () => state, getDuration: () => 1800, seek() {} },
+      suppression: { isActive: () => suppressed }, clockSync: { serverNow: () => 1000 },
+      reconcile: { setServerState() {}, pauseFor() {} },
+      pushEvent: (...args) => reports.push(args),
+    });
+    hook._startSeekDetector();
+    hook._seekTo(650);
+    // The player can expose its reset position while a correction buffers.
+    // State-event suppression may already have settled before the next poll.
+    position = 0.4;
+    state = 'buffering';
+    ticks[0]();
+    assert.deepEqual(reports, [], 'a buffering position is not a user seek');
+    state = 'playing';
+    ticks[0]();
+    assert.deepEqual(reports, [], 'the first stable correction sample must not become a room seek');
+    position = 0.9;
+    ticks[0]();
+    assert.deepEqual(reports, []);
+    position = 650.5;
+    ticks[0]();
+    assert.deepEqual(reports, [], 'the delayed correction landing must also remain local');
+    position = 710;
+    ticks[0]();
+    assert.deepEqual(reports, [['video:seek', { position: 710 }]], 'a later native user seek must still propagate');
+    // Ownership must cover paused corrections too, which produce no PLAYING.
+    reports.length = 0;
+    state = 'paused';
+    hook._seekTo(800);
+    suppressed = true;
+    position = 800;
+    ticks[0]();
+    assert.ok(hook._programmaticSeek, 'matching an early sample must not release an unsettled correction');
+    suppressed = false;
+    ticks[0]();
+    assert.deepEqual(reports, [], 'a paused correction must not echo after suppression expires');
+    position = 0.4;
+    ticks[0]();
+    assert.deepEqual(reports, [['video:seek', { position: 0.4 }]], 'intentional seeks to the start remain supported');
+    reports.length = 0;
+    state = 'buffering';
+    position = 900;
+    ticks[0]();
+    assert.deepEqual(reports, [], 'buffering without a correction must not broadcast intermediate positions');
+    state = 'playing';
+    ticks[0]();
+    assert.deepEqual(reports, [['video:seek', { position: 900 }]], 'a user scrub through buffering must still broadcast when stable');
+    reports.length = 0;
+    hook._seekTo(1000);
+    hook._programmaticSeek.issuedAt -= 3100;
+    ticks[0]();
+    assert.deepEqual(reports, [], 'a failed correction must rebase without echoing');
+    position = 950;
+    ticks[0]();
+    assert.deepEqual(reports, [['video:seek', { position: 950 }]], 'a failed correction must not permanently disable user seeks');
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.setInterval = previousInterval;
+    await rm(temp, { recursive: true, force: true });
+  }
+});
