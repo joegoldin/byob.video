@@ -144,3 +144,71 @@ test('native player reconnect and initial seeks retain authoritative playback an
     await rm(temp, { recursive: true, force: true });
   }
 });
+
+test('YouTube completion holds playback through delayed looping without broadcasting a seek or pause', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'byob-youtube-end-'));
+  const previousDocument = globalThis.document;
+  const previousWindow = globalThis.window;
+  const previousInterval = globalThis.setInterval;
+  globalThis.document = new EventTarget();
+  globalThis.window = {};
+  try {
+    const output = join(temp, 'player.mjs');
+    await build({ entryPoints: [fileURLToPath(new URL('../../assets/js/hooks/video_player.js', import.meta.url))], bundle: true, format: 'esm', outfile: output, logLevel: 'silent' });
+    const { default: player } = await import(pathToFileURL(output));
+    for (const detection of ['poll', 'event']) {
+      const ticks = [], reports = [];
+      let position = 19.5, state = 'playing', pauses = 0, suppressed = false;
+      globalThis.setInterval = callback => { ticks.push(callback); return 0; };
+      const hook = Object.assign(Object.create(player), {
+        sourceType: 'youtube', _currentItemId: 'short', _playerSettled: true,
+        el: { querySelector: () => null }, _hideLoadingOverlay() {}, _hideSyncingOverlay() {},
+        expectedPlayState: 'playing', lastKnownPosition: 19,
+        player: { getState: () => state, getCurrentTime: () => position, getDuration: () => 20 },
+        _getCurrentTime: () => position,
+        _pause() { pauses++; state = 'paused'; this._onPlayerStateChange('paused'); },
+        suppression: { isActive: () => false, suppress() { suppressed = true; }, shouldSuppress(name) { if (name === 'paused' && suppressed) { suppressed = false; return true; } return false; } },
+        reconcile: { stop() {}, setServerState() {}, pauseFor() {}, start() {} },
+        clockSync: { serverNow: () => 3000 },
+        pushEvent: (...args) => reports.push(args),
+      });
+      hook._startSeekDetector();
+      if (detection === 'poll') ticks[0]();
+      else { state = 'ended'; hook._onPlayerStateChange('ended'); }
+      assert.deepEqual(reports, [['video:ended', { item_id: 'short' }]]);
+      if (detection === 'poll') {
+        assert.equal(pauses, 0, 'near-end detection must not cut off the final half-second');
+        position = 19.9;
+        ticks[0]();
+        assert.equal(pauses, 0, 'the final frames must keep playing while completion is latched');
+      }
+      // YouTube can restart after the old 500ms guard, with polling seeing
+      // the wrap before its PLAYING callback arrives.
+      hook._endedAt = Date.now() - 2000;
+      position = 0.2;
+      state = 'playing';
+      ticks[0]();
+      hook._onPlayerStateChange('playing');
+      assert.equal(state, 'paused', 'automatic replay must be stopped even after 500ms');
+      assert.equal(hook._endedFired, true, 'looping back to zero is not a user seek');
+      assert.equal(hook.expectedPlayState, null);
+      ticks[0]();
+      assert.equal(hook._endedFired, true, 'a later paused poll must retain completion');
+      assert.deepEqual(reports, [['video:ended', { item_id: 'short' }]], 'automatic replay must not cancel queue advancement');
+      hook.el = { querySelector: () => null };
+      hook._onSyncPlay({ user_id: hook.userId });
+      assert.equal(hook._endedFired, false, 'an explicit room play must release the end hold');
+      hook._endedFired = true;
+      hook._showLoadingOverlay = () => {};
+      hook.reconcile.resetOffset = () => {};
+      hook._loadYouTube = () => {};
+      await hook._loadVideo('youtube', 'next-short', null, { id: 'next' });
+      assert.equal(hook._endedFired, false, 'a new item must release completion even without player reuse');
+    }
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.window = previousWindow;
+    globalThis.setInterval = previousInterval;
+    await rm(temp, { recursive: true, force: true });
+  }
+});

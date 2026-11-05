@@ -428,6 +428,8 @@ const VideoPlayer = {
 
   async _loadVideo(sourceType, sourceId, url, mediaItem) {
     this._playerSettled = false;
+    this._endedFired = false;
+    this._endedAt = null;
     this.sourceType = sourceType;
     this.sourceId = sourceId;
     // Live content (YT live, Twitch) skips time-based sync — drift
@@ -804,6 +806,14 @@ const VideoPlayer = {
       }
     }
 
+    // Completion is latched until an explicit room play or a new load.
+    // YouTube Shorts can restart after suppression and the old 500ms gate
+    // expire. Stop that restart before it can cancel queue advancement.
+    if (this.sourceType === "youtube" && this._endedFired && stateName === "playing") {
+      this._holdYouTubeEnd();
+      return;
+    }
+
     // Always let suppression consume events (tracks terminal state)
     if (stateName && this.suppression.shouldSuppress(stateName)) {
       return;
@@ -863,6 +873,7 @@ const VideoPlayer = {
       // queue. We rely on duration-growth detection to flip _isLive
       // off if the broadcast actually ended and became a VOD.
       if (this._isLive) return;
+      this._holdYouTubeEnd();
       // Only send ended if the position-based detector hasn't already
       if (!this._endedFired) {
         this._endedFired = true;
@@ -881,7 +892,28 @@ const VideoPlayer = {
     handleYTError(this, event);
   },
 
+  _holdYouTubeEnd() {
+    if (this.sourceType !== "youtube") return;
+    this.expectedPlayState = null;
+    window.__byobPlaying = false;
+    this.reconcile.stop();
+    const state = this.player?.getState?.();
+    const position = this._getCurrentTime();
+    const duration = this.player?.getDuration?.() || 0;
+    // Polling reports completion within the final second. Let that tail
+    // finish; stop playback once YouTube wraps back to the beginning.
+    if (duration > 0 && position >= duration - 1 && position < duration) return;
+    if (state === "playing" || state === "buffering") {
+      // This pause is local end handling, not a user pause that should
+      // cancel the server's pending autoplay countdown.
+      this.suppression.suppress("paused");
+      this._pause();
+    }
+  },
+
   _onSyncPlay(data) {
+    this._endedFired = false;
+    this._endedAt = null;
     this.expectedPlayState = "playing";
     // Resuming from pause — clear the per-pause-session pill throttle
     // so the next time we land in paused, the FIRST sync command
@@ -1442,6 +1474,10 @@ const VideoPlayer = {
         this.lastKnownPosition = this._getCurrentTime();
         return;
       }
+      if (this.sourceType === "youtube" && this._endedFired) {
+        this._holdYouTubeEnd();
+        return;
+      }
       const pos = this._getCurrentTime();
       const playerState = this.player.getState?.();
       const isPaused = playerState === "paused";
@@ -1485,6 +1521,7 @@ const VideoPlayer = {
         this._endedAt = Date.now();
         this.expectedPlayState = null;
         this.reconcile.stop();
+        this._holdYouTubeEnd();
         if (this._currentItemId) {
           this.pushEvent(LV_EVT.EV_VIDEO_ENDED, { item_id: this._currentItemId });
         }

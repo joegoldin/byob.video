@@ -3,6 +3,14 @@
 
 ---
 
+# v7.2.3 (2026-11-05)
+
+- Stop YouTube Shorts at detected completion and block delayed automatic replay
+  without sending spurious play, pause or seek events that cancel queue advancement.
+- Keep completion latched until an explicit room play or a new item loads.
+
+---
+
 # v7.2.2 (2026-11-03)
 
 - Removing the current video now advances to the next queued item and starts it
