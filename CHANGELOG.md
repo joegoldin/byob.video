@@ -3,6 +3,22 @@
 
 ---
 
+# v7.2.6 (2026-11-11)
+
+- Keep redundant player play/pause reports from broadcasting stale positions to
+  healthy peers, and baseline newly loaded players before inferring user seeks.
+- Recover from settled-but-paused, buffering and uninitialized players with
+  bounded local retries and keyboard-accessible start/reload controls.
+- Exclude non-playing and gesture-blocked clients from corrective seek loops
+  and room-clock consensus while keeping their actual playback state visible.
+- Restore the original friendly generated names, preserve legacy/custom names,
+  and back preferences with a one-year cookie shared by the production hosts.
+- Make queue thumbnails keyboard- and pointer-activatable like their titles.
+- Keep the comments scroll position across room snapshots, replies and pagination;
+  reset it only when switching videos.
+
+---
+
 # v7.2.5 (2026-11-05)
 
 - Refresh room clients when a deployed frontend build changes, checking every

@@ -118,3 +118,14 @@ test('description displays escaped metadata, channel, counts and chapter timesta
   assert.ok(String(views.descriptionPanel({ title: 'Private counts' })).includes('Description unavailable'));
   assert.ok(!String(views.descriptionPanel({})).includes('0 views'));
 });
+
+test('queue thumbnails and missing-image fallbacks are accessible activation buttons separate from move/remove', () => {
+  const markup = String(views.queuePanel({ current_index: 0, queue: [
+    { id: 'one', title: 'First <video>', url: 'https://example.com/one.webm', thumbnail_url: 'https://example.com/one.png' },
+    { id: 'two', title: 'Second video', url: 'https://example.com/two.webm' },
+  ] }));
+  assert.match(markup, /<button[^>]*data-action="queue-play"[^>]*data-index="0"[^>]*aria-label="Play First &lt;video&gt;"[^>]*>\s*<img[^>]*>\s*<\/button>/);
+  assert.match(markup, /<button[^>]*data-action="queue-play"[^>]*data-index="1"[^>]*aria-label="Play Second video"[^>]*>\s*<span[^>]*>▶<\/span>\s*<\/button>/);
+  assert.equal((markup.match(/data-action="queue-play"/g) || []).length, 4);
+  assert.equal((markup.match(/data-action="queue-remove"/g) || []).length, 2);
+});

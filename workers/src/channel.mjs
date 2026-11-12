@@ -73,7 +73,7 @@ export function driftReport(payload, peer, state, now = Date.now()) {
     report.offset_ms = Math.trunc(report.offset_ms);
     report.raw_drift_ms = report.drift_ms + report.offset_ms;
   }
-  if (typeof payload.playing === 'boolean') report.play_state = payload.playing ? 'playing' : 'paused';
+  if (typeof payload.play_state !== 'string' && typeof payload.playing === 'boolean') report.play_state = payload.playing ? 'playing' : 'paused';
   report.server_position = Math.round(currentPosition(state, now) * 10) / 10;
   return report;
 }

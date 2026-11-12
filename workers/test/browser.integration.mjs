@@ -153,6 +153,57 @@ try {
   assert.equal(seekReports.all.length, 1, 'a subsequent native seek must still reach the room');
   assert.ok(Math.abs(seekReports.all[0] - 14) < 0.1);
   console.log('PASS: overlapping direct seeks retain ownership without swallowing subsequent native seeks');
+  const recoveryFixture = await build({ entryPoints: [fileURLToPath(new URL('../../assets/js/hooks/video_player.js', import.meta.url))], bundle: true, format: 'iife', globalName: 'RecoveryFixture', write: false });
+  await mediaCheck.addScriptTag({ content: recoveryFixture.outputFiles[0].text });
+  await mediaCheck.addStyleTag({ url: `${origin}/assets/app.css` });
+  await mediaCheck.evaluate(() => {
+    const el = document.createElement('div');
+    el.id = 'recovery-fixture';
+    el.style.cssText = 'position:relative;width:min(100%,640px);height:360px;background:black;';
+    document.body.append(el);
+    let state = 'buffering', position = 600;
+    const events = [], seeks = [];
+    const hook = Object.assign(Object.create(RecoveryFixture.default), {
+      el, sourceType: 'youtube', isReady: true, _playerSettled: true,
+      expectedPlayState: 'playing', _roomRate: 2,
+      clockSync: { isReady: () => true, serverNow: () => 3000 },
+      reconcile: { serverPosition: 600, serverTime: 1000, pauseFor() {} },
+      suppression: { suppress() {}, shouldSuppress: () => true, cancelSettle() {} },
+      _hideSyncingOverlayNow() {}, _hideLoadingOverlay() {}, _hideSyncingOverlay() {},
+      pushEvent: (...args) => events.push(args),
+      player: { getState: () => state, getCurrentTime: () => position,
+        seek(target) { position = target; seeks.push(target); },
+        play() { state = 'playing'; hook._onPlayerStateChange('playing'); },
+      },
+    });
+    window.recoveryFixture = { hook, events, seeks };
+    hook._showClickToPlay(600);
+    hook._onPlayerStateChange('buffering');
+  });
+  await mediaCheck.getByRole('group', { name: 'Playback recovery' }).waitFor();
+  const recoveryScreenshots = await mkdtemp(join(tmpdir(), 'byob-recovery-review-'));
+  await mediaCheck.locator('#recovery-fixture').screenshot({ path: join(recoveryScreenshots, 'desktop.png') });
+  await mediaCheck.setViewportSize({ width: 390, height: 844 });
+  await mediaCheck.locator('#recovery-fixture').screenshot({ path: join(recoveryScreenshots, 'mobile.png') });
+  assert.ok(await mediaCheck.getByRole('button', { name: 'Start playback', exact: true }).isEnabled());
+  await mediaCheck.getByRole('button', { name: 'Start playback', exact: true }).focus();
+  await mediaCheck.keyboard.press('Enter');
+  assert.deepEqual(await mediaCheck.evaluate(() => recoveryFixture.events), [], 'local recovery must not broadcast room playback controls');
+  assert.deepEqual(await mediaCheck.evaluate(() => recoveryFixture.seeks), [604], 'recovery must use the current canonical position and rate');
+  assert.equal(await mediaCheck.locator('.byob-click-to-play').count(), 0, 'actual playback dismisses recovery');
+  await mediaCheck.evaluate(() => {
+    clearTimeout(recoveryFixture.hook._playRetryTimer);
+    recoveryFixture.hook.isReady = false;
+    recoveryFixture.hook.player = null;
+    recoveryFixture.hook._showClickToPlay(600);
+  });
+  assert.equal(await mediaCheck.getByRole('button', { name: 'Start playback', exact: true }).isDisabled(), true);
+  assert.equal(await mediaCheck.getByRole('button', { name: 'Reload player', exact: true }).isEnabled(), true);
+  await Promise.all([
+    mediaCheck.waitForEvent('framenavigated', frame => frame === mediaCheck.mainFrame()),
+    mediaCheck.getByRole('button', { name: 'Reload player', exact: true }).press('Enter'),
+  ]);
+  console.log(`PASS: keyboard-accessible buffering/black-player recovery stays local; screenshots: ${recoveryScreenshots}`);
   await mediaCheck.close();
   const [alice, bob] = await Promise.all(contexts.map(context => context.newPage()));
   const traces = new Map(), references = new Map();
@@ -182,6 +233,7 @@ try {
   for (const page of [alice, bob]) {
     await page.goto(origin);
     await page.locator('[data-action="create-room"]').waitFor();
+    assert.match(await page.evaluate(() => localStorage.getItem('watchparty_username')), /^[A-Z][a-z]+[A-Z][a-z]+[0-9]{2}$/, 'new visitors receive friendly legacy-style names');
     const homeGap = await page.evaluate(() => document.querySelector('section').getBoundingClientRect().top - document.querySelector('nav').getBoundingClientRect().bottom);
     assert.ok(homeGap >= 24, 'Home information card must be padded below the navigation on desktop and mobile');
     await page.screenshot({ path: join(screenshots, page === alice ? 'home.png' : 'home-mobile.png'), fullPage: true });
@@ -429,6 +481,9 @@ try {
     }
   }
   assert.ok(Math.abs((await roomState()).current_time - 20) < 0.1, 'native video seeking must update the room');
+  bob.once('dialog', dialog => dialog.accept('Persistent Otter'));
+  await bob.locator('[data-action="rename"]').click();
+  await bob.waitForFunction(() => document.getElementById('player').dataset.username === 'Persistent Otter');
   const guestBefore = await bob.evaluate(() => ({
     user: document.getElementById('player').dataset.userId,
     tab: sessionStorage.getItem('byob_tab_id'), browser: localStorage.getItem('byob_browser_id'),
@@ -441,6 +496,7 @@ try {
   await bob.evaluate(() => {
     window._byobPlayerWindow = { close() { sessionStorage.setItem('test-popup-closed', '1'); } };
   });
+  await bob.evaluate(() => localStorage.removeItem('watchparty_username'));
   await bob.route('**/build.json', route => route.fulfill({ json: { build: 'f'.repeat(64) } }));
   await Promise.all([
     bob.waitForEvent('framenavigated', frame => frame === bob.mainFrame()),
@@ -477,6 +533,12 @@ try {
   for (const page of [alice, bob]) await page.waitForFunction(() => { const video = document.querySelector('#player video'); return !video.paused && video.currentTime > 23 && video.playbackRate === 1.5; });
   await measureDrift(1.5);
   console.log('PASS: deployment-triggered reload preserves guest identity, membership, paused position and rate without reload loops');
+  const anotherRoom = await contexts[1].newPage();
+  await anotherRoom.goto(`${origin}/room/namecheck`);
+  await anotherRoom.waitForFunction(() => document.getElementById('connection-status')?.textContent === '');
+  assert.equal(await anotherRoom.locator('#player').getAttribute('data-username'), 'Persistent Otter', 'preferred names must survive opening another room');
+  await anotherRoom.close();
+  console.log('PASS: friendly generated names and renamed preferences survive cleared localStorage, reloads and another room');
   const roundPage = await contexts[1].newPage();
   roundPage.on('pageerror', error => errors.push(error.message));
   await roundPage.setContent(`<link rel="stylesheet" href="${origin}/assets/app.css"><div id="round-panel" style="max-width:360px"></div>`);
@@ -535,8 +597,38 @@ try {
   const commentPage = await contexts[1].newPage();
   commentPage.on('pageerror', error => errors.push(error.message));
   await commentPage.setContent(`<link rel="stylesheet" href="${origin}/assets/app.css"><div id="comments-fixture"></div>`);
-  const commentFixture = await build({ stdin: { contents: 'export { createCommentReplies } from "./comment-replies.mjs"; export { commentsPanel, descriptionPanel } from "./views.mjs"; export { render } from "./html.mjs";', resolveDir: join(root, 'web'), loader: 'js' }, bundle: true, format: 'iife', globalName: 'CommentFixture', write: false });
+  const commentFixture = await build({ stdin: { contents: 'export { createCommentReplies } from "./comment-replies.mjs"; export { createCommentsRenderer } from "./comments-panel.mjs"; export { commentsPanel, descriptionPanel } from "./views.mjs"; export { render } from "./html.mjs";', resolveDir: join(root, 'web'), loader: 'js' }, bundle: true, format: 'iife', globalName: 'CommentFixture', write: false });
   await commentPage.addScriptTag({ content: commentFixture.outputFiles[0].text });
+  for (const width of [390, 1280]) {
+    await commentPage.setViewportSize({ width, height: 844 });
+    await commentPage.evaluate(() => {
+      const target = document.getElementById('comments-fixture');
+      const update = CommentFixture.createCommentsRenderer();
+      const page = { comments: Array.from({ length: 40 }, (_, id) => ({ id: String(id), author: 'Viewer', text: `Comment ${id}`, likes: 0, reply_count: 2 })) };
+      update(target, 'first', page);
+      const list = target.querySelector('[data-comments-list]');
+      list.scrollTop = 300;
+      if (list.scrollTop !== 300) throw new Error('Comments fixture did not overflow');
+      update(target, 'first', structuredClone(page));
+      if (target.querySelector('[data-comments-list]') !== list) throw new Error('Room snapshot replaced unchanged comments');
+      const replies = new Map([['0', { expanded: true, comments: [{ id: 'reply', text: 'A reply', likes: 0 }] }]]);
+      update(target, 'first', page, { replies });
+      if (target.querySelector('[data-comments-list]').scrollTop !== 300) throw new Error('Replies reset comments scroll');
+      update(target, 'first', { ...page, comments: [...page.comments, { id: 'more', text: 'Next page', likes: 0 }] });
+      if (target.querySelector('[data-comments-list]').scrollTop !== 300) throw new Error('Pagination reset comments scroll');
+      target.style.maxHeight = '400px';
+      target.style.overflow = 'auto';
+      update(target, 'first', page, { expanded: true });
+      target.scrollTop = 300;
+      update(target, 'first', { ...page, total_count: 41 }, { expanded: true });
+      if (target.scrollTop !== 300) throw new Error('Expanded comments reset panel scroll');
+      update(target, 'second', page);
+      if (target.scrollTop || target.querySelector('[data-comments-list]').scrollTop) throw new Error('New video retained old comments scroll');
+      target.removeAttribute('style');
+    });
+  }
+  console.log('PASS: mobile/desktop comments retain scroll across snapshots, replies and pagination; new videos reset scroll');
+  await commentPage.setViewportSize({ width: 390, height: 844 });
   await commentPage.evaluate(() => {
     const target = document.getElementById('comments-fixture');
     const page = { comments: [{ id: 'parent', author: 'Viewer', text: 'A distinct comment with replies.', likes: 12, reply_count: 2 }, { id: 'other', author: 'Another viewer', text: 'A separate thread.', likes: 3, reply_count: 0 }], total_count: 2 };
@@ -606,6 +698,42 @@ try {
   }
   assert.equal((await roomState()).play_state, 'playing');
   console.log('PASS: removing the paused current item starts its successor on both real players');
+  for (const [suffix, keyboard] of [['thumbnail-click', false], ['thumbnail-keyboard', true]]) {
+    await alice.locator('#url-input').fill(`http://localhost:${media.address().port}/fixture.webm?next=${suffix}`);
+    await alice.locator('#url-preview button[value="queue"]').click();
+    await bob.waitForFunction(() => document.querySelectorAll('[data-queue-idx]').length === 2);
+    const target = bob.locator('[data-queue-idx="1"] button[data-action="queue-play"][aria-label]');
+    if (keyboard) await target.press('Enter');
+    else await target.locator('span, img').click();
+    for (const page of [alice, bob]) await page.waitForFunction(suffix => {
+      const video = document.querySelector('#player video');
+      return video?.currentSrc.includes(suffix) && !video.paused && video.currentTime > 0;
+    }, suffix);
+  }
+  console.log('PASS: queue thumbnail image/fallback activates the correct item by pointer or keyboard');
+
+  const stalledPage = await contexts[0].newPage();
+  await stalledPage.goto(origin);
+  const channelFixture = await build({ entryPoints: [fileURLToPath(new URL('../web/channel.mjs', import.meta.url))], bundle: true, format: 'iife', globalName: 'ChannelFixture', write: false });
+  await stalledPage.addScriptTag({ content: channelFixture.outputFiles[0].text });
+  const healthyPositions = await Promise.all([alice, bob].map(page => page.locator('#player video').evaluate(video => video.currentTime)));
+  const stalledCommands = await stalledPage.evaluate(async roomUrl => {
+    const commands = [];
+    const channel = window.stalledChannel = new ChannelFixture.RoomChannel({ origin: location.origin, roomId: new URL(roomUrl).pathname.split('/').at(-1), tabId: crypto.randomUUID(), username: () => 'StalledPeer' });
+    channel.on('sync:seek_command', command => commands.push(command));
+    await channel.start();
+    await channel.request('video:play', { position: 1 });
+    for (const drift_ms of [-9000, -10000, -11000]) await channel.request('video:drift_report', { playing: false, play_state: 'buffering', drift_ms });
+    return commands;
+  }, roomUrl);
+  assert.deepEqual(stalledCommands, [], 'a third unstarted client must not receive an endless correction cascade');
+  for (const [index, page] of [alice, bob].entries()) {
+    const position = await page.locator('#player video').evaluate(video => video.currentTime);
+    assert.ok(position >= healthyPositions[index] - 0.1, 'a stale duplicate PLAYING at 1s must not rewind a healthy peer');
+  }
+  await stalledPage.evaluate(() => stalledChannel.stop());
+  await stalledPage.close();
+  console.log('PASS: a third stalled client cannot rewind the two healthy players or trigger a correction loop');
 
   }
   assert.deepEqual(errors, []);

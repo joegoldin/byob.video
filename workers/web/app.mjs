@@ -1,7 +1,9 @@
 import { mountTheaterScroll } from './theater-scroll.mjs';
 import { RoomChannel } from './channel.mjs';
 import { watchDeployment } from './deployment.mjs';
+import { createUsernamePreference } from './username.mjs';
 import { createCommentReplies } from './comment-replies.mjs';
+import { createCommentsRenderer } from './comments-panel.mjs';
 import { mountHook } from './hooks.mjs';
 import { html, render } from './html.mjs';
 import * as views from './views.mjs';
@@ -21,8 +23,8 @@ const roomId = location.pathname.match(/^\/room\/([a-z0-9]{1,16})\/?$/)?.[1];
 let channel, player, rounds, statsHook, state, preview, previewTimer, previewEpoch = 0, comments, commentsVideo, sidebar = 'queue';
 const browserId = read(localStorage, 'byob_browser_id', crypto.randomUUID());
 save(localStorage, 'byob_browser_id', browserId);
-let username = read(localStorage, 'watchparty_username', `Guest ${crypto.randomUUID().slice(0, 4)}`);
-save(localStorage, 'watchparty_username', username);
+const usernamePreference = createUsernamePreference();
+let username = usernamePreference.read();
 let showComments = read(localStorage, 'byob_show_comments', 'true') !== 'false';
 let collapsed = false, expanded = false, dragFrom = null, videoTab = 'comments', theater = false;
 let nicknames;
@@ -37,6 +39,7 @@ function updateTitle() {
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { notifications = 0; updateTitle(); } });
 function notify() { if (document.hidden) { notifications++; updateTitle(); } }
 
+const renderComments = createCommentsRenderer();
 function updateComments() {
   const panel = document.getElementById('comments-panel');
   const hasVideo = state?.current_index != null && !!state.queue[state.current_index];
@@ -45,7 +48,7 @@ function updateComments() {
   panel.hidden = !hasVideo || !showComments || videoTab !== 'comments';
   document.getElementById('description-panel').hidden = !hasVideo || videoTab !== 'description';
   document.getElementById('comments-tab').hidden = !showComments;
-  render(panel, views.commentsPanel(comments, { collapsed, expanded, replies: commentReplies.entries }));
+  renderComments(panel, commentsVideo, comments, { collapsed, expanded, replies: commentReplies.entries });
   document.getElementById('room-layout').classList.toggle('lg:h-[calc(100dvh-2.5rem)]', !expanded && !theater);
 }
 function selectVideoTab(tab) {
@@ -333,7 +336,7 @@ root.addEventListener('click', async event => {
       updateRoom(state);
     } else if (action === 'rename') {
       const next = prompt('Your name', username)?.trim();
-      if (next) { await command('username:change', { username: next }); username = next; save(localStorage, 'watchparty_username', next); document.getElementById('player').dataset.username = next; }
+      if (next) { await command('username:change', { username: next }); username = usernamePreference.save(next); document.getElementById('player').dataset.username = username; }
     } else if (action === 'nickname') {
       const name = button.dataset.name, next = prompt(`Nickname for ${name} (leave blank to clear)`, nicknames[name] || '');
       if (next != null) { if (next.trim()) nicknames[name] = next.trim(); else delete nicknames[name]; save(localStorage, 'byob_nicknames', JSON.stringify(nicknames)); updateRoom(state); }

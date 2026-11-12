@@ -59,3 +59,11 @@ test('browser snapshots and readiness identify the actual owner for player echo 
   assert.deepEqual(channelEvent(['ready_count', count], extension), ['ready:count', count]);
   assert.deepEqual(channelEvent(['ready_count', null], browser), ['ready:count', null]);
 });
+
+test('client diagnostics distinguish buffering from paused without losing legacy boolean reports', () => {
+  const state = newRoom('abc123', 0);
+  const report = driftReport({ playing: false, play_state: 'buffering', drift_ms: -9000 }, browser, state, 1000);
+  assert.equal(report.play_state, 'buffering');
+  assert.equal(report.drift_ms, -9000);
+  assert.equal(driftReport({ playing: false }, browser, state, 1000).play_state, 'paused');
+});

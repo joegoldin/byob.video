@@ -127,7 +127,7 @@ test('native player reconnect and initial seeks retain authoritative playback an
       for (const sourceType of ['direct_url', 'youtube']) {
         const reports = [];
         const hook = {
-          sourceType, lastKnownPosition: 0, _getCurrentTime: () => 20.4,
+          sourceType, lastKnownPosition: 0, isReady: true, _playerSettled: true, _getCurrentTime: () => 20.4,
           player: { getState: () => 'playing', getDuration: () => 100 },
           suppression: { isActive: () => false }, clockSync: { serverNow: () => 3000 },
           reconcile: { setServerState() {}, pauseFor() {} },
@@ -136,7 +136,10 @@ test('native player reconnect and initial seeks retain authoritative playback an
         ticks.length = 0;
         player._startSeekDetector.call(hook);
         ticks[0]();
-        assert.equal(reports.length, sourceType === 'direct_url' ? 0 : 1, 'direct native events must not be duplicated by the polling fallback');
+        assert.equal(reports.length, 0, 'the first restored provider position is not a user seek');
+        hook._getCurrentTime = () => 40;
+        ticks[0]();
+        assert.equal(reports.length, sourceType === 'direct_url' ? 0 : 1, 'a later inferred seek must still propagate without duplicating direct native events');
       }
     } finally { globalThis.setInterval = originalInterval; }
   } finally {
@@ -161,7 +164,7 @@ test('YouTube completion holds playback through delayed looping without broadcas
       let position = 19.5, state = 'playing', pauses = 0, suppressed = false;
       globalThis.setInterval = callback => { ticks.push(callback); return 0; };
       const hook = Object.assign(Object.create(player), {
-        sourceType: 'youtube', _currentItemId: 'short', _playerSettled: true,
+        sourceType: 'youtube', _currentItemId: 'short', _playerSettled: true, isReady: true,
         el: { querySelector: () => null }, _hideLoadingOverlay() {}, _hideSyncingOverlay() {},
         expectedPlayState: 'playing', lastKnownPosition: 19,
         player: { getState: () => state, getCurrentTime: () => position, getDuration: () => 20 },
@@ -203,6 +206,7 @@ test('YouTube completion holds playback through delayed looping without broadcas
       hook.reconcile.resetOffset = () => {};
       hook._loadYouTube = () => {};
       await hook._loadVideo('youtube', 'next-short', null, { id: 'next' });
+      clearTimeout(hook._startupRecoveryTimer);
       assert.equal(hook._endedFired, false, 'a new item must release completion even without player reuse');
     }
   } finally {
@@ -226,13 +230,14 @@ test('YouTube correction ownership outlives event suppression and buffering samp
     let position = 649.2, state = 'playing', suppressed = false;
     globalThis.setInterval = callback => { ticks.push(callback); return 0; };
     const hook = Object.assign(Object.create(player), {
-      sourceType: 'youtube', lastKnownPosition: position,
+      sourceType: 'youtube', lastKnownPosition: position, isReady: true, _playerSettled: true,
       player: { getCurrentTime: () => position, getState: () => state, getDuration: () => 1800, seek() {} },
       suppression: { isActive: () => suppressed }, clockSync: { serverNow: () => 1000 },
       reconcile: { setServerState() {}, pauseFor() {} },
       pushEvent: (...args) => reports.push(args),
     });
     hook._startSeekDetector();
+    ticks[0]();
     hook._seekTo(650);
     // The player can expose its reset position while a correction buffers.
     // State-event suppression may already have settled before the next poll.
@@ -282,9 +287,112 @@ test('YouTube correction ownership outlives event suppression and buffering samp
     position = 950;
     ticks[0]();
     assert.deepEqual(reports, [['video:seek', { position: 950 }]], 'a failed correction must not permanently disable user seeks');
+    reports.length = 0;
+    hook.player.play = () => { position = 1; };
+    hook._play();
+    ticks[0]();
+    assert.deepEqual(reports, [], 'a programmatic play that restarts a stuck provider must not become a user seek');
   } finally {
     globalThis.document = previousDocument;
     globalThis.setInterval = previousInterval;
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('startup recovery does not mistake a settled pause or endless buffering for playback', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'byob-startup-'));
+  const previousDocument = globalThis.document;
+  const previousTimeout = globalThis.setTimeout;
+  globalThis.document = new EventTarget();
+  try {
+    const output = join(temp, 'player.mjs');
+    await build({ entryPoints: [fileURLToPath(new URL('../../assets/js/hooks/video_player.js', import.meta.url))], bundle: true, format: 'esm', outfile: output, logLevel: 'silent' });
+    const { default: player } = await import(pathToFileURL(output));
+    for (const state of ['paused', 'buffering']) {
+      const callbacks = [], overlays = [], controls = [];
+      globalThis.setTimeout = callback => { callbacks.push(callback); return callbacks.length; };
+      let retries = 0;
+      const hook = Object.assign(Object.create(player), {
+        sourceType: 'youtube', _playerSettled: true, expectedPlayState: 'playing',
+        player: { getState: () => state }, suppression: { suppress() {} },
+        _play() { retries++; }, _showClickToPlay: position => overlays.push(position),
+        pushEvent: (...args) => controls.push(args),
+      });
+      player._retryPlayOrShowOverlay.call(hook, 600);
+      while (callbacks.length) callbacks.shift()();
+      assert.equal(retries, 2, `${state} must receive bounded local play retries even if marked settled`);
+      assert.deepEqual(overlays, [600], `${state} must expose recovery when playback never starts`);
+      assert.deepEqual(controls, [], 'startup retries must never send room playback controls');
+    }
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.setTimeout = previousTimeout;
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('startup watchdog offers recovery even when the provider never calls onReady and ignores replaced loads', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'byob-init-timeout-'));
+  const previousDocument = globalThis.document, previousTimeout = globalThis.setTimeout;
+  globalThis.document = new EventTarget();
+  try {
+    const output = join(temp, 'player.mjs');
+    await build({ entryPoints: [fileURLToPath(new URL('../../assets/js/hooks/video_player.js', import.meta.url))], bundle: true, format: 'esm', outfile: output, logLevel: 'silent' });
+    const { default: player } = await import(pathToFileURL(output));
+    const callbacks = [], recovery = [];
+    globalThis.setTimeout = callback => { callbacks.push(callback); return callbacks.length; };
+    const hook = Object.assign(Object.create(player), {
+      isReady: false, _roomRate: 2, _pendingState: { play_state: 'playing', current_time: 600, server_time: 1000 },
+      clockSync: { isReady: () => true, serverNow: () => 3000 }, reconcile: { resetOffset() {} },
+      _showLoadingOverlay() {}, _showClickToPlay: position => recovery.push(position),
+      _loadYouTube: () => new Promise(() => {}),
+    });
+    void hook._loadVideo('youtube', 'first', '', { id: 'first' });
+    const oldTimeout = callbacks.shift();
+    void hook._loadVideo('youtube', 'second', '', { id: 'second' });
+    oldTimeout();
+    assert.deepEqual(recovery, [], 'a previous video must not install recovery over a new load');
+    callbacks.shift()();
+    assert.deepEqual(recovery, [604], 'a hung provider must expose recovery at the current canonical position');
+    recovery.length = 0;
+    hook._loadYouTube = async () => { throw new Error('provider setup failed'); };
+    await hook._loadVideo('youtube', 'third', '', { id: 'third' });
+    assert.deepEqual(recovery, [604], 'a rejected initialization must expose recovery without an unhandled rejection');
+    assert.equal(hook.isReady, false);
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.setTimeout = previousTimeout;
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test('startup retries require timeline progress and stop when playback is replaced or explicitly paused', async () => {
+  const temp = await mkdtemp(join(tmpdir(), 'byob-play-progress-'));
+  const previousDocument = globalThis.document, previousTimeout = globalThis.setTimeout;
+  globalThis.document = new EventTarget();
+  try {
+    const output = join(temp, 'player.mjs');
+    await build({ entryPoints: [fileURLToPath(new URL('../../assets/js/hooks/video_player.js', import.meta.url))], bundle: true, format: 'esm', outfile: output, logLevel: 'silent' });
+    const { default: player } = await import(pathToFileURL(output));
+    for (const behavior of ['frozen', 'progressing', 'replaced', 'paused']) {
+      const callbacks = [], overlays = [];
+      globalThis.setTimeout = callback => { callbacks.push(callback); return callbacks.length; };
+      let position = 600, retries = 0;
+      const hook = Object.assign(Object.create(player), {
+        expectedPlayState: 'playing', player: { getState: () => 'playing', getCurrentTime: () => position },
+        suppression: { suppress() {} }, _play() { retries++; }, _showClickToPlay: position => overlays.push(position),
+      });
+      hook._retryPlayOrShowOverlay(600);
+      if (behavior === 'progressing') position += 0.5;
+      if (behavior === 'replaced') hook.player = { getState: () => 'paused' };
+      if (behavior === 'paused') hook.expectedPlayState = 'paused';
+      while (callbacks.length) callbacks.shift()();
+      assert.equal(retries, behavior === 'frozen' ? 2 : 0, behavior);
+      assert.deepEqual(overlays, behavior === 'frozen' ? [600] : [], behavior);
+    }
+  } finally {
+    globalThis.document = previousDocument;
+    globalThis.setTimeout = previousTimeout;
     await rm(temp, { recursive: true, force: true });
   }
 });

@@ -6,8 +6,8 @@
 
 - All communication is between your browser and the byob server instance you are connected to
 - Room state (queue, history, playback position) is stored on the server in a local SQLite database
-- Usernames are randomly generated and stored only in your browser's localStorage and the server's in-memory room state
-- No cookies are used for tracking. The only cookie is the Phoenix session cookie required for CSRF protection
+- Display names are generated or chosen by you and stored in your browser's localStorage, a one-year preference cookie, and server-side room state. On the hosted service, the name preference cookie is shared between byob.video and www.byob.video
+- No cookies are used for tracking. A signed session cookie preserves your room identity, and the separate preference cookie remembers your display name
 
 ## Analytics
 

@@ -131,3 +131,19 @@ test('rate changes emit attributed activity and canonical anchors without loggin
   assert.deepEqual(repeated.events, []);
   assert.equal(repeated.state.activity_log.length, 1);
 });
+
+test('redundant playback reports cannot broadcast a stale position to healthy peers', () => {
+  const initial = { ...room(), current_time: 417.5, last_sync_at: 1000, playback_rate: 1.5 };
+  const duplicate = transitionPlayback(initial, 'play', 'a', 1, 2000);
+  assert.deepEqual(duplicate.events, [], 'already-playing clients must not pull peers back to their local startup position');
+  assert.equal(duplicate.state.current_time, 417.5);
+  assert.equal(duplicate.state.last_sync_at, 1000);
+  const paused = transitionPlayback(duplicate.state, 'pause', 'b', 419, 2100);
+  assert.ok(paused.events.some(([event]) => event === 'sync_pause'), 'a real pause still propagates');
+  const repeatedPause = transitionPlayback(paused.state, 'pause', 'a', 0, 2200);
+  assert.deepEqual(repeatedPause.events, [], 'duplicate pauses are acknowledgements, not fresh room commands');
+  assert.equal(repeatedPause.state.current_time, 419);
+  const resumed = transitionPlayback(repeatedPause.state, 'play', 'b', 419, 2300);
+  assert.ok(resumed.events.some(([event]) => event === 'sync_play'), 'a real resume still propagates');
+  assert.equal(resumed.state.current_time, 419);
+});

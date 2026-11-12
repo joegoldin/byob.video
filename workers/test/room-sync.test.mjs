@@ -82,3 +82,23 @@ test('room resets clear drift history but retain each device learned seek latenc
   assert.deepEqual(reset.drift_samples, {});
   assert.deepEqual(reset.user_sync_states.a, { ...newSyncState(), learned_l_ms: 240 });
 });
+
+test('non-playing and gesture-blocked clients cannot trigger corrective seek loops or room-clock consensus', () => {
+  for (const report of [
+    { play_state: 'buffering' }, { play_state: 'paused' }, { play_state: 'unstarted' },
+    { play_state: 'playing', gesture_blocked: true },
+  ]) {
+    let state = room({ current_time: 100, user_sync_states: { a: { ...newSyncState(), over_tolerance_count: 1 } } });
+    for (let index = 0; index < 5; index++) {
+      const result = recordDrift(state, 'a', { ...report, drift_ms: -9000 - index * 500, observed_l_ms: 3000 }, 1000000 + index * 500);
+      assert.equal(result.events.some(([event]) => event === 'user_seek_command'), false, `${JSON.stringify(report)} is not active playback`);
+      state = result.state;
+    }
+    assert.equal(state.user_sync_states.a.learned_l_ms, 500, 'failed starts must not teach seek latency');
+    state = recordDrift(state, 'b', { play_state: 'playing', drift_ms: -100 }, 1002000).state;
+    assert.equal(adjustRoomClock(state, 1002000).state, state, 'one playing client plus a stalled client cannot form consensus');
+    const resumed = recordDrift(state, 'a', { play_state: 'playing', drift_ms: -1000 }, 1003000);
+    assert.equal(resumed.events.some(([event]) => event === 'user_seek_command'), false, 'resumed playback starts with a fresh sustained-drift count');
+    assert.ok(recordDrift(resumed.state, 'a', { play_state: 'playing', drift_ms: -1000 }, 1003500).events.some(([event]) => event === 'user_seek_command'), 'real playback must regain normal sync correction');
+  }
+});

@@ -65,7 +65,9 @@ export function transitionPlayback(state, action, userId, position, now) {
   let next = state;
   if (state.play_state !== play_state) next = { ...state, play_state, current_time: position, last_sync_at: now };
   if (action === 'play') next = { ...next, advance_deadline: null };
-  const result = { state: next, events: [[action === 'play' ? 'sync_play' : 'sync_pause', { time: position, server_time: now, user_id: userId }]] };
+  // A provider finishing startup can report PLAYING at a stale local time.
+  // Acknowledge duplicates without broadcasting that position to healthy peers.
+  const result = { state: next, events: state.play_state === play_state ? [] : [[action === 'play' ? 'sync_play' : 'sync_pause', { time: position, server_time: now, user_id: userId }]] };
   const item = state.queue[state.current_index];
   return state.play_state === play_state ? result : withActivity(result, action, userId, item?.title ?? item?.url, now);
 }

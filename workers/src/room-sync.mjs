@@ -14,7 +14,10 @@ export function resetRoomSync(state) {
 }
 
 export function recordDrift(state, userId, data, now) {
-  const samples = { ...state.drift_samples, [userId]: { drift_ms: data.drift_ms ?? 0, updated_at: now } };
+  // A stopped or blocked player needs startup recovery, not repeated seeks.
+  // Keep its diagnostics but exclude it from canonical clock consensus.
+  const inactive = data.gesture_blocked === true || (state.play_state === 'playing' && data.play_state != null && data.play_state !== 'playing');
+  const samples = { ...state.drift_samples, [userId]: { drift_ms: data.drift_ms ?? 0, updated_at: now, ...(inactive ? { inactive: true } : {}) } };
   const room = {
     expected_position: currentPosition(state, now),
     playback_rate: state.play_state === 'playing' ? (state.playback_rate ?? 1) : 0,
@@ -22,7 +25,7 @@ export function recordDrift(state, userId, data, now) {
     room_jitter_ms: Math.max(0, ...Object.values(samples).filter(s => now - s.updated_at < 5000).map(s => s.noise_floor_ms ?? 0)),
   };
   const previous = state.user_sync_states[userId] ?? newSyncState();
-  const computed = evaluateSync(previous, data, room, now);
+  const computed = inactive ? { state: { ...previous, over_tolerance_count: 0 }, seek: null } : evaluateSync(previous, data, room, now);
   const hidden = state.users[userId]?.hidden ?? false;
   const decision = hidden ? previous : computed.state;
   const events = [];
@@ -45,7 +48,7 @@ export function clockAdjustTarget(drifts) {
 
 export function adjustRoomClock(state, now) {
   const drifts = Object.entries(state.drift_samples)
-    .filter(([id, sample]) => now - sample.updated_at < 5000 && !state.users[id]?.hidden)
+    .filter(([id, sample]) => now - sample.updated_at < 5000 && !state.users[id]?.hidden && !sample.inactive)
     .map(([, sample]) => sample.drift_ms);
   if (drifts.length < 2 || state.play_state !== 'playing' ||
       (state.last_user_seek_at_global > 0 && now - state.last_user_seek_at_global < 5000)) return { state, events: [] };

@@ -22,6 +22,7 @@ const PAUSE_ON_LOAD_MAX_ATTEMPTS = 10;
 const VIDEO_CHANGE_RETRY_1_MS = 1000;
 const VIDEO_CHANGE_RETRY_2_MS = 3000;
 const LIVE_DETECTION_INTERVAL_MS = 3000;
+const PLAYER_STARTUP_TIMEOUT_MS = 10000;
 // How long after we set a rate ourselves to treat incoming rate-change
 // events as our own echo. Generous because YouTube reports the change
 // asynchronously, and a snapped value arrives looking like a user pick.
@@ -296,6 +297,10 @@ const VideoPlayer = {
     this._hideAutoplayCountdown();
     this._hideSyncingOverlay();
     this.reconcile.stop();
+    clearTimeout(this._startupRecoveryTimer);
+    clearTimeout(this._playRetryTimer);
+    this._loadGeneration = (this._loadGeneration || 0) + 1;
+    this._playRetryGeneration = (this._playRetryGeneration || 0) + 1;
     this.suppression.destroy();
     this.clockSync.stop();
     if (this.seekDetectorInterval) clearInterval(this.seekDetectorInterval);
@@ -430,6 +435,10 @@ const VideoPlayer = {
   },
 
   async _loadVideo(sourceType, sourceId, url, mediaItem) {
+    const generation = this._loadGeneration = (this._loadGeneration || 0) + 1;
+    clearTimeout(this._startupRecoveryTimer);
+    clearTimeout(this._playRetryTimer);
+    this._playRetryGeneration = (this._playRetryGeneration || 0) + 1;
     this._playerSettled = false;
     this._programmaticSeek = null;
     this._endedFired = false;
@@ -463,6 +472,16 @@ const VideoPlayer = {
     // guard inside _showLoadingOverlay). Hide is wired in
     // _onPlayerStateChange when _playerSettled first flips true.
     this._showLoadingOverlay(this._lastThumb);
+    if (sourceType !== "extension_required") {
+      // onReady may never arrive. Recovery must not depend on the provider
+      // initializing successfully, or a black iframe can strand this guest.
+      this._startupRecoveryTimer = setTimeout(() => {
+        if (generation !== this._loadGeneration || this._embedBlocked) return;
+        if (!this.isReady || (this.expectedPlayState === "playing" && this.player?.getState?.() !== "playing")) {
+          this._showClickToPlay(this._expectedPlaybackPosition(0));
+        }
+      }, PLAYER_STARTUP_TIMEOUT_MS);
+    }
     if (this._extPollInterval) { clearInterval(this._extPollInterval); this._extPollInterval = null; }
     if (this._extBtnPoll) { clearInterval(this._extBtnPoll); this._extBtnPoll = null; }
     // Structural offset is a property of the current player pipeline. A new
@@ -495,16 +514,22 @@ const VideoPlayer = {
       clockSync_offset: this.clockSync?.offset,
     });
 
-    if (sourceType === "youtube") {
-      await this._loadYouTube(sourceId, shouldPlay, startSeconds);
-    } else if (sourceType === "vimeo") {
-      await this._loadVimeo(sourceId, shouldPlay, startSeconds);
-    } else if (sourceType === "twitch") {
-      await this._loadTwitch(sourceId, !!mediaItem?.is_live, shouldPlay, startSeconds);
-    } else if (sourceType === "direct_url") {
-      this._loadDirectUrl(url);
-    } else {
-      this._loadExtension(mediaItem, url);
+    try {
+      if (sourceType === "youtube") {
+        await this._loadYouTube(sourceId, shouldPlay, startSeconds);
+      } else if (sourceType === "vimeo") {
+        await this._loadVimeo(sourceId, shouldPlay, startSeconds);
+      } else if (sourceType === "twitch") {
+        await this._loadTwitch(sourceId, !!mediaItem?.is_live, shouldPlay, startSeconds);
+      } else if (sourceType === "direct_url") {
+        this._loadDirectUrl(url);
+      } else {
+        this._loadExtension(mediaItem, url);
+      }
+    } catch {
+      if (generation !== this._loadGeneration) return;
+      this.isReady = false;
+      this._showClickToPlay(this._expectedPlaybackPosition(startSeconds));
     }
   },
 
@@ -543,6 +568,7 @@ const VideoPlayer = {
       },
       onBuffering: () => {
         this.reconcile.pauseFor(2000);
+        this._onPlayerStateChange("buffering");
       },
       onError: (event) => {
         this._onYTError(event);
@@ -722,11 +748,9 @@ const VideoPlayer = {
 
   // Unified YouTube state change handler (called from YouTube player module)
   _onPlayerStateChange(stateName) {
-    // Any transition into actually-playing (or buffering en route to playing)
-    // makes our click-to-play overlays obsolete — tear them down so they
-    // don't sit on top of a playing video waiting for a click that would
-    // do nothing useful.
-    if (stateName === "playing" || stateName === "buffering") {
+    // Only actual playback dismisses recovery controls. Buffering can persist
+    // indefinitely and must not leave a guest staring at a blank iframe.
+    if (stateName === "playing") {
       this.el.querySelector(".byob-join-ready")?.remove();
       this.el.querySelector(".byob-click-to-play")?.remove();
     }
@@ -950,37 +974,47 @@ const VideoPlayer = {
     this._retryPlayOrShowOverlay(position);
   },
 
-  // Check every 500ms up to 3× whether playback actually started after
-  // _play(). If not — autoplay was blocked — show the click-to-play
-  // overlay so the user has an obvious way to bypass it.
+  // A stable PAUSED state only proves the provider loaded, not that autoplay
+  // succeeded. Require real playback progress before abandoning recovery.
   _retryPlayOrShowOverlay(position) {
+    const generation = this._playRetryGeneration = (this._playRetryGeneration || 0) + 1;
+    const player = this.player;
+    let lastPosition = player?.getCurrentTime?.();
+    clearTimeout(this._playRetryTimer);
     const checkAndRetry = (attempt) => {
-      setTimeout(() => {
-        if (this._embedBlocked || this._playerSettled || this.expectedPlayState !== "playing") return;
-        let isPlaying = false;
-        if (this.sourceType === "youtube") {
-          isPlaying = this.player?.getState?.() === "playing" ||
-                      this.player?.getState?.() === "buffering";
-        } else if (this.sourceType === "direct_url") {
-          isPlaying = this.player?.getState?.() === "playing";
-        }
-
-        if (!isPlaying) {
-          if (attempt < 3) {
-            this.suppression.suppress("playing");
-            this._play();
-            checkAndRetry(attempt + 1);
-          } else if (!this._embedBlocked) {
-            this._showClickToPlay(position);
-          }
+      this._playRetryTimer = setTimeout(() => {
+        this._playRetryTimer = null;
+        if (generation !== this._playRetryGeneration || player !== this.player ||
+            this._embedBlocked || this._endedFired || this.expectedPlayState !== "playing") return;
+        const current = player?.getCurrentTime?.();
+        const progressing = typeof current !== "number" || typeof lastPosition !== "number" || current > lastPosition + 0.05;
+        if (player?.getState?.() === "playing" && progressing) return;
+        lastPosition = current;
+        if (attempt < 3) {
+          this.suppression.suppress("playing");
+          this._play();
+          checkAndRetry(attempt + 1);
+        } else {
+          this._showClickToPlay(this._expectedPlaybackPosition(position));
         }
       }, attempt * 500);
     };
     checkAndRetry(1);
   },
 
+  _expectedPlaybackPosition(fallback = 0) {
+    const snapshot = this._pendingState || this.bufferedState;
+    const position = snapshot?.current_time ?? this.reconcile?.serverPosition;
+    const serverTime = snapshot?.server_time ?? this.reconcile?.serverTime;
+    if (typeof position !== "number" || typeof serverTime !== "number" || !this.clockSync?.isReady?.()) return fallback;
+    const playing = (snapshot?.play_state ?? this.expectedPlayState) === "playing";
+    const elapsed = playing ? Math.max(0, this.clockSync.serverNow() - serverTime) / 1000 : 0;
+    return Math.max(0, position + elapsed * (this._roomRate ?? 1));
+  },
+
   _onSyncPause(data) {
     this.expectedPlayState = "paused";
+    this.el.querySelector(".byob-click-to-play")?.remove();
     // Pause supersedes any in-flight syncing pill — there's nothing
     // to "be in sync" with while paused. Reset the per-pause-session
     // throttle so the FIRST sync command in this new paused session
@@ -1203,6 +1237,10 @@ const VideoPlayer = {
   },
 
   _onQueueEnded() {
+    clearTimeout(this._startupRecoveryTimer);
+    clearTimeout(this._playRetryTimer);
+    this._loadGeneration = (this._loadGeneration || 0) + 1;
+    this._playRetryGeneration = (this._playRetryGeneration || 0) + 1;
     this.reconcile.stop();
     this.expectedPlayState = null;
     if (this.player && this.player.destroy) {
@@ -1467,6 +1505,7 @@ const VideoPlayer = {
 
   // Detect seeks while paused (YouTube doesn't fire onStateChange for these)
   _startSeekDetector() {
+    this._seekDetectorNeedsBaseline = true;
     if (this.seekDetectorInterval) clearInterval(this.seekDetectorInterval);
     this.seekDetectorInterval = setInterval(() => {
       if (!this.player) return;
@@ -1484,6 +1523,13 @@ const VideoPlayer = {
       }
       const pos = this._getCurrentTime();
       const playerState = this.player.getState?.();
+      // loadVideoById can restore position without going through _seekTo.
+      // Never compare that first settled sample against the previous item.
+      if (!this.isReady || !this._playerSettled || this.suppression.isActive()) {
+        this.lastKnownPosition = pos;
+        this._seekDetectorNeedsBaseline = true;
+        return;
+      }
       // Buffering can expose a transient reset position, not user intent.
       // Keep the last stable sample so a real scrub is detected when it lands.
       if (playerState === "buffering") return;
@@ -1495,7 +1541,8 @@ const VideoPlayer = {
         // change separately until the correction lands (or fails), rebasing
         // even when its intermediate position is far from the target.
         this.lastKnownPosition = pos;
-        if (!this.suppression.isActive() && (Math.abs(pos - target) <= 3 || elapsed >= 3000)) {
+        this._seekDetectorNeedsBaseline = false;
+        if (Math.abs(pos - target) <= 3 || elapsed >= 3000) {
           this._programmaticSeek = null;
         }
         return;
@@ -1503,7 +1550,8 @@ const VideoPlayer = {
       const isPaused = playerState === "paused";
       // Detect seeks: large position jumps (>3s while playing, >1s while paused)
       const jumpThreshold = isPaused ? 1 : 3;
-      const jumped = Math.abs(pos - this.lastKnownPosition) > jumpThreshold;
+      const jumped = !this._seekDetectorNeedsBaseline && Math.abs(pos - this.lastKnownPosition) > jumpThreshold;
+      this._seekDetectorNeedsBaseline = false;
       if (jumped) {
         // Direct video reports native seeked events. Polling its initial
         // restored position can mistake a late join for a new user seek.
@@ -1608,6 +1656,7 @@ const VideoPlayer = {
           }
           this.suppression.suppress("playing");
           this._play();
+          this._retryPlayOrShowOverlay(expectedPos);
         }
         return;
       } else {
@@ -1730,65 +1779,49 @@ const VideoPlayer = {
   },
 
   _showClickToPlay(position) {
-    // Don't show when external player is active — user watches in the
-    // extension window, not the embedded YouTube player
-    if (document.getElementById("ext-placeholder")) return;
-    // Never obscure a video that's actually playing locally.
-    if (this._isLocallyPlaying()) return;
-
-    // Remove any existing overlay
+    if (document.getElementById("ext-placeholder") || this.player?.isPlaceholder) return;
     this.el.querySelector(".byob-click-to-play")?.remove();
-
-    // Click-to-play means playback is gated on the user — the
-    // "Re-syncing…" pill would be misleading next to the gated state.
     this._hideSyncingOverlayNow?.();
-    // The click-to-play overlay takes over the surface from us.
     this._hideLoadingOverlay();
 
-    // Pre-seek the player to the room's expected position BEFORE the
-    // user clicks. The IFrame caches the position so when they click
-    // the YT play button (through our pass-through overlay), playback
-    // starts at the right spot instead of 0. (`seekTo` doesn't require
-    // a user gesture — only `playVideo` does.)
-    if (position != null) this._seekTo(position);
-
+    // Leave the provider's native controls reachable. Unlike the old
+    // pass-through graphic, these controls also work with a blank iframe
+    // and are reachable by keyboard when autoplay never initializes.
     const overlay = document.createElement("div");
     overlay.className = "byob-click-to-play";
-    // Thumbnail background so the user sees the video even when the
-    // underlying embed is still a black box.
-    const thumbBg = this._lastThumb
-      ? `background-image:url(${JSON.stringify(this._lastThumb)});background-size:cover;background-position:center;`
-      : "";
-    // pointer-events:none — the click goes through to the YouTube IFrame
-    // underneath. Programmatic playVideo() doesn't satisfy strict
-    // autoplay policies (mobile, some desktop configs), but a direct
-    // click on the IFrame does. Our play-button graphic sits over YT's
-    // play button so the user's click lands on the right target either
-    // way. The overlay is removed by _onPlayerStateChange when the
-    // player actually transitions to playing or buffering.
-    overlay.style.cssText = `position:absolute;inset:0;z-index:10;display:flex;align-items:center;justify-content:center;background:#000;pointer-events:none;${thumbBg}`;
-
-    const dim = document.createElement("div");
-    dim.style.cssText = "position:absolute;inset:0;background:rgba(0,0,0,0.4);";
-    overlay.appendChild(dim);
-
-    const btn = document.createElement("div");
-    btn.style.cssText = "position:relative;display:flex;flex-direction:column;align-items:center;gap:8px;";
-    btn.innerHTML = `
-      <div style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.9);display:flex;align-items:center;justify-content:center;">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="#000"><polygon points="6,3 20,12 6,21"/></svg>
-      </div>
-      <span style="color:white;font-size:14px;font-weight:600;text-shadow:0 1px 3px rgba(0,0,0,0.5);">Click to join playback</span>
-      <span style="color:white;opacity:0.8;font-size:11px;text-shadow:0 1px 3px rgba(0,0,0,0.5);">(Tip: enable autoplay to skip this)</span>
-    `;
-    overlay.appendChild(btn);
-
+    overlay.style.cssText = "position:absolute;inset:0;z-index:20;pointer-events:none;display:flex;align-items:flex-end;justify-content:center;padding:16px;";
+    const panel = document.createElement("div");
+    panel.setAttribute("role", "group");
+    panel.setAttribute("aria-label", "Playback recovery");
+    panel.style.cssText = "pointer-events:auto;background:rgba(0,0,0,0.9);color:white;border-radius:8px;padding:12px;max-width:360px;display:flex;flex-wrap:wrap;justify-content:center;gap:8px;";
+    const status = document.createElement("p");
+    status.setAttribute("role", "status");
+    status.style.cssText = "flex-basis:100%;margin:0;text-align:center;font:500 13px/1.4 system-ui;";
+    status.textContent = this.isReady ? "Playback hasn’t started on this device." : "The video player hasn’t finished loading.";
+    panel.appendChild(status);
+    const play = document.createElement("button");
+    play.type = "button";
+    play.className = "btn btn-primary btn-sm min-h-11";
+    play.textContent = "Start playback";
+    play.disabled = !this.isReady || !this.player || this.expectedPlayState !== "playing";
+    play.addEventListener("click", () => {
+      if (!this.isReady || !this.player || this.expectedPlayState !== "playing") return;
+      this.suppression.suppress("playing");
+      this._seekTo(this._expectedPlaybackPosition(position));
+      this._play();
+      this._retryPlayOrShowOverlay(position);
+    });
+    panel.appendChild(play);
+    const reload = document.createElement("button");
+    reload.type = "button";
+    reload.className = "btn btn-neutral btn-sm min-h-11";
+    reload.textContent = "Reload player";
+    // A local page reload rebuilds even an iframe whose onReady never fired,
+    // retaining the guest cookie/tab identity and the canonical room state.
+    reload.addEventListener("click", () => window.location.reload());
+    panel.appendChild(reload);
+    overlay.appendChild(panel);
     this.el.appendChild(overlay);
-
-    // Show the help dialog the first time we hit a blocked-autoplay
-    // situation in this browser. User can tick "don't show again" to
-    // silence future prompts.
-    this._maybeShowAutoplayHelp();
   },
 
   _maybeShowAutoplayHelp() {
@@ -1846,6 +1879,9 @@ const VideoPlayer = {
   },
 
   _play() {
+    // A stuck iframe may restart its timeline when programmatically nudged.
+    // The next position is recovery output, not evidence of a user scrub.
+    this._seekDetectorNeedsBaseline = true;
     this.player?.play?.();
   },
 
@@ -2234,6 +2270,7 @@ const VideoPlayer = {
       noise_floor_ms: Math.round(this.reconcile.noiseFloorEmaMs || 0),
       observed_l_ms: Math.round(observedL),
       gesture_blocked: gestureBlocked,
+      play_state: state || "unstarted",
       playing: state === "playing",
       hidden: !!document.hidden,
     });
